@@ -310,6 +310,34 @@
   }
   .reset-btn:hover { color: var(--bad); border-color: var(--bad); }
 
+  .setup-intro { font-size: 13px; color: var(--text-dim); line-height: 1.5; margin: 0; }
+  .setup-derived {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.55;
+    white-space: pre-line;
+    color: var(--text-dim);
+    background: var(--ink);
+    border: 1px solid var(--ink-border);
+    border-radius: 9px;
+    padding: 10px 11px;
+    margin: 0;
+  }
+  .primary-btn {
+    appearance: none;
+    border: none;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-family: var(--font-ui);
+    font-size: 15px;
+    font-weight: 700;
+    border-radius: 10px;
+    padding: 13px 16px;
+    cursor: pointer;
+  }
+  .primary-btn:disabled { background: var(--ink); color: var(--text-dim); cursor: not-allowed; }
+  .primary-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
   footer.note { font-size: 11.5px; color: var(--text-dim); line-height: 1.5; padding: 0 2px; }
   footer.note b { color: var(--text); font-weight: 600; }
 
@@ -331,6 +359,26 @@
     <p class="tagline">Position size driven by the stop, capped by what a thesis break costs.</p>
     <div class="rules-strip" id="rulesStrip"></div>
   </header>
+
+  <section class="card" id="setupCard" hidden>
+    <div class="section-label">Set up your rules</div>
+    <p class="setup-intro">
+      Two numbers, once. Everything the tool recommends is scaled off them, so it won't
+      calculate anything until they're yours.
+    </p>
+    <div class="field">
+      <label for="setup-capital">Total capital (₪)</label>
+      <input type="text" inputmode="numeric" autocomplete="off" id="setup-capital" placeholder="e.g. 500,000">
+    </div>
+    <div class="field">
+      <label for="setup-maxspec">Most you'd put in one speculative name (₪)</label>
+      <input type="text" inputmode="numeric" autocomplete="off" id="setup-maxspec" placeholder="e.g. 40,000">
+    </div>
+    <p class="setup-derived" id="setupDerived"></p>
+    <button class="primary-btn" type="button" id="setupSave" disabled>Save &amp; start</button>
+  </section>
+
+  <div id="appBody" hidden>
 
   <section class="card">
     <div class="section-label">The stock</div>
@@ -383,7 +431,7 @@
     <div class="section-label">Liquidity &amp; trend <span class="hint">— optional</span></div>
     <div class="field">
       <label for="in-avgvol">Avg daily volume, shares</label>
-      <input type="number" inputmode="decimal" step="1" id="in-avgvol" placeholder="e.g. 12000000">
+      <input type="text" inputmode="numeric" autocomplete="off" id="in-avgvol" placeholder="e.g. 31,000,000">
     </div>
     <div class="row2">
       <div class="field">
@@ -475,7 +523,7 @@
       <div class="settings-grid">
         <div class="field">
           <label for="cfg-capital">Total capital (₪)</label>
-          <input type="number" inputmode="decimal" id="cfg-capital">
+          <input type="text" inputmode="numeric" autocomplete="off" id="cfg-capital">
         </div>
         <div class="field">
           <label for="cfg-riskpct">Risk budget / trade (%)</label>
@@ -483,7 +531,7 @@
         </div>
         <div class="field">
           <label for="cfg-breakbudget">Thesis-break budget (₪)</label>
-          <input type="number" inputmode="decimal" id="cfg-breakbudget">
+          <input type="text" inputmode="numeric" autocomplete="off" id="cfg-breakbudget">
         </div>
         <div class="field">
           <label for="cfg-maxpct">Max position (% capital)</label>
@@ -543,7 +591,7 @@
         </div>
       </div>
       <div class="settings-actions">
-        <button class="reset-btn" id="resetBtn" type="button">Reset to defaults</button>
+        <button class="reset-btn" id="resetBtn" type="button">Reset &amp; redo setup</button>
       </div>
     </div>
   </details>
@@ -558,16 +606,20 @@
     the chart, earnings on Summary. No live market connection. Break-even win rate is the odds floor —
     below it the trade is negative-EV no matter how you size it.
   </footer>
+
+  </div>
 </div>
 
 <script>
 (function () {
   "use strict";
 
+  // capital and breakbudget intentionally start at 0: the setup gate must supply
+  // them, so a fresh install can never produce a plausible but wrongly-scaled size.
   var DEFAULTS = {
-    capital: 100000,
+    capital: 0,
     riskpct: 2,
-    breakbudget: 3000,
+    breakbudget: 0,
     maxpct: 20,
     betaexpct: 25,
     gapquality: 15,
@@ -635,6 +687,43 @@
     if (t === "quality") return cfg.gapquality;
     if (t === "growth") return cfg.gapgrowth;
     return cfg.gapspec;
+  }
+
+  // Settings whose inputs are text-with-thousands-separators rather than type=number.
+  var FORMATTED_CFG = ["capital", "breakbudget"];
+
+  function numFrom(node) {
+    return parseFloat(String(node.value).replace(/,/g, ""));
+  }
+
+  function grouped(v) { return Math.round(v).toLocaleString("en-US"); }
+
+  // Re-group digits as the user types, keeping the caret in the same logical spot.
+  function groupDigits(node, onChange) {
+    node.addEventListener("input", function () {
+      var caret = node.selectionStart;
+      var digitsBefore = node.value.slice(0, caret).replace(/\D/g, "").length;
+      var digits = node.value.replace(/\D/g, "");
+      if (!digits) {
+        node.value = "";
+        if (onChange) onChange();
+        return;
+      }
+      var formatted = parseInt(digits, 10).toLocaleString("en-US");
+      node.value = formatted;
+      var pos = 0, seen = 0;
+      if (digitsBefore > 0) {
+        for (var i = 0; i < formatted.length; i++) {
+          pos = i + 1;
+          if (/\d/.test(formatted.charAt(i))) {
+            seen++;
+            if (seen === digitsBefore) break;
+          }
+        }
+      }
+      try { node.setSelectionRange(pos, pos); } catch (e) {}
+      if (onChange) onChange();
+    });
   }
 
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -748,6 +837,11 @@
   function recalc() {
     fxField.hidden = inCcy.value !== "USD";
 
+    if (!(cfg.capital > 0) || !(cfg.breakbudget > 0)) {
+      blankOut("set up your rules");
+      return;
+    }
+
     var price = parseFloat(inPrice.value);
     var atr = parseFloat(inAtr.value);
     var beta = parseFloat(inBeta.value);
@@ -790,7 +884,7 @@
       candidates["beta-exposure cap"] = (cfg.capital * (cfg.betaexpct / 100)) / beta;
     }
 
-    var avgVol = parseFloat(inAvgVol.value);
+    var avgVol = numFrom(inAvgVol);
     if (avgVol > 0) {
       var dollarVolNis = toNis(avgVol * price, inCcy.value, fx);
       if (dollarVolNis) candidates["liquidity cap"] = dollarVolNis * (cfg.liqpct / 100);
@@ -929,11 +1023,12 @@
     outFlags.innerHTML = flagsHtml;
   }
 
-  [inPrice, inCcy, inFx, inAtr, inBeta, inSupport, inResistance, inAvgVol, in52h, in52l, inEntryDate, inEarnings]
+  [inPrice, inCcy, inFx, inAtr, inBeta, inSupport, inResistance, in52h, in52l, inEntryDate, inEarnings]
     .forEach(function (input) {
       input.addEventListener("input", recalc);
       input.addEventListener("change", recalc);
     });
+  groupDigits(inAvgVol, recalc);
 
   // ---- settings ----
   var cfgInputs = {};
@@ -943,7 +1038,13 @@
   });
 
   function renderSettingsInputs() {
-    Object.keys(cfgInputs).forEach(function (k) { cfgInputs[k].value = cfg[k]; });
+    Object.keys(cfgInputs).forEach(function (k) {
+      if (FORMATTED_CFG.indexOf(k) !== -1) {
+        cfgInputs[k].value = cfg[k] > 0 ? grouped(cfg[k]) : "";
+      } else {
+        cfgInputs[k].value = cfg[k];
+      }
+    });
   }
 
   function refreshAll() {
@@ -953,22 +1054,88 @@
   }
 
   Object.keys(cfgInputs).forEach(function (k) {
-    cfgInputs[k].addEventListener("input", function () {
-      var v = parseFloat(cfgInputs[k].value);
+    var commit = function () {
+      var v = numFrom(cfgInputs[k]);
       if (!isNaN(v)) {
         cfg[k] = v;
         saveSettings();
         refreshAll();
       }
-    });
+    };
+    if (FORMATTED_CFG.indexOf(k) !== -1) groupDigits(cfgInputs[k], commit);
+    else cfgInputs[k].addEventListener("input", commit);
+  });
+
+  // ---- first-run setup gate ----
+  var SETUP_KEY = "riskSizerSetup_v3";
+  var setupCapital = el("setup-capital"), setupMaxSpec = el("setup-maxspec");
+  var setupDerived = el("setupDerived"), setupSave = el("setupSave");
+
+  function isSetUp() {
+    if (!(cfg.capital > 0) || !(cfg.breakbudget > 0)) return false;
+    try { return localStorage.getItem(SETUP_KEY) === "1"; } catch (e) { return true; }
+  }
+
+  function showSetup() {
+    el("setupCard").hidden = false;
+    el("appBody").hidden = true;
+    el("rulesStrip").hidden = true;
+    renderSetupDerived();
+  }
+
+  function showApp() {
+    el("setupCard").hidden = true;
+    el("appBody").hidden = false;
+    el("rulesStrip").hidden = false;
+  }
+
+  function renderSetupDerived() {
+    var cap = numFrom(setupCapital);
+    var spec = numFrom(setupMaxSpec);
+    var ok = cap > 0 && spec > 0 && spec <= cap;
+    var msg;
+    if (!(cap > 0)) {
+      msg = "Enter your total capital.";
+    } else if (!(spec > 0)) {
+      msg = "Enter the most you'd put in one speculative name.";
+    } else if (spec > cap) {
+      msg = "That's more than your total capital.";
+    } else {
+      msg = "Risk budget: " + nis(cap * cfg.riskpct / 100) + " per trade (" + cfg.riskpct + "% of capital)."
+        + "\nThesis-break budget: " + nis(spec * cfg.gapspec / 100)
+        + " — what a " + cfg.gapspec + "% gap costs on a " + nis(spec) + " position."
+        + "\nAll of it is editable later under Your rules.";
+    }
+    setupDerived.textContent = msg;
+    setupSave.disabled = !ok;
+  }
+
+  groupDigits(setupCapital, renderSetupDerived);
+  groupDigits(setupMaxSpec, renderSetupDerived);
+
+  setupSave.addEventListener("click", function () {
+    var cap = numFrom(setupCapital);
+    var spec = numFrom(setupMaxSpec);
+    if (!(cap > 0) || !(spec > 0) || spec > cap) return;
+    cfg.capital = cap;
+    cfg.breakbudget = spec * (cfg.gapspec / 100);
+    saveSettings();
+    try { localStorage.setItem(SETUP_KEY, "1"); } catch (e) {}
+    renderSettingsInputs();
+    showApp();
+    refreshAll();
   });
 
   el("resetBtn").addEventListener("click", function () {
     cfg = {};
     Object.keys(DEFAULTS).forEach(function (k) { cfg[k] = DEFAULTS[k]; });
     saveSettings();
+    try { localStorage.removeItem(SETUP_KEY); } catch (e) {}
     renderSettingsInputs();
-    refreshAll();
+    setupCapital.value = "";
+    setupMaxSpec.value = "";
+    el("settingsPanel").open = false;
+    showSetup();
   });
 
   // ---- init ----
@@ -976,6 +1143,7 @@
   renderSettingsInputs();
   inFx.value = cfg.fx;
   inEntryDate.value = todayStr();
+  if (isSetUp()) showApp(); else showSetup();
   refreshAll();
 })();
 </script>
