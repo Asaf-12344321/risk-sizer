@@ -1405,22 +1405,42 @@
     return a;
   }
 
-  function rsi14(bars) {
-    if (bars.length < 15) return null;
-    var g = 0, l = 0;
-    for (var i = bars.length - 14; i < bars.length; i++) {
+  // Wilder-smoothed RSI over the whole series — this is what TradingView and Yahoo show.
+  // A simple mean of the last 14 deltas (which this used to do) is off by up to 9 points.
+  function rsi14(bars, period) {
+    var n = period || 14;
+    if (bars.length < n + 2) return null;
+    var gains = [], losses = [];
+    for (var i = 1; i < bars.length; i++) {
       var d = bars[i][3] - bars[i - 1][3];
-      if (d > 0) g += d; else l -= d;
+      gains.push(d > 0 ? d : 0);
+      losses.push(d < 0 ? -d : 0);
     }
-    g /= 14; l /= 14;
-    if (l === 0) return 100;
-    return 100 - 100 / (1 + g / l);
+    var ag = 0, al = 0, j;
+    for (j = 0; j < n; j++) { ag += gains[j]; al += losses[j]; }
+    ag /= n; al /= n;
+    for (j = n; j < gains.length; j++) {
+      ag = (ag * (n - 1) + gains[j]) / n;
+      al = (al * (n - 1) + losses[j]) / n;
+    }
+    if (al === 0) return 100;
+    return 100 - 100 / (1 + ag / al);
   }
 
+  // Calendar month, not 22 trading bars — Yahoo quotes a calendar month, and on a
+  // volatile name the two differ by more than 14 percentage points.
   function monthChange(bars) {
-    if (bars.length < 22) return null;
-    var then = bars[bars.length - 22][3];
-    return then ? (bars[bars.length - 1][3] / then - 1) * 100 : null;
+    if (bars.length < 5) return null;
+    var lastBar = bars[bars.length - 1];
+    var target = new Date(lastBar[0] + "T00:00:00Z");
+    target.setUTCDate(target.getUTCDate() - 30);
+    var iso = target.toISOString().slice(0, 10);
+    var ref = null;
+    for (var i = bars.length - 1; i >= 0; i--) {
+      if (bars[i][0] <= iso) { ref = bars[i][3]; break; }
+    }
+    if (!ref) return null;
+    return (lastBar[3] / ref - 1) * 100;
   }
 
   function lookupTicker(sym) {
@@ -1450,12 +1470,35 @@
     if (t.avgvol) inAvgVol.value = Math.round(t.avgvol).toLocaleString("en-US");
     if (t.h52) in52h.value = t.h52;
     if (t.l52) in52l.value = t.l52;
-    var r = rsi14(bars); if (r !== null) inRsi.value = r.toFixed(0);
+    var r = rsi14(bars, 14); if (r !== null) inRsi.value = r.toFixed(0);
     var m = monthChange(bars); if (m !== null) inRunup.value = m.toFixed(1);
     inTicker.value = sym;
     renderFeedStatus();
     syncAddBtn();
     recalc();
+
+    // Show the provenance so you can check these against your chart rather than trust them.
+    var n = el("feedStatus");
+    var lastBar = bars[bars.length - 1];
+    n.className = "sub";
+    n.innerHTML = "<b>" + esc(sym) + "</b>" + (t.name ? " · " + esc(t.name) : "")
+      + " — filled from the close of <b>" + lastBar[0] + "</b> (" + num(lastBar[3], 2)
+      + "), not a live price."
+      + "<br>ATR is Wilder/RMA(14) — set your chart's ATR smoothing to RMA to compare."
+      + " RSI is Wilder(14). 1-month change is calendar (vs the close on or before "
+      + monthRefDate(bars) + ")."
+      + "<br>Source: Yahoo Finance daily bars, " + bars.length + " of them, published "
+      + (feedAgeHours() === null ? feed.updated
+         : feedAgeHours() < 1 ? Math.round(feedAgeHours() * 60) + " min ago"
+         : feedAgeHours().toFixed(0) + "h ago") + ".";
+  }
+
+  function monthRefDate(bars) {
+    var target = new Date(bars[bars.length - 1][0] + "T00:00:00Z");
+    target.setUTCDate(target.getUTCDate() - 30);
+    var iso = target.toISOString().slice(0, 10);
+    for (var i = bars.length - 1; i >= 0; i--) if (bars[i][0] <= iso) return bars[i][0];
+    return iso;
   }
 
   el("lookupBtn").addEventListener("click", fillFromFeed);
