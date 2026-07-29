@@ -310,6 +310,31 @@
   }
   .reset-btn:hover { color: var(--bad); border-color: var(--bad); }
 
+  .trailmode-row { margin: 2px 0; }
+  .trailmode-row .seg { background: var(--ink-raised); }
+  .ladder-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table.ladder {
+    border-collapse: collapse;
+    width: 100%;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+  }
+  table.ladder th, table.ladder td { padding: 6px 8px; text-align: right; white-space: nowrap; }
+  table.ladder th {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    font-weight: 700;
+    border-bottom: 1px solid var(--ink-border);
+  }
+  table.ladder td:last-child, table.ladder th:last-child { text-align: left; color: var(--text-dim); white-space: normal; }
+  table.ladder tr + tr td { border-top: 1px solid color-mix(in srgb, var(--ink-border) 55%, transparent); }
+  table.ladder tr.now td { color: var(--text); font-weight: 700; }
+  table.ladder tr.arm td { color: var(--accent); font-weight: 700; }
+  table.ladder tr.arm td:last-child { color: var(--accent); }
+
   .setup-intro { font-size: 13px; color: var(--text-dim); line-height: 1.5; margin: 0; }
   .setup-derived {
     font-family: var(--font-mono);
@@ -444,6 +469,18 @@
       </div>
     </div>
 
+    <div class="section-label">Entry timing <span class="hint">— optional, but this is mistake #4</span></div>
+    <div class="row2">
+      <div class="field">
+        <label for="in-rsi">RSI (14)</label>
+        <input type="number" inputmode="decimal" step="0.1" id="in-rsi" placeholder="e.g. 58">
+      </div>
+      <div class="field">
+        <label for="in-runup">1-month change %</label>
+        <input type="number" inputmode="decimal" step="0.1" id="in-runup" placeholder="e.g. 12">
+      </div>
+    </div>
+
     <div class="section-label">Timing <span class="hint">— optional</span></div>
     <div class="row2">
       <div class="field">
@@ -491,23 +528,22 @@
       <div class="formula" id="out-stop-formula"></div>
     </div>
 
-    <div class="section-label">Target</div>
+    <div class="section-label">Stop ladder <span class="hint">— write this down, Leumi won't trail for you</span></div>
     <div class="result">
       <div class="headline">
-        <span class="num" id="out-target">—</span>
-        <span class="status-chip" id="out-rr">R:R —</span>
+        <span class="num" id="out-arm">—</span>
+        <span class="status-chip" id="out-arm-chip">breakeven at</span>
       </div>
-      <div class="grid2">
-        <div class="mini-stat">
-          <div class="label">Profit at target</div>
-          <div class="val" id="out-profit">—</div>
-        </div>
-        <div class="mini-stat">
-          <div class="label">Break-even win rate</div>
-          <div class="val" id="out-breakeven">—</div>
+      <div class="sub" id="out-rule"></div>
+      <div class="trailmode-row">
+        <div class="seg" id="trailSeg" role="group" aria-label="Trail type">
+          <button class="seg-btn" type="button" data-mode="atr" aria-pressed="true">ATR distance<small>gap tightens as it rises</small></button>
+          <button class="seg-btn" type="button" data-mode="pct" aria-pressed="false">Constant %<small>gap stays the same</small></button>
         </div>
       </div>
-      <div class="formula" id="out-target-formula"></div>
+      <div class="ladder-wrap">
+        <table class="ladder" id="out-ladder"></table>
+      </div>
     </div>
 
     <div class="flag-row" id="out-flags"></div>
@@ -558,12 +594,28 @@
           <input type="number" inputmode="decimal" step="0.1" id="cfg-liqpct">
         </div>
         <div class="field">
-          <label for="cfg-atrmult">ATR multiplier</label>
-          <input type="number" inputmode="decimal" step="0.1" id="cfg-atrmult">
+          <label for="cfg-initmult">Initial stop (x ATR)</label>
+          <input type="number" inputmode="decimal" step="0.1" id="cfg-initmult">
         </div>
         <div class="field">
-          <label for="cfg-supportfloor">Support floor (x ATR)</label>
-          <input type="number" inputmode="decimal" step="0.1" id="cfg-supportfloor">
+          <label for="cfg-trailmult">Trail distance (x ATR)</label>
+          <input type="number" inputmode="decimal" step="0.1" id="cfg-trailmult">
+        </div>
+        <div class="field">
+          <label for="cfg-armpct">Arm trail at (+%)</label>
+          <input type="number" inputmode="decimal" step="1" id="cfg-armpct">
+        </div>
+        <div class="field">
+          <label for="cfg-trailpct">Constant-% trail (%)</label>
+          <input type="number" inputmode="decimal" step="1" id="cfg-trailpct">
+        </div>
+        <div class="field">
+          <label for="cfg-rsiwarn">Warn if RSI above</label>
+          <input type="number" inputmode="decimal" step="1" id="cfg-rsiwarn">
+        </div>
+        <div class="field">
+          <label for="cfg-runupwarn">Warn if 1-mo run-up &gt; (%)</label>
+          <input type="number" inputmode="decimal" step="1" id="cfg-runupwarn">
         </div>
         <div class="field">
           <label for="cfg-minstop">Min stop bound (%)</label>
@@ -572,10 +624,6 @@
         <div class="field">
           <label for="cfg-maxstop">Max stop bound (%)</label>
           <input type="number" inputmode="decimal" step="0.1" id="cfg-maxstop">
-        </div>
-        <div class="field">
-          <label for="cfg-targetr">Target reward:risk</label>
-          <input type="number" inputmode="decimal" step="0.1" id="cfg-targetr">
         </div>
         <div class="field">
           <label for="cfg-drawdown">Drawdown warn (% off high)</label>
@@ -622,24 +670,37 @@
     breakbudget: 0,
     maxpct: 20,
     betaexpct: 25,
-    gapquality: 15,
-    gapgrowth: 25,
-    gapspec: 40,
+    gapquality: 20,
+    gapgrowth: 35,
+    gapspec: 55,
     liqpct: 5,
-    atrmult: 2.5,
-    supportfloor: 1.0,
-    minstop: 3,
-    maxstop: 40,
-    targetr: 2.0,
+    initmult: 3.0,
+    trailmult: 2.5,
+    armpct: 15,
+    trailpct: 20,
+    minstop: 8,
+    maxstop: 45,
+    rsiwarn: 60,
+    runupwarn: 15,
     drawdown: 40,
-    holddays: 45,
+    holddays: 90,
     fx: 3.65
   };
 
-  var KEY = "riskSizerSettings_v3";
-  var TIER_KEY = "riskSizerTier_v3";
+  var KEY = "riskSizerSettings_v4";
+  var TIER_KEY = "riskSizerTier_v4";
+  var TRAILMODE_KEY = "riskSizerTrailMode_v4";
   var cfg = loadSettings();
   var tier = loadTier();
+  var trailMode = loadTrailMode();
+
+  function loadTrailMode() {
+    try {
+      var m = localStorage.getItem(TRAILMODE_KEY);
+      if (m === "atr" || m === "pct") return m;
+    } catch (e) {}
+    return "atr";
+  }
 
   var KNOWN_BETAS = [
     { t: "MSFT", b: 1.13 },
@@ -727,6 +788,17 @@
   }
 
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  // Round a raw step up to the nearest "human" increment (1, 2, 2.5, 5, 10, 25, 50, ...).
+  function niceStep(raw) {
+    if (!(raw > 0)) return 1;
+    var mag = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10));
+    var mults = [1, 2, 2.5, 5, 10];
+    for (var i = 0; i < mults.length; i++) {
+      if (mag * mults[i] >= raw - 1e-9) return mag * mults[i];
+    }
+    return mag * 10;
+  }
   function nis(v) { return "₪" + Math.round(v).toLocaleString("en-US"); }
   function pct(v) { return v.toFixed(1) + "%"; }
   function num(v, d) { return v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }); }
@@ -769,7 +841,21 @@
     Array.prototype.forEach.call(el("tierSeg").querySelectorAll(".seg-btn"), function (b) {
       b.setAttribute("aria-pressed", b.dataset.tier === tier ? "true" : "false");
     });
+    Array.prototype.forEach.call(el("trailSeg").querySelectorAll(".seg-btn"), function (b) {
+      b.setAttribute("aria-pressed", b.dataset.mode === trailMode ? "true" : "false");
+    });
   }
+
+  el("trailSeg").addEventListener("click", function (e) {
+    var btn = e.target.closest(".seg-btn");
+    if (!btn) return;
+    trailMode = btn.dataset.mode;
+    try { localStorage.setItem(TRAILMODE_KEY, trailMode); } catch (err) {}
+    Array.prototype.forEach.call(el("trailSeg").querySelectorAll(".seg-btn"), function (b) {
+      b.setAttribute("aria-pressed", b.dataset.mode === trailMode ? "true" : "false");
+    });
+    recalc();
+  });
 
   el("tierSeg").addEventListener("click", function (e) {
     var btn = e.target.closest(".seg-btn");
@@ -808,9 +894,10 @@
   var outStopPct = el("out-stoppct"), outRisk = el("out-risk"), outOfCapital = el("out-ofcapital");
   var outSizeFormula = el("out-size-formula");
   var outStopPrice = el("out-stopprice"), outStopStatus = el("out-stop-status"), outStopFormula = el("out-stop-formula");
-  var outTarget = el("out-target"), outRR = el("out-rr"), outProfit = el("out-profit");
-  var outBreakeven = el("out-breakeven"), outTargetFormula = el("out-target-formula");
+  var outArm = el("out-arm"), outArmChip = el("out-arm-chip"), outRule = el("out-rule");
+  var outLadder = el("out-ladder");
   var outFlags = el("out-flags");
+  var inRsi = el("in-rsi"), inRunup = el("in-runup");
 
   function blankOut(msg) {
     outSize.textContent = "₪ —";
@@ -825,12 +912,11 @@
     outStopStatus.textContent = "—";
     outStopStatus.className = "status-chip";
     outStopFormula.textContent = "";
-    outTarget.textContent = "—";
-    outRR.textContent = "R:R —";
-    outRR.className = "status-chip";
-    outProfit.textContent = "—";
-    outBreakeven.textContent = "—";
-    outTargetFormula.textContent = "";
+    outArm.textContent = "—";
+    outArmChip.textContent = "breakeven at";
+    outArmChip.className = "status-chip";
+    outRule.textContent = "";
+    outLadder.innerHTML = "";
     outFlags.innerHTML = "";
   }
 
@@ -852,17 +938,19 @@
       return;
     }
 
-    // ---- stop: ATR distance, floored/capped by support ----
-    var atrStopDistance = cfg.atrmult * atr;
+    // ---- initial stop: N x ATR, and support may only WIDEN it, never tighten it.
+    // A level closer than the ATR floor sits inside the daily noise band and gets wicked out;
+    // measured on 40 of Asaf's own positions, stops inside ~2.5x ATR were wrong 80-93% of the time.
+    var atrStopDistance = cfg.initmult * atr;
     var support = parseFloat(inSupport.value);
     var stopDistance, stopBasis;
-    if (support > 0 && support < price) {
-      var supportDistance = price - support;
-      stopDistance = Math.max(cfg.supportfloor * atr, Math.min(atrStopDistance, supportDistance));
-      stopBasis = "support " + num(support, 2) + ", floored/capped by ATR";
+    if (support > 0 && support < price && (price - support) > atrStopDistance) {
+      stopDistance = price - support;
+      stopBasis = "below support " + num(support, 2) + " (wider than " + cfg.initmult.toFixed(1) + "x ATR)";
     } else {
       stopDistance = atrStopDistance;
-      stopBasis = cfg.atrmult.toFixed(1) + "x ATR (no support entered)";
+      stopBasis = cfg.initmult.toFixed(1) + "x ATR"
+        + (support > 0 && support < price ? " (support " + num(support, 2) + " is inside the noise band — ignored)" : "");
     }
 
     var rawStopPct = (stopDistance / price) * 100;
@@ -946,48 +1034,79 @@
       nis(riskAmount) + " at risk of " + nis(riskBudget) + " budget"
     ].join(" · ");
 
-    // ---- target ----
-    var targetRPrice = price + cfg.targetr * effStopDistance;
-    var resistance = parseFloat(inResistance.value);
-    var targetPrice, targetBasis;
-    if (resistance > price && resistance < targetRPrice) {
-      targetPrice = resistance;
-      targetBasis = "capped by resistance " + num(resistance, 2)
-        + " (below the " + cfg.targetr + "x target of " + num(targetRPrice, 2) + ")";
-    } else {
-      targetPrice = targetRPrice;
-      targetBasis = cfg.targetr + "x reward:risk off the stop";
+    // ---- stop ladder ----
+    // The trail only arms once price has been up armpct%, and is floored at entry from then on,
+    // so a trade that has worked can never become a loser. This is the piece that fixes both
+    // selling winners early AND riding losers down.
+    var armPrice = price * (1 + cfg.armpct / 100);
+    var trailDist = trailMode === "pct" ? null : cfg.trailmult * atr;
+    function trailStopFor(high) {
+      var d = trailMode === "pct" ? high * (cfg.trailpct / 100) : trailDist;
+      return Math.min(high - d, high);
     }
-    var rewardRisk = (targetPrice - price) / effStopDistance;
-    var profitPct = (targetPrice - price) / price;
-    var profitNis = size * profitPct;
-    var breakEvenWinRate = 1 / (1 + rewardRisk) * 100;
+    outArm.textContent = num(armPrice, 2);
+    outArmChip.textContent = "breakeven at +" + cfg.armpct + "%";
+    outArmChip.className = "status-chip good";
+    outRule.textContent = trailMode === "pct"
+      ? "stop = max(" + num(stopPrice, 2) + ", highest price − " + cfg.trailpct + "%), never below "
+        + num(price, 2) + " once " + num(armPrice, 2) + " trades"
+      : "stop = max(" + num(stopPrice, 2) + ", highest price − " + num(trailDist, 2) + "), never below "
+        + num(price, 2) + " once " + num(armPrice, 2) + " trades";
 
-    outTarget.textContent = num(targetPrice, 2);
-    outRR.textContent = rewardRisk.toFixed(2) + ":1";
-    if (rewardRisk >= cfg.targetr - 0.001) {
-      outRR.className = "status-chip good";
-    } else if (rewardRisk >= 1.5) {
-      outRR.className = "status-chip warn";
-    } else {
-      outRR.className = "status-chip bad";
+    var rungs = [];
+    rungs.push({ label: "— now —", stop: stopPrice, why: "set this at entry", cls: "now" });
+    rungs.push({ px: armPrice, stop: price, why: "jumps to BREAKEVEN — trade can no longer lose", cls: "arm" });
+    // Rungs land on round numbers — you type these into Leumi by hand, so 80.00 beats 77.76.
+    var step = niceStep(Math.max(atr, price * 0.05));
+    var lvl = Math.ceil(armPrice / step) * step;
+    var lastStop = price, count = 0;
+    while (count < 9) {
+      var s = Math.max(price, trailStopFor(lvl));
+      if (s > lastStop + 1e-9) {
+        rungs.push({ px: lvl, stop: s, why: "trail", cls: "" });
+        lastStop = s;
+      } else if (lvl > armPrice * 1.001) {
+        rungs.push({ px: lvl, stop: lastStop, why: "breakeven floor still binding", cls: "" });
+      }
+      lvl += step; count++;
     }
-    outProfit.textContent = nis(profitNis) + " (+" + (profitPct * 100).toFixed(1) + "%)";
-    outBreakeven.textContent = breakEvenWinRate.toFixed(0) + "%";
-    outTargetFormula.textContent = "target: " + targetBasis
-      + " · you need to be right >" + breakEvenWinRate.toFixed(0) + "% of the time at " + rewardRisk.toFixed(2) + ":1";
+    var lh = "<tr><th>price reaches</th><th>move stop to</th><th>gap</th><th>locked in</th><th>why</th></tr>";
+    lh += rungs.map(function (r) {
+      if (r.px === undefined) {
+        return '<tr class="' + r.cls + '"><td>' + r.label + "</td><td>" + num(r.stop, 2) + "</td><td>"
+          + pct((price - r.stop) / price * 100) + "</td><td>—</td><td>" + r.why + "</td></tr>";
+      }
+      var locked = (r.stop - price) / price * 100;
+      return '<tr class="' + r.cls + '"><td>' + num(r.px, 2) + " <small>(" + (r.px / price - 1 >= 0 ? "+" : "")
+        + ((r.px / price - 1) * 100).toFixed(0) + "%)</small></td><td>" + num(r.stop, 2) + "</td><td>"
+        + pct((r.px - r.stop) / r.px * 100) + "</td><td>" + (locked >= 0 ? "+" : "") + locked.toFixed(1)
+        + "%</td><td>" + r.why + "</td></tr>";
+    }).join("");
+    outLadder.innerHTML = lh;
 
     // ---- flags ----
     var flagsHtml = "";
 
-    if (rewardRisk < 1.5) {
-      flagsHtml += '<div class="flag bad"><span class="dot"></span><span>Only ' + rewardRisk.toFixed(2)
-        + ':1 to the nearest resistance — you\'d need a '
-        + breakEvenWinRate.toFixed(0) + '% hit rate just to break even. Thin odds; consider skipping rather than resizing.</span></div>';
+    var rsi = parseFloat(inRsi.value), runup = parseFloat(inRunup.value);
+    var extended = [];
+    if (rsi > 0 && rsi > cfg.rsiwarn) extended.push("RSI " + rsi.toFixed(0) + " (>" + cfg.rsiwarn + ")");
+    if (!isNaN(runup) && runup > cfg.runupwarn) extended.push("up " + runup.toFixed(0) + "% in a month (>" + cfg.runupwarn + "%)");
+    if (extended.length) {
+      flagsHtml += '<div class="flag warn"><span class="dot"></span><span>Buying extended: <b>'
+        + extended.join(", ") + "</b>. Your own record: entries with RSI>60 averaged −3.7% and entries after a >15% "
+        + "monthly run averaged −5.1%, versus +4.0% buying oversold. Consider waiting for a pullback.</span></div>";
+    } else if ((rsi > 0 && rsi < 45) || (!isNaN(runup) && runup < 0)) {
+      flagsHtml += '<div class="flag quiet"><span></span><span>Entry timing looks favourable — your oversold entries averaged +4.0%.</span></div>';
     }
 
     if (tier === "spec" && binding === "thesis-break cap") {
-      flagsHtml += '<div class="flag warn"><span class="dot"></span><span>Speculative name held to the break cap — the stop is not your real risk here, a news gap is.</span></div>';
+      flagsHtml += '<div class="flag warn"><span class="dot"></span><span>Speculative name held to the break cap — sized so a '
+        + gapPct + "% drawdown costs " + nis(gapLoss) + ", which you can sit through.</span></div>";
+    }
+
+    if (stopPct < cfg.minstop + 0.01 && rawStopPct < cfg.minstop) {
+      flagsHtml += '<div class="flag warn"><span class="dot"></span><span>The ATR stop would sit only '
+        + pct(rawStopPct) + " away — widened to the " + cfg.minstop + "% floor. Anything tighter gets wicked out.</span></div>";
     }
 
     var high52 = parseFloat(in52h.value), low52 = parseFloat(in52l.value);
@@ -1023,7 +1142,7 @@
     outFlags.innerHTML = flagsHtml;
   }
 
-  [inPrice, inCcy, inFx, inAtr, inBeta, inSupport, inResistance, in52h, in52l, inEntryDate, inEarnings]
+  [inPrice, inCcy, inFx, inAtr, inBeta, inSupport, inResistance, in52h, in52l, inEntryDate, inEarnings, inRsi, inRunup]
     .forEach(function (input) {
       input.addEventListener("input", recalc);
       input.addEventListener("change", recalc);
