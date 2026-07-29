@@ -310,6 +310,69 @@
   }
   .reset-btn:hover { color: var(--bad); border-color: var(--bad); }
 
+  .tabs {
+    display: flex;
+    background: var(--ink-raised);
+    border: 1px solid var(--ink-border);
+    border-radius: 11px;
+    padding: 3px;
+    gap: 3px;
+  }
+  .tab-btn {
+    flex: 1;
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-family: var(--font-ui);
+    font-size: 13.5px;
+    font-weight: 600;
+    padding: 9px 4px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .tab-btn[aria-selected="true"] { background: var(--accent); color: var(--on-accent); }
+  .tab-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .add-row { display: flex; flex-direction: column; gap: 10px; border-top: 1px dashed var(--ink-border); padding-top: 14px; }
+
+  .pos {
+    background: var(--ink);
+    border: 1px solid var(--ink-border);
+    border-radius: 12px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .pos + .pos { margin-top: 10px; }
+  .pos-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .pos-tick { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+  .pos-meta { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+  .pos-now {
+    display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  }
+  .pos-now .lbl { font-family: var(--font-ui); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); }
+  .pos-now .stop { font-size: 22px; font-weight: 700; }
+  .pos-next {
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
+    background: var(--ink-raised); border: 1px solid var(--ink-border);
+    border-radius: 9px; padding: 9px 10px; color: var(--text-dim);
+  }
+  .pos-next b { color: var(--text); }
+  .pos-actions { display: flex; gap: 8px; }
+  .pos-actions button {
+    appearance: none; font-family: var(--font-ui); font-size: 12.5px; font-weight: 600;
+    border-radius: 8px; padding: 9px 12px; cursor: pointer; border: 1px solid var(--ink-border);
+  }
+  .btn-reached { background: var(--accent); color: var(--on-accent); border-color: var(--accent); flex: 1; }
+  .btn-reached:disabled { background: var(--ink-raised); color: var(--text-dim); border-color: var(--ink-border); cursor: not-allowed; }
+  .btn-undo, .btn-close { background: transparent; color: var(--text-dim); }
+  .btn-close:hover { color: var(--bad); border-color: var(--bad); }
+  .pos-empty { font-size: 13px; color: var(--text-dim); line-height: 1.5; }
+  .pos-safe { color: var(--good); }
+
   .trailmode-row { margin: 2px 0; }
   .trailmode-row .seg { background: var(--ink-raised); }
   .ladder-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -404,6 +467,25 @@
   </section>
 
   <div id="appBody" hidden>
+
+  <div class="tabs" role="tablist">
+    <button class="tab-btn" role="tab" id="tab-calc" aria-selected="true">Size a trade</button>
+    <button class="tab-btn" role="tab" id="tab-pos" aria-selected="false">My positions <span id="posCount"></span></button>
+  </div>
+
+  <div id="posPanel" hidden>
+    <section class="card">
+      <div class="section-label">Set one alert per position <span class="hint">— then wait</span></div>
+      <p class="setup-intro">
+        Put a price alert in the Yahoo app at each <b>next alert</b> price below. When one fires,
+        tap <b>Reached</b>, move the stop at Leumi to the new number, and set the next alert.
+        Measured on your own history that is about <b>5 stop moves a month</b> for a whole book — you never watch anything.
+      </p>
+      <div id="posList"></div>
+    </section>
+  </div>
+
+  <div id="calcPanel">
 
   <section class="card">
     <div class="section-label">The stock</div>
@@ -547,7 +629,17 @@
     </div>
 
     <div class="flag-row" id="out-flags"></div>
+
+    <div class="add-row">
+      <div class="field">
+        <label for="in-ticker">Ticker <span class="opt">to track this position</span></label>
+        <input type="text" autocomplete="off" id="in-ticker" placeholder="e.g. ASTS">
+      </div>
+      <button class="primary-btn" type="button" id="addPosBtn" disabled>Track this position</button>
+    </div>
   </section>
+
+  </div>
 
   <details class="settings" id="settingsPanel">
     <summary>Your rules</summary>
@@ -788,6 +880,32 @@
   }
 
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  // Shared by the calculator and the positions tracker so both show identical levels.
+  // Rungs land on round numbers: these get typed into Leumi by hand, so 80.00 beats 77.76.
+  function buildLadder(price, atr, initialStop, armPrice) {
+    var trailDist = cfg.trailmult * atr;
+    function trailStopFor(high) {
+      var dist = trailMode === "pct" ? high * (cfg.trailpct / 100) : trailDist;
+      return Math.min(high - dist, high);
+    }
+    var rungs = [{ label: "— now —", stop: initialStop, why: "set this at entry", cls: "now" }];
+    rungs.push({ px: armPrice, stop: price, why: "jumps to BREAKEVEN — trade can no longer lose", cls: "arm" });
+    var step = niceStep(Math.max(atr, price * 0.05));
+    var lvl = Math.ceil(armPrice / step) * step;
+    var lastStop = price, count = 0;
+    while (count < 9) {
+      var s = Math.max(price, trailStopFor(lvl));
+      if (s > lastStop + 1e-9) {
+        rungs.push({ px: lvl, stop: s, why: "trail", cls: "" });
+        lastStop = s;
+      } else if (lvl > armPrice * 1.001) {
+        rungs.push({ px: lvl, stop: lastStop, why: "breakeven floor still binding", cls: "" });
+      }
+      lvl += step; count++;
+    }
+    return rungs;
+  }
 
   // Round a raw step up to the nearest "human" increment (1, 2, 2.5, 5, 10, 25, 50, ...).
   function niceStep(raw) {
@@ -1053,23 +1171,7 @@
       : "stop = max(" + num(stopPrice, 2) + ", highest price − " + num(trailDist, 2) + "), never below "
         + num(price, 2) + " once " + num(armPrice, 2) + " trades";
 
-    var rungs = [];
-    rungs.push({ label: "— now —", stop: stopPrice, why: "set this at entry", cls: "now" });
-    rungs.push({ px: armPrice, stop: price, why: "jumps to BREAKEVEN — trade can no longer lose", cls: "arm" });
-    // Rungs land on round numbers — you type these into Leumi by hand, so 80.00 beats 77.76.
-    var step = niceStep(Math.max(atr, price * 0.05));
-    var lvl = Math.ceil(armPrice / step) * step;
-    var lastStop = price, count = 0;
-    while (count < 9) {
-      var s = Math.max(price, trailStopFor(lvl));
-      if (s > lastStop + 1e-9) {
-        rungs.push({ px: lvl, stop: s, why: "trail", cls: "" });
-        lastStop = s;
-      } else if (lvl > armPrice * 1.001) {
-        rungs.push({ px: lvl, stop: lastStop, why: "breakeven floor still binding", cls: "" });
-      }
-      lvl += step; count++;
-    }
+    var rungs = buildLadder(price, atr, stopPrice, armPrice);
     var lh = "<tr><th>price reaches</th><th>move stop to</th><th>gap</th><th>locked in</th><th>why</th></tr>";
     lh += rungs.map(function (r) {
       if (r.px === undefined) {
@@ -1170,6 +1272,7 @@
     renderRulesStrip();
     renderTierLabels();
     recalc();
+    renderPositions();
   }
 
   Object.keys(cfgInputs).forEach(function (k) {
@@ -1184,6 +1287,128 @@
     if (FORMATTED_CFG.indexOf(k) !== -1) groupDigits(cfgInputs[k], commit);
     else cfgInputs[k].addEventListener("input", commit);
   });
+
+  // ---- positions tracker ----------------------------------------------------
+  // A position stores only what never changes (entry, ATR) plus how many rungs have been
+  // crossed. So advancing the ladder is one tap: no prices to re-enter, nothing to monitor.
+  var POS_KEY = "riskSizerPositions_v4";
+  var positions = loadPositions();
+
+  function loadPositions() {
+    try {
+      var raw = localStorage.getItem(POS_KEY);
+      if (!raw) return [];
+      var a = JSON.parse(raw);
+      return Array.isArray(a) ? a.filter(function (p) {
+        return p && typeof p.entry === "number" && typeof p.atr === "number";
+      }) : [];
+    } catch (e) { return []; }
+  }
+  function savePositions() {
+    try { localStorage.setItem(POS_KEY, JSON.stringify(positions)); } catch (e) {}
+  }
+
+  function ladderFor(p) {
+    var initialStop = p.entry - cfg.initmult * p.atr;
+    var armPrice = p.entry * (1 + cfg.armpct / 100);
+    return buildLadder(p.entry, p.atr, initialStop, armPrice);
+  }
+
+  function renderPositions() {
+    el("posCount").textContent = positions.length ? "(" + positions.length + ")" : "";
+    var host = el("posList");
+    if (!positions.length) {
+      host.innerHTML = '<p class="pos-empty">No positions tracked yet. Size a trade on the other tab, '
+        + "enter its ticker, and tap <b>Track this position</b>.</p>";
+      return;
+    }
+    host.innerHTML = positions.map(function (p, i) {
+      var rungs = ladderFor(p);
+      var idx = Math.min(p.rung || 0, rungs.length - 1);
+      var cur = rungs[idx];
+      var next = rungs[idx + 1];
+      var atBreakeven = cur.stop >= p.entry - 1e-9;
+      var lockedPct = (cur.stop - p.entry) / p.entry * 100;
+      var out = '<div class="pos">'
+        + '<div class="pos-head"><span class="pos-tick">' + esc(p.tick || "—") + "</span>"
+        + '<span class="pos-meta">entry ' + num(p.entry, 2) + " · ATR " + num(p.atr, 2)
+        + (p.added ? " · " + p.added : "") + "</span></div>"
+        + '<div class="pos-now"><span class="lbl">stop now</span><span class="stop">' + num(cur.stop, 2) + "</span>"
+        + '<span class="lbl">' + (atBreakeven
+            ? '<span class="pos-safe">' + (lockedPct > 0.05 ? "locked in +" + lockedPct.toFixed(1) + "%" : "at breakeven — cannot lose") + "</span>"
+            : "risking " + pct((p.entry - cur.stop) / p.entry * 100)) + "</span></div>";
+      if (next) {
+        out += '<div class="pos-next">Set a price alert at <b>' + num(next.px, 2) + "</b>"
+          + " (" + (next.px / p.entry - 1 >= 0 ? "+" : "") + ((next.px / p.entry - 1) * 100).toFixed(0) + "%)"
+          + " → then move the stop to <b>" + num(next.stop, 2) + "</b>"
+          + (next.cls === "arm" ? " — this is the one that makes the trade safe" : "") + "</div>";
+      } else {
+        out += '<div class="pos-next">Ladder complete — keep the stop at <b>' + num(cur.stop, 2) + "</b> and trail it yourself from here.</div>";
+      }
+      out += '<div class="pos-actions">'
+        + '<button class="btn-reached" type="button" data-act="reached" data-i="' + i + '"'
+        + (next ? "" : " disabled") + ">✓ Reached " + (next ? num(next.px, 2) : "—") + "</button>"
+        + (idx > 0 ? '<button class="btn-undo" type="button" data-act="undo" data-i="' + i + '">Undo</button>' : "")
+        + '<button class="btn-close" type="button" data-act="close" data-i="' + i + '">Sold</button>'
+        + "</div></div>";
+      return out;
+    }).join("");
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  el("posList").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-act]");
+    if (!b) return;
+    var i = parseInt(b.dataset.i, 10);
+    if (!positions[i]) return;
+    if (b.dataset.act === "reached") {
+      var max = ladderFor(positions[i]).length - 1;
+      positions[i].rung = Math.min((positions[i].rung || 0) + 1, max);
+    } else if (b.dataset.act === "undo") {
+      positions[i].rung = Math.max((positions[i].rung || 0) - 1, 0);
+    } else if (b.dataset.act === "close") {
+      positions.splice(i, 1);
+    }
+    savePositions();
+    renderPositions();
+  });
+
+  var inTicker = el("in-ticker"), addPosBtn = el("addPosBtn");
+  function syncAddBtn() {
+    var price = parseFloat(inPrice.value), atr = parseFloat(inAtr.value);
+    addPosBtn.disabled = !(price > 0 && atr > 0 && inTicker.value.trim().length > 0);
+  }
+  inTicker.addEventListener("input", syncAddBtn);
+  inPrice.addEventListener("input", syncAddBtn);
+  inAtr.addEventListener("input", syncAddBtn);
+  addPosBtn.addEventListener("click", function () {
+    var price = parseFloat(inPrice.value), atr = parseFloat(inAtr.value);
+    if (!(price > 0 && atr > 0)) return;
+    positions.push({ tick: inTicker.value.trim().toUpperCase(), entry: price, atr: atr,
+                     rung: 0, tier: tier, added: todayStr() });
+    savePositions();
+    inTicker.value = "";
+    syncAddBtn();
+    renderPositions();
+    selectTab("pos");
+  });
+
+  // ---- tabs ----
+  function selectTab(which) {
+    var pos = which === "pos";
+    el("tab-pos").setAttribute("aria-selected", pos ? "true" : "false");
+    el("tab-calc").setAttribute("aria-selected", pos ? "false" : "true");
+    el("posPanel").hidden = !pos;
+    el("calcPanel").hidden = pos;
+    if (pos) renderPositions();
+  }
+  el("tab-calc").addEventListener("click", function () { selectTab("calc"); });
+  el("tab-pos").addEventListener("click", function () { selectTab("pos"); });
 
   // ---- first-run setup gate ----
   var SETUP_KEY = "riskSizerSetup_v3";
