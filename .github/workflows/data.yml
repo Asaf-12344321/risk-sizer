@@ -1,0 +1,51 @@
+name: Publish market data
+
+# Yahoo sends no CORS header, so the phone cannot call it directly. This fetches
+# server-side and force-pushes a single-commit `data` branch, which
+# raw.githubusercontent.com serves cross-origin. Force-pushing one commit keeps
+# the snapshots out of main's history entirely.
+on:
+  schedule:
+    - cron: "*/30 13-21 * * 1-5"   # every 30 min, US market hours, weekdays (UTC)
+  workflow_dispatch:                # or run it by hand from the Actions tab
+
+permissions:
+  contents: write
+
+concurrency:
+  group: market-data
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install --quiet yfinance pandas
+
+      - name: Fetch quotes and history
+        run: python3 fetch_data.py
+
+      - name: Publish to the data branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -s data.json
+          pub=$(mktemp -d)
+          cp data.json "$pub/"
+          cd "$pub"
+          git init -q -b data
+          git config user.name  "risk-sizer-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data.json
+          git commit -q -m "market data $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" data
+          echo "published $(du -h data.json | cut -f1) to the data branch"
