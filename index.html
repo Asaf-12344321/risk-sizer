@@ -558,8 +558,9 @@
         <input type="number" inputmode="decimal" step="0.1" id="in-rsi" placeholder="e.g. 58">
       </div>
       <div class="field">
-        <label for="in-runup">1-month change %</label>
-        <input type="number" inputmode="decimal" step="0.1" id="in-runup" placeholder="e.g. 12">
+        <label for="in-runup">1-month change % <span class="opt">−12 is fine</span></label>
+        <!-- no inputmode: the iOS decimal pad has no minus key, so negatives can't be typed -->
+        <input type="number" step="0.1" id="in-runup" placeholder="e.g. -12">
       </div>
     </div>
 
@@ -619,10 +620,11 @@
       <div class="sub" id="out-rule"></div>
       <div class="trailmode-row">
         <div class="seg" id="trailSeg" role="group" aria-label="Trail type">
-          <button class="seg-btn" type="button" data-mode="atr" aria-pressed="true">ATR distance<small>gap tightens as it rises</small></button>
-          <button class="seg-btn" type="button" data-mode="pct" aria-pressed="false">Constant %<small>gap stays the same</small></button>
+          <button class="seg-btn" type="button" data-mode="atr" aria-pressed="true">ATR distance<small>gap narrows as it rises</small></button>
+          <button class="seg-btn" type="button" data-mode="pct" aria-pressed="false">Constant %<small>gap always the same</small></button>
         </div>
       </div>
+      <div class="sub" id="out-trailnote"></div>
       <div class="ladder-wrap">
         <table class="ladder" id="out-ladder"></table>
       </div>
@@ -771,7 +773,9 @@
     armpct: 15,
     trailpct: 20,
     minstop: 8,
-    maxstop: 45,
+    // 30% not 45%: on a name like QBTS (ATR ~15% of price) 3x ATR is a 45% stop, which is not
+    // protection at all. -30% also tested best of every fixed depth on the real trade history.
+    maxstop: 30,
     rsiwarn: 60,
     runupwarn: 15,
     drawdown: 40,
@@ -812,6 +816,8 @@
         Object.keys(DEFAULTS).forEach(function (k) {
           merged[k] = (typeof parsed[k] === "number" && !isNaN(parsed[k])) ? parsed[k] : DEFAULTS[k];
         });
+        // Migrate the old 45% stop ceiling, which allowed absurd initial stops on high-ATR names.
+        if (merged.maxstop === 45) merged.maxstop = DEFAULTS.maxstop;
         return merged;
       }
     } catch (e) {}
@@ -1165,6 +1171,11 @@
     outArm.textContent = num(armPrice, 2);
     outArmChip.textContent = "breakeven at +" + cfg.armpct + "%";
     outArmChip.className = "status-chip good";
+    el("out-trailnote").textContent = trailMode === "pct"
+      ? "Constant % mode: the stop always sits " + cfg.trailpct + "% below the highest price — that is why every row shows "
+        + cfg.trailpct + "%. Switch to ATR distance for a gap that narrows as the trade works."
+      : "ATR mode: the stop sits a fixed " + num(cfg.trailmult * atr, 2) + " below the highest price ("
+        + cfg.trailmult + "x ATR), so the gap narrows in percentage terms as price rises.";
     outRule.textContent = trailMode === "pct"
       ? "stop = max(" + num(stopPrice, 2) + ", highest price − " + cfg.trailpct + "%), never below "
         + num(price, 2) + " once " + num(armPrice, 2) + " trades"
@@ -1172,17 +1183,19 @@
         + num(price, 2) + " once " + num(armPrice, 2) + " trades";
 
     var rungs = buildLadder(price, atr, stopPrice, armPrice);
-    var lh = "<tr><th>price reaches</th><th>move stop to</th><th>gap</th><th>locked in</th><th>why</th></tr>";
+    var lh = "<tr><th>price reaches</th><th>move stop to</th><th>stop sits<br>below price</th>"
+      + "<th>if the stop<br>is hit there</th><th>why</th></tr>";
     lh += rungs.map(function (r) {
-      if (r.px === undefined) {
-        return '<tr class="' + r.cls + '"><td>' + r.label + "</td><td>" + num(r.stop, 2) + "</td><td>"
-          + pct((price - r.stop) / price * 100) + "</td><td>—</td><td>" + r.why + "</td></tr>";
-      }
-      var locked = (r.stop - price) / price * 100;
-      return '<tr class="' + r.cls + '"><td>' + num(r.px, 2) + " <small>(" + (r.px / price - 1 >= 0 ? "+" : "")
-        + ((r.px / price - 1) * 100).toFixed(0) + "%)</small></td><td>" + num(r.stop, 2) + "</td><td>"
-        + pct((r.px - r.stop) / r.px * 100) + "</td><td>" + (locked >= 0 ? "+" : "") + locked.toFixed(1)
-        + "%</td><td>" + r.why + "</td></tr>";
+      var at = r.px === undefined ? price : r.px;
+      var pnl = (r.stop - price) / price * 100;
+      var pnlTxt = (pnl >= 0.05 ? "you make +" : pnl <= -0.05 ? "you lose " : "you break even")
+        + (Math.abs(pnl) >= 0.05 ? Math.abs(pnl).toFixed(1) + "%" : "");
+      var label = r.px === undefined
+        ? num(price, 2) + " <small>(now)</small>"
+        : num(r.px, 2) + " <small>(" + (r.px / price - 1 >= 0 ? "+" : "")
+          + ((r.px / price - 1) * 100).toFixed(0) + "%)</small>";
+      return '<tr class="' + r.cls + '"><td>' + label + "</td><td>" + num(r.stop, 2) + "</td><td>"
+        + pct((at - r.stop) / at * 100) + "</td><td>" + pnlTxt + "</td><td>" + r.why + "</td></tr>";
     }).join("");
     outLadder.innerHTML = lh;
 
@@ -1209,6 +1222,17 @@
     if (stopPct < cfg.minstop + 0.01 && rawStopPct < cfg.minstop) {
       flagsHtml += '<div class="flag warn"><span class="dot"></span><span>The ATR stop would sit only '
         + pct(rawStopPct) + " away — widened to the " + cfg.minstop + "% floor. Anything tighter gets wicked out.</span></div>";
+    }
+
+    var atrPctOfPrice = atr / price * 100;
+    if (rawStopPct > cfg.maxstop + 0.01) {
+      flagsHtml += '<div class="flag bad"><span class="dot"></span><span>This name is too volatile for a clean stop: ATR is <b>'
+        + atrPctOfPrice.toFixed(1) + "% of price</b>, so " + cfg.initmult.toFixed(1) + "x ATR would put the stop "
+        + pct(rawStopPct) + " away. Capped at " + cfg.maxstop + "% — which means the stop is inside "
+        + (cfg.maxstop / atrPctOfPrice).toFixed(1) + "x ATR and will get wicked out more often. Size small and treat the stop as a disaster cap, not a plan.</span></div>";
+    } else if (atrPctOfPrice > 10) {
+      flagsHtml += '<div class="flag warn"><span class="dot"></span><span>ATR is <b>' + atrPctOfPrice.toFixed(1)
+        + "% of price</b> — this stock moves that much on an average day. Expect the stop to be tested.</span></div>";
     }
 
     var high52 = parseFloat(in52h.value), low52 = parseFloat(in52l.value);
