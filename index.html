@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Risk Sizer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Risk Sizer">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%2312161c'/%3E%3Ccircle cx='90' cy='90' r='54' fill='none' stroke='%2356c2ba' stroke-width='10'/%3E%3Ccircle cx='90' cy='90' r='26' fill='none' stroke='%2356c2ba' stroke-width='10'/%3E%3Ccircle cx='90' cy='90' r='6' fill='%2356c2ba'/%3E%3Cline x1='90' y1='14' x2='90' y2='34' stroke='%2356c2ba' stroke-width='8'/%3E%3Cline x1='90' y1='146' x2='90' y2='166' stroke='%2356c2ba' stroke-width='8'/%3E%3Cline x1='14' y1='90' x2='34' y2='90' stroke='%2356c2ba' stroke-width='8'/%3E%3Cline x1='146' y1='90' x2='166' y2='90' stroke='%2356c2ba' stroke-width='8'/%3E%3C/svg%3E">
+
+<style>
+  :root {
+    --ink: #eef0f1;
+    --ink-raised: #ffffff;
+    --ink-border: #d8dbde;
+    --text: #171b20;
+    --text-dim: #5b6470;
+    --accent: #2f8f88;
+    --on-accent: #ffffff;
+    --good: #2f8f5a;
+    --good-bg: #e3f1e8;
+    --warn: #a97a1f;
+    --warn-bg: #f7ecd6;
+    --bad: #b23f30;
+    --bad-bg: #f8e4e0;
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, "Cascadia Mono", monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #12161c;
+      --ink-raised: #1b212a;
+      --ink-border: #2a323d;
+      --text: #e7ecef;
+      --text-dim: #93a0ab;
+      --accent: #56c2ba;
+      --on-accent: #0d1116;
+      --good: #6cc98f;
+      --good-bg: #16261d;
+      --warn: #e0b354;
+      --warn-bg: #2b2314;
+      --bad: #e07a6a;
+      --bad-bg: #2c1a17;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #12161c;
+    --ink-raised: #1b212a;
+    --ink-border: #2a323d;
+    --text: #e7ecef;
+    --text-dim: #93a0ab;
+    --accent: #56c2ba;
+    --on-accent: #0d1116;
+    --good: #6cc98f;
+    --good-bg: #16261d;
+    --warn: #e0b354;
+    --warn-bg: #2b2314;
+    --bad: #e07a6a;
+    --bad-bg: #2c1a17;
+  }
+  :root[data-theme="light"] {
+    --ink: #eef0f1;
+    --ink-raised: #ffffff;
+    --ink-border: #d8dbde;
+    --text: #171b20;
+    --text-dim: #5b6470;
+    --accent: #2f8f88;
+    --on-accent: #ffffff;
+    --good: #2f8f5a;
+    --good-bg: #e3f1e8;
+    --warn: #a97a1f;
+    --warn-bg: #f7ecd6;
+    --bad: #b23f30;
+    --bad-bg: #f8e4e0;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--font-ui);
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    min-height: 100vh;
+  }
+  .shell {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 18px 16px 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  header { display: flex; flex-direction: column; gap: 10px; padding-top: 6px; }
+  .wordmark { display: flex; align-items: baseline; gap: 8px; }
+  .wordmark .mark {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+    flex: none;
+  }
+  h1 {
+    font-size: 21px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .tagline { font-size: 13px; color: var(--text-dim); margin: 0; }
+
+  .rules-strip { display: flex; flex-wrap: wrap; gap: 6px; }
+  .rule-chip {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 11.5px;
+    letter-spacing: 0.01em;
+    color: var(--text-dim);
+    background: var(--ink-raised);
+    border: 1px solid var(--ink-border);
+    border-radius: 7px;
+    padding: 5px 8px;
+  }
+  .rule-chip b { color: var(--text); font-weight: 600; }
+
+  .tabs {
+    display: flex;
+    background: var(--ink-raised);
+    border: 1px solid var(--ink-border);
+    border-radius: 11px;
+    padding: 3px;
+    gap: 3px;
+  }
+  .tab-btn {
+    flex: 1;
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-family: var(--font-ui);
+    font-size: 13.5px;
+    font-weight: 600;
+    padding: 9px 4px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .tab-btn[aria-selected="true"] { background: var(--accent); color: var(--on-accent); }
+  .tab-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .card {
+    background: var(--ink-raised);
+    border: 1px solid var(--ink-border);
+    border-radius: 14px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .section-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--text-dim);
+    margin: 2px 0 -4px;
+  }
+
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label {
+    font-size: 11.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+  }
+  .field label .opt { text-transform: none; font-weight: 400; letter-spacing: 0; opacity: 0.75; }
+  .field input, .field select {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 16.5px;
+    color: var(--text);
+    background: var(--ink);
+    border: 1px solid var(--ink-border);
+    border-radius: 9px;
+    padding: 10px 11px;
+    width: 100%;
+  }
+  .field select { font-family: var(--font-ui); }
+  .field input:focus-visible, .field select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: -4px; }
+  .beta-chip {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    background: var(--ink);
+    border: 1px solid var(--ink-border);
+    color: var(--text-dim);
+    border-radius: 999px;
+    padding: 5px 10px;
+    cursor: pointer;
+  }
+  .beta-chip:hover { border-color: var(--accent); color: var(--text); }
+  .beta-chip:focus-visible { outline: 2px solid var(--accent); }
+
+  .result {
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: var(--ink);
+    border: 1px solid var(--ink-border);
+  }
+  .result .headline { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .result .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .result .sub { font-size: 12.5px; color: var(--text-dim); }
+  .status-chip {
+    align-self: flex-start;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 7px;
+    padding: 4px 9px;
+  }
+  .status-chip.good { color: var(--good); background: var(--good-bg); }
+  .status-chip.warn { color: var(--warn); background: var(--warn-bg); }
+  .status-chip.bad { color: var(--bad); background: var(--bad-bg); }
+  .formula {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-dim);
+    line-height: 1.5;
+    border-top: 1px dashed var(--ink-border);
+    padding-top: 9px;
+  }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .mini-stat .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); }
+  .mini-stat .val { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600; margin-top: 2px; }
+
+  .flag-row { display: flex; flex-direction: column; gap: 6px; }
+  .flag {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    border-radius: 9px;
+    padding: 8px 10px;
+  }
+  .flag.warn { color: var(--warn); background: var(--warn-bg); }
+  .flag.bad { color: var(--bad); background: var(--bad-bg); }
+  .flag .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; margin-top: 5px; background: currentColor; }
+
+  details.settings {
+    background: var(--ink-raised);
+    border: 1px solid var(--ink-border);
+    border-radius: 14px;
+    padding: 4px 16px;
+  }
+  details.settings summary {
+    padding: 12px 0;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--text-dim);
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  details.settings summary::-webkit-details-marker { display: none; }
+  details.settings summary::after { content: "⋯"; font-weight: 700; }
+  details.settings[open] summary::after { content: "×"; font-size: 16px; }
+  .settings-body { display: flex; flex-direction: column; gap: 12px; padding-bottom: 14px; }
+  .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .settings-actions { display: flex; justify-content: flex-end; }
+  .reset-btn {
+    font-family: var(--font-ui);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-dim);
+    background: transparent;
+    border: 1px solid var(--ink-border);
+    border-radius: 8px;
+    padding: 7px 11px;
+    cursor: pointer;
+  }
+  .reset-btn:hover { color: var(--bad); border-color: var(--bad); }
+
+  footer.note { font-size: 11.5px; color: var(--text-dim); line-height: 1.5; padding: 0 2px; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .tab-btn, .beta-chip, .reset-btn { transition: background 120ms ease, color 120ms ease, border-color 120ms ease; }
+  }
+
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <header>
+    <div class="wordmark">
+      <span class="mark" aria-hidden="true"></span>
+      <h1>Risk Sizer</h1>
+    </div>
+    <p class="tagline">Position sizing &amp; stop-loss, on your own rules.</p>
+    <div class="rules-strip" id="rulesStrip"></div>
+  </header>
+
+  <div class="tabs" role="tablist">
+    <button class="tab-btn" role="tab" id="tab-size" aria-selected="true" aria-controls="panel-size">Position Size</button>
+    <button class="tab-btn" role="tab" id="tab-stop" aria-selected="false" aria-controls="panel-stop">Stop &amp; Target</button>
+  </div>
+
+  <section class="card" id="panel-size" role="tabpanel" aria-labelledby="tab-size">
+    <div class="field">
+      <label for="sz-beta">Beta</label>
+      <input type="number" inputmode="decimal" step="0.01" id="sz-beta" placeholder="e.g. 1.16">
+    </div>
+    <div class="chip-row" id="betaChipsSize"></div>
+
+    <div class="row2">
+      <div class="field">
+        <label for="sz-price">Price <span class="opt">(optional)</span></label>
+        <input type="number" inputmode="decimal" step="0.01" id="sz-price" placeholder="0.00">
+      </div>
+      <div class="field">
+        <label for="sz-ccy">Currency</label>
+        <select id="sz-ccy">
+          <option value="NIS">₪ NIS</option>
+          <option value="USD">$ USD</option>
+        </select>
+      </div>
+    </div>
+    <div class="field" id="sz-fx-field" hidden>
+      <label for="sz-fx">USD / ILS rate</label>
+      <input type="number" inputmode="decimal" step="0.001" id="sz-fx" placeholder="3.65">
+    </div>
+
+    <div class="section-label">Liquidity check (optional)</div>
+    <div class="field">
+      <label for="sz-avgvol">Avg daily volume, shares <span class="opt">Yahoo Finance → Summary → "Avg. Volume"</span></label>
+      <input type="number" inputmode="decimal" step="1" id="sz-avgvol" placeholder="e.g. 12000000">
+    </div>
+
+    <div class="section-label">Trend context (optional)</div>
+    <div class="row2">
+      <div class="field">
+        <label for="sz-52h">52-week high</label>
+        <input type="number" inputmode="decimal" step="0.01" id="sz-52h" placeholder="0.00">
+      </div>
+      <div class="field">
+        <label for="sz-52l">52-week low</label>
+        <input type="number" inputmode="decimal" step="0.01" id="sz-52l" placeholder="0.00">
+      </div>
+    </div>
+
+    <div class="result">
+      <div class="headline">
+        <span class="num" id="sz-amount">₪ —</span>
+        <span class="status-chip" id="sz-status">enter beta</span>
+      </div>
+      <div class="sub" id="sz-shares"></div>
+      <div class="flag-row" id="sz-flags"></div>
+      <div class="formula" id="sz-formula"></div>
+    </div>
+  </section>
+
+  <section class="card" id="panel-stop" role="tabpanel" aria-labelledby="tab-stop" hidden>
+    <div class="row2">
+      <div class="field">
+        <label for="st-price">Entry price</label>
+        <input type="number" inputmode="decimal" step="0.01" id="st-price" placeholder="0.00">
+      </div>
+      <div class="field">
+        <label for="st-atr">ATR (14-day)</label>
+        <input type="number" inputmode="decimal" step="0.01" id="st-atr" placeholder="e.g. 3.55">
+      </div>
+    </div>
+    <div class="field">
+      <label for="st-sum">Amount invested (₪)</label>
+      <input type="number" inputmode="decimal" step="1" id="st-sum" placeholder="61000">
+    </div>
+
+    <div class="section-label">Chart structure (optional)</div>
+    <div class="row2">
+      <div class="field">
+        <label for="st-support">Nearest support</label>
+        <input type="number" inputmode="decimal" step="0.01" id="st-support" placeholder="e.g. 39.53">
+      </div>
+      <div class="field">
+        <label for="st-resistance">Nearest resistance</label>
+        <input type="number" inputmode="decimal" step="0.01" id="st-resistance" placeholder="e.g. 56.34">
+      </div>
+    </div>
+
+    <div class="section-label">Time &amp; catalyst (optional)</div>
+    <div class="row2">
+      <div class="field">
+        <label for="st-entrydate">Entry date</label>
+        <input type="date" id="st-entrydate">
+      </div>
+      <div class="field">
+        <label for="st-earnings">Next earnings date</label>
+        <input type="date" id="st-earnings">
+      </div>
+    </div>
+
+    <div class="section-label">Stop price</div>
+    <div class="result">
+      <div class="headline">
+        <span class="num" id="st-stopprice">—</span>
+        <span class="status-chip" id="st-status">enter details</span>
+      </div>
+      <div class="grid2">
+        <div class="mini-stat">
+          <div class="label">Stop distance</div>
+          <div class="val" id="st-pct">—</div>
+        </div>
+        <div class="mini-stat">
+          <div class="label">₪ at risk</div>
+          <div class="val" id="st-risk">—</div>
+        </div>
+      </div>
+      <div class="formula" id="st-formula"></div>
+    </div>
+
+    <div class="section-label">Target price</div>
+    <div class="result">
+      <div class="headline">
+        <span class="num" id="st-target">—</span>
+        <span class="status-chip" id="st-rr">R:R —</span>
+      </div>
+      <div class="grid2">
+        <div class="mini-stat">
+          <div class="label">Profit at target</div>
+          <div class="val" id="st-profit">—</div>
+        </div>
+        <div class="mini-stat">
+          <div class="label">Ref. <span id="st-refpct-label">20</span>% profit</div>
+          <div class="val" id="st-ref20">—</div>
+        </div>
+      </div>
+      <div class="formula" id="st-target-formula"></div>
+    </div>
+
+    <div class="flag-row" id="st-flags"></div>
+  </section>
+
+  <details class="settings" id="settingsPanel">
+    <summary>Your rules</summary>
+    <div class="settings-body">
+      <div class="settings-grid">
+        <div class="field">
+          <label for="cfg-capital">Total capital (₪)</label>
+          <input type="number" inputmode="decimal" id="cfg-capital">
+        </div>
+        <div class="field">
+          <label for="cfg-base">Base position (₪)</label>
+          <input type="number" inputmode="decimal" id="cfg-base">
+        </div>
+        <div class="field">
+          <label for="cfg-maxpct">Max position (%)</label>
+          <input type="number" inputmode="decimal" step="0.1" id="cfg-maxpct">
+        </div>
+        <div class="field">
+          <label for="cfg-liqpct">Max % of avg volume</label>
+          <input type="number" inputmode="decimal" step="0.1" id="cfg-liqpct">
+        </div>
+        <div class="field">
+          <label for="cfg-drawdown">Drawdown warn (% off 52w high)</label>
+          <input type="number" inputmode="decimal" step="1" id="cfg-drawdown">
+        </div>
+        <div class="field">
+          <label for="cfg-riskpct">Risk ceiling / trade (%)</label>
+          <input type="number" inputmode="decimal" step="0.1" id="cfg-riskpct">
+        </div>
+        <div class="field">
+          <label for="cfg-atrmult">ATR multiplier</label>
+          <input type="number" inputmode="decimal" step="0.1" id="cfg-atrmult">
+        </div>
+        <div class="field">
+          <label for="cfg-supportfloor">Support floor (x ATR)</label>
+          <input type="number" inputmode="decimal" step="0.1" id="cfg-supportfloor">
+        </div>
+        <div class="field">
+          <label for="cfg-targetr">Target reward:risk</label>
+          <input type="number" inputmode="decimal" step="0.1" id="cfg-targetr">
+        </div>
+        <div class="field">
+          <label for="cfg-refpct">Reference profit (%)</label>
+          <input type="number" inputmode="decimal" step="1" id="cfg-refpct">
+        </div>
+        <div class="field">
+          <label for="cfg-holddays">Max holding days</label>
+          <input type="number" inputmode="decimal" step="1" id="cfg-holddays">
+        </div>
+        <div class="field">
+          <label for="cfg-minstop">Min stop sanity bound (%)</label>
+          <input type="number" inputmode="decimal" step="0.1" id="cfg-minstop">
+        </div>
+        <div class="field">
+          <label for="cfg-maxstop">Max stop sanity bound (%)</label>
+          <input type="number" inputmode="decimal" step="0.1" id="cfg-maxstop">
+        </div>
+        <div class="field">
+          <label for="cfg-fx">Default USD/ILS</label>
+          <input type="number" inputmode="decimal" step="0.001" id="cfg-fx">
+        </div>
+      </div>
+      <div class="settings-actions">
+        <button class="reset-btn" id="resetBtn" type="button">Reset to defaults</button>
+      </div>
+    </div>
+  </details>
+
+  <footer class="note">
+    Everything here is typed in by you from the Yahoo Finance app — Beta and Avg Volume on the Statistics/Summary tab,
+    ATR(14) as a Chart indicator, support/resistance and 52-week range visible on the chart, earnings date on the
+    Summary tab. This tool has no live market connection. Position size is bound by the tightest of beta rule,
+    capital cap, and liquidity cap. The stop uses ATR floored/capped by nearby support — beta doesn't capture
+    stock-specific noise, which is what a stop actually needs to survive. Treat every number here as a starting
+    point, not gospel — especially the 52-week-drawdown and earnings-window flags, which need your judgment, not just math.
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var DEFAULTS = {
+    capital: 100000,
+    base: 10000,
+    maxpct: 20,
+    liqpct: 5,
+    drawdown: 40,
+    riskpct: 2,
+    atrmult: 2.5,
+    supportfloor: 1.0,
+    targetr: 2.0,
+    refpct: 20,
+    holddays: 45,
+    minstop: 3,
+    maxstop: 40,
+    fx: 3.65
+  };
+
+  var KEY = "riskSizerSettings_v2";
+  var cfg = loadSettings();
+
+  var KNOWN_BETAS = [
+    { t: "MSFT", b: 1.13 },
+    { t: "IONQ", b: 3.23 },
+    { t: "PLTR", b: 1.56 },
+    { t: "NVDA", b: 2.21 },
+    { t: "OKLO", b: 1.16 },
+    { t: "LUMI.TA", b: 0.38 }
+  ];
+
+  function loadSettings() {
+    try {
+      var raw = localStorage.getItem(KEY);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        var merged = {};
+        Object.keys(DEFAULTS).forEach(function (k) {
+          merged[k] = (typeof parsed[k] === "number" && !isNaN(parsed[k])) ? parsed[k] : DEFAULTS[k];
+        });
+        return merged;
+      }
+    } catch (e) {}
+    var copy = {};
+    Object.keys(DEFAULTS).forEach(function (k) { copy[k] = DEFAULTS[k]; });
+    return copy;
+  }
+
+  function saveSettings() {
+    try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {}
+  }
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+  function nis(v) { return "₪" + Math.round(v).toLocaleString("en-US"); }
+  function pct(v) { return v.toFixed(1) + "%"; }
+  function num(v, d) { return v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }); }
+  function el(id) { return document.getElementById(id); }
+
+  function toNis(amountNative, ccyValue, fxValue) {
+    if (ccyValue === "NIS") return amountNative;
+    if (ccyValue === "USD" && fxValue) return amountNative * fxValue;
+    return null;
+  }
+
+  function todayStr() {
+    var d = new Date();
+    var m = String(d.getMonth() + 1).padStart(2, "0");
+    var day = String(d.getDate()).padStart(2, "0");
+    return d.getFullYear() + "-" + m + "-" + day;
+  }
+
+  function addDays(dateStr, days) {
+    var d = new Date(dateStr + "T00:00:00");
+    d.setDate(d.getDate() + days);
+    var m = String(d.getMonth() + 1).padStart(2, "0");
+    var day = String(d.getDate()).padStart(2, "0");
+    return d.getFullYear() + "-" + m + "-" + day;
+  }
+
+  // ---- rules strip ----
+  function renderRulesStrip() {
+    el("rulesStrip").innerHTML =
+      '<span class="rule-chip">Capital <b>' + nis(cfg.capital) + "</b></span>" +
+      '<span class="rule-chip">Base <b>' + nis(cfg.base) + "</b></span>" +
+      '<span class="rule-chip">Cap <b>' + cfg.maxpct + "%</b></span>" +
+      '<span class="rule-chip">Risk <b>' + cfg.riskpct + "%</b>/trade</span>";
+  }
+
+  // ---- beta quick chips ----
+  function renderBetaChips(containerId, targetInputId) {
+    var container = el(containerId);
+    container.innerHTML = "";
+    KNOWN_BETAS.forEach(function (item) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "beta-chip";
+      b.textContent = item.t + " " + item.b.toFixed(2);
+      b.addEventListener("click", function () {
+        el(targetInputId).value = item.b;
+        el(targetInputId).dispatchEvent(new Event("input"));
+      });
+      container.appendChild(b);
+    });
+  }
+
+  // ---- tabs ----
+  var tabSize = el("tab-size"), tabStop = el("tab-stop");
+  var panelSize = el("panel-size"), panelStop = el("panel-stop");
+  function selectTab(which) {
+    var sizeActive = which === "size";
+    tabSize.setAttribute("aria-selected", sizeActive ? "true" : "false");
+    tabStop.setAttribute("aria-selected", sizeActive ? "false" : "true");
+    panelSize.hidden = !sizeActive;
+    panelStop.hidden = sizeActive;
+  }
+  tabSize.addEventListener("click", function () { selectTab("size"); });
+  tabStop.addEventListener("click", function () { selectTab("stop"); });
+
+  // ---- Position Size calc ----
+  var szBeta = el("sz-beta"), szPrice = el("sz-price"), szCcy = el("sz-ccy"), szFx = el("sz-fx"), szFxField = el("sz-fx-field");
+  var szAvgVol = el("sz-avgvol"), sz52h = el("sz-52h"), sz52l = el("sz-52l");
+  var szAmount = el("sz-amount"), szStatus = el("sz-status"), szShares = el("sz-shares"), szFormula = el("sz-formula"), szFlags = el("sz-flags");
+
+  function recalcSize() {
+    var beta = parseFloat(szBeta.value);
+    szFxField.hidden = szCcy.value !== "USD";
+    szFlags.innerHTML = "";
+
+    if (!beta || beta <= 0) {
+      szAmount.textContent = "₪ —";
+      szStatus.textContent = "enter beta";
+      szStatus.className = "status-chip";
+      szShares.textContent = "";
+      szFormula.textContent = "";
+      return;
+    }
+
+    var byBeta = cfg.base / beta;
+    var capitalCap = cfg.capital * (cfg.maxpct / 100);
+    var candidates = { "beta rule": byBeta, "capital cap": capitalCap };
+
+    var price = parseFloat(szPrice.value);
+    var fx = parseFloat(szFx.value) || cfg.fx;
+    var avgVol = parseFloat(szAvgVol.value);
+    var liquidityCap = null;
+    if (price > 0 && avgVol > 0) {
+      var dollarVolNative = avgVol * price;
+      var dollarVolNis = toNis(dollarVolNative, szCcy.value, fx);
+      if (dollarVolNis) {
+        liquidityCap = dollarVolNis * (cfg.liqpct / 100);
+        candidates["liquidity cap"] = liquidityCap;
+      }
+    }
+
+    var suggested = Math.min.apply(null, Object.values(candidates));
+    var binding = Object.keys(candidates).reduce(function (a, b) { return candidates[a] <= candidates[b] ? a : b; });
+
+    szAmount.textContent = nis(suggested);
+    if (binding === "beta rule") {
+      szStatus.textContent = "within rules";
+      szStatus.className = "status-chip good";
+    } else {
+      szStatus.textContent = "capped: " + binding;
+      szStatus.className = "status-chip warn";
+    }
+
+    if (price > 0) {
+      var amountInPriceCcy = szCcy.value === "USD" ? suggested / fx : suggested;
+      var shares = amountInPriceCcy / price;
+      szShares.textContent = "≈ " + num(shares, shares < 10 ? 2 : 0) + " shares";
+    } else {
+      szShares.textContent = "";
+    }
+
+    var flagsHtml = "";
+    var high52 = parseFloat(sz52h.value), low52 = parseFloat(sz52l.value);
+    if (high52 > 0 && price > 0) {
+      var pctOffHigh = (high52 - price) / high52 * 100;
+      var pctAboveLow = low52 > 0 ? (price - low52) / low52 * 100 : null;
+      var rangeSub = pctOffHigh.toFixed(0) + "% off 52w high" + (pctAboveLow !== null ? ", " + pctAboveLow.toFixed(0) + "% above 52w low" : "");
+      if (pctOffHigh > cfg.drawdown) {
+        flagsHtml += '<div class="flag warn"><span class="dot"></span><span>' + rangeSub + " — deep drawdown, verify the catalyst/thesis before sizing up.</span></div>";
+      } else {
+        flagsHtml += '<div class="flag" style="color:var(--text-dim);background:transparent;padding:0;"><span></span><span>' + rangeSub + "</span></div>";
+      }
+    }
+    szFlags.innerHTML = flagsHtml;
+
+    var formulaLines = [
+      "₪" + num(cfg.base, 0) + " base ÷ beta " + beta.toFixed(2) + " = " + nis(byBeta),
+      "capital cap " + cfg.maxpct + "% = " + nis(capitalCap)
+    ];
+    if (liquidityCap !== null) formulaLines.push("liquidity cap " + cfg.liqpct + "% of avg $ volume = " + nis(liquidityCap));
+    formulaLines.push("bound by " + binding);
+    szFormula.textContent = formulaLines.join(" · ");
+  }
+
+  [szBeta, szPrice, szCcy, szFx, szAvgVol, sz52h, sz52l].forEach(function (input) {
+    input.addEventListener("input", recalcSize);
+    input.addEventListener("change", recalcSize);
+  });
+
+  // ---- Stop & Target calc ----
+  var stPrice = el("st-price"), stAtr = el("st-atr"), stSum = el("st-sum");
+  var stSupport = el("st-support"), stResistance = el("st-resistance");
+  var stEntryDate = el("st-entrydate"), stEarnings = el("st-earnings");
+  var stStopprice = el("st-stopprice"), stStatus = el("st-status"), stPct = el("st-pct"), stRisk = el("st-risk"), stFormula = el("st-formula");
+  var stTarget = el("st-target"), stRR = el("st-rr"), stTargetFormula = el("st-target-formula"), stFlags = el("st-flags");
+  var stProfit = el("st-profit"), stRef20 = el("st-ref20"), stRefpctLabel = el("st-refpct-label");
+
+  function recalcStop() {
+    var price = parseFloat(stPrice.value);
+    var atr = parseFloat(stAtr.value);
+    var sum = parseFloat(stSum.value);
+    stFlags.innerHTML = "";
+
+    if (!price || price <= 0 || !atr || atr <= 0 || !sum || sum <= 0) {
+      stStopprice.textContent = "—";
+      stStatus.textContent = "enter details";
+      stStatus.className = "status-chip";
+      stPct.textContent = "—";
+      stRisk.textContent = "—";
+      stFormula.textContent = "";
+      stTarget.textContent = "—";
+      stRR.textContent = "R:R —";
+      stTargetFormula.textContent = "";
+      stProfit.textContent = "—";
+      stRef20.textContent = "—";
+      return;
+    }
+
+    var atrStopDistance = cfg.atrmult * atr;
+    var support = parseFloat(stSupport.value);
+    var stopDistance, stopBasis;
+    if (support > 0 && support < price) {
+      var supportDistance = price - support;
+      stopDistance = Math.max(cfg.supportfloor * atr, Math.min(atrStopDistance, supportDistance));
+      stopBasis = "support " + num(support, 2) + ", floored/capped by ATR";
+    } else {
+      stopDistance = atrStopDistance;
+      stopBasis = cfg.atrmult.toFixed(1) + "x ATR (no support entered)";
+    }
+
+    var rawStopPct = (stopDistance / price) * 100;
+    var stopPct = clamp(rawStopPct, cfg.minstop, cfg.maxstop);
+    var wasClamped = Math.abs(stopPct - rawStopPct) > 0.001;
+    var stopPrice = price * (1 - stopPct / 100);
+    var riskAmount = sum * (stopPct / 100);
+    var ceiling = cfg.capital * (cfg.riskpct / 100);
+    var ratio = riskAmount / ceiling;
+
+    stStopprice.textContent = num(stopPrice, 2);
+    stPct.textContent = pct(stopPct);
+    stRisk.textContent = nis(riskAmount);
+
+    if (ratio <= 1) {
+      stStatus.textContent = "within " + cfg.riskpct + "% ceiling";
+      stStatus.className = "status-chip good";
+    } else if (ratio <= 1.5) {
+      stStatus.textContent = "near ceiling";
+      stStatus.className = "status-chip warn";
+    } else {
+      stStatus.textContent = "over ceiling — trim it";
+      stStatus.className = "status-chip bad";
+    }
+
+    stFormula.textContent = [
+      "stop: " + stopBasis + " = " + num(stopDistance, 2) + " = " + pct(rawStopPct) +
+        (wasClamped ? " → clamped to " + pct(stopPct) : ""),
+      nis(riskAmount) + " at risk vs " + nis(ceiling) + " ceiling (" + cfg.riskpct + "% of capital)"
+    ].join(" · ");
+
+    // ---- target ----
+    var targetRPrice = price + cfg.targetr * stopDistance;
+    var resistance = parseFloat(stResistance.value);
+    var targetPrice, targetBasis;
+    if (resistance > price && resistance < targetRPrice) {
+      targetPrice = resistance;
+      targetBasis = "capped by resistance " + num(resistance, 2) + " (below the " + cfg.targetr + "x target of " + num(targetRPrice, 2) + ")";
+    } else {
+      targetPrice = targetRPrice;
+      targetBasis = cfg.targetr + "x reward:risk off the stop";
+    }
+    var rewardRisk = (targetPrice - price) / stopDistance;
+    var profitPct = (targetPrice - price) / price;
+    var profitNis = sum * profitPct;
+
+    var price20 = price * (1 + cfg.refpct / 100);
+    var profitNis20 = sum * (cfg.refpct / 100);
+
+    stTarget.textContent = num(targetPrice, 2);
+    stRR.textContent = rewardRisk.toFixed(2) + ":1";
+    stProfit.textContent = nis(profitNis) + " (+" + (profitPct * 100).toFixed(1) + "%)";
+    stRefpctLabel.textContent = cfg.refpct;
+    stRef20.textContent = num(price20, 2) + " → " + nis(profitNis20);
+    stTargetFormula.textContent = "target: " + targetBasis + " · reference: " + cfg.refpct + "% flat gain = " + num(price20, 2);
+
+    // ---- time stop + earnings flag ----
+    var flagsHtml = "";
+    var entryDate = stEntryDate.value || todayStr();
+    var reviewBy = addDays(entryDate, cfg.holddays);
+    flagsHtml += '<div class="flag" style="color:var(--text-dim);background:transparent;padding:0;"><span></span><span>Review by <b style="color:var(--text)">' + reviewBy + "</b> (" + cfg.holddays + " days) — exit if the thesis hasn't played out.</span></div>";
+
+    var earnings = stEarnings.value;
+    if (earnings) {
+      var inWindow = earnings >= entryDate && earnings <= reviewBy;
+      if (inWindow) {
+        flagsHtml += '<div class="flag bad"><span class="dot"></span><span>Earnings on <b>' + earnings + "</b> falls inside your holding window — gap risk, this stop won't protect you from a gap.</span></div>";
+      } else {
+        flagsHtml += '<div class="flag" style="color:var(--text-dim);background:transparent;padding:0;"><span></span><span>Earnings on ' + earnings + " — outside your holding window.</span></div>";
+      }
+    }
+    stFlags.innerHTML = flagsHtml;
+  }
+
+  [stPrice, stAtr, stSum, stSupport, stResistance, stEntryDate, stEarnings].forEach(function (input) {
+    input.addEventListener("input", recalcStop);
+    input.addEventListener("change", recalcStop);
+  });
+
+  // ---- Settings ----
+  var cfgInputs = {
+    capital: el("cfg-capital"),
+    base: el("cfg-base"),
+    maxpct: el("cfg-maxpct"),
+    liqpct: el("cfg-liqpct"),
+    drawdown: el("cfg-drawdown"),
+    riskpct: el("cfg-riskpct"),
+    atrmult: el("cfg-atrmult"),
+    supportfloor: el("cfg-supportfloor"),
+    targetr: el("cfg-targetr"),
+    refpct: el("cfg-refpct"),
+    holddays: el("cfg-holddays"),
+    minstop: el("cfg-minstop"),
+    maxstop: el("cfg-maxstop"),
+    fx: el("cfg-fx")
+  };
+
+  function renderSettingsInputs() {
+    Object.keys(cfgInputs).forEach(function (k) { cfgInputs[k].value = cfg[k]; });
+  }
+
+  function refreshAll() {
+    renderRulesStrip();
+    recalcSize();
+    recalcStop();
+  }
+
+  Object.keys(cfgInputs).forEach(function (k) {
+    cfgInputs[k].addEventListener("input", function () {
+      var v = parseFloat(cfgInputs[k].value);
+      if (!isNaN(v)) {
+        cfg[k] = v;
+        saveSettings();
+        refreshAll();
+      }
+    });
+  });
+
+  el("resetBtn").addEventListener("click", function () {
+    cfg = {};
+    Object.keys(DEFAULTS).forEach(function (k) { cfg[k] = DEFAULTS[k]; });
+    saveSettings();
+    renderSettingsInputs();
+    refreshAll();
+  });
+
+  // ---- init ----
+  renderBetaChips("betaChipsSize", "sz-beta");
+  renderSettingsInputs();
+  szFx.value = cfg.fx;
+  stEntryDate.value = todayStr();
+  refreshAll();
+})();
+</script>
+</body>
+</html>
