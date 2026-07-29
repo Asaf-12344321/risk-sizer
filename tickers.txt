@@ -1,0 +1,21 @@
+# One ticker per line. Edit this file on github.com (works fine from your phone)
+# and the next scheduled run picks it up. Lines starting with # are ignored.
+ASTS
+CRWV
+INVZ
+IREN
+MSFT
+OKLO
+ONDS
+QBTS
+IONQ
+NVDA
+META
+MU
+SNDK
+INTC
+PLTR
+AMZN
+GOOGL
+RCL
+OMCL
