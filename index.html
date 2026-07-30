@@ -676,8 +676,9 @@
     <summary>Your rules</summary>
     <div class="settings-body">
       <p class="settings-note">
-        Position size = the smallest of: risk-based size, thesis-break cap, capital cap,
-        beta-exposure cap, liquidity cap.
+        Position size = the smallest of: risk-based size (1R ÷ stop %), thesis-break cap,
+        capital cap, beta-exposure cap, liquidity cap. If <b>1R (₪)</b> is set it overrides
+        the percentage, so your risk per trade stays fixed when capital moves.
       </p>
       <div class="settings-grid">
         <div class="field">
@@ -685,7 +686,11 @@
           <input type="text" inputmode="numeric" autocomplete="off" id="cfg-capital">
         </div>
         <div class="field">
-          <label for="cfg-riskpct">Risk budget / trade (%)</label>
+          <label for="cfg-riskabs">Risk per trade, 1R (₪)</label>
+          <input type="text" inputmode="numeric" autocomplete="off" id="cfg-riskabs">
+        </div>
+        <div class="field">
+          <label for="cfg-riskpct">…or as % of capital</label>
           <input type="number" inputmode="decimal" step="0.1" id="cfg-riskpct">
         </div>
         <div class="field">
@@ -791,6 +796,7 @@
   var DEFAULTS = {
     capital: 0,
     riskpct: 2,
+    riskabs: 0,          // ₪ per trade (1R). 0 = derive from riskpct instead
     breakbudget: 0,
     maxpct: 20,
     betaexpct: 25,
@@ -872,6 +878,12 @@
     try { localStorage.setItem(TIER_KEY, tier); } catch (e) {}
   }
 
+  // 1R in shekels. An absolute figure takes precedence over the percentage, so the
+  // risk per trade stays fixed even if total capital moves.
+  function riskBudgetNis() {
+    return cfg.riskabs > 0 ? cfg.riskabs : cfg.capital * (cfg.riskpct / 100);
+  }
+
   function gapForTier(t) {
     if (t === "quality") return cfg.gapquality;
     if (t === "growth") return cfg.gapgrowth;
@@ -879,7 +891,7 @@
   }
 
   // Settings whose inputs are text-with-thousands-separators rather than type=number.
-  var FORMATTED_CFG = ["capital", "breakbudget"];
+  var FORMATTED_CFG = ["capital", "breakbudget", "riskabs"];
 
   function numFrom(node) {
     return parseFloat(String(node.value).replace(/,/g, ""));
@@ -983,7 +995,8 @@
   function renderRulesStrip() {
     el("rulesStrip").innerHTML =
       '<span class="rule-chip">Capital <b>' + nis(cfg.capital) + "</b></span>" +
-      '<span class="rule-chip">Risk <b>' + cfg.riskpct + "%</b> = <b>" + nis(cfg.capital * cfg.riskpct / 100) + "</b></span>" +
+      '<span class="rule-chip">1R <b>' + nis(riskBudgetNis()) + "</b>"
+        + (cfg.riskabs > 0 ? " fixed" : " = " + cfg.riskpct + "%") + "</span>" +
       '<span class="rule-chip">Break budget <b>' + nis(cfg.breakbudget) + "</b></span>" +
       '<span class="rule-chip">Cap <b>' + cfg.maxpct + "%</b></span>";
   }
@@ -1115,7 +1128,7 @@
     var effStopDistance = price * (stopPct / 100);
 
     // ---- size candidates ----
-    var riskBudget = cfg.capital * (cfg.riskpct / 100);
+    var riskBudget = riskBudgetNis();
     var gapPct = gapForTier(tier);
     var candidates = {};
 
@@ -1714,7 +1727,8 @@
     } else if (spec > cap) {
       msg = "That's more than your total capital.";
     } else {
-      msg = "Risk budget: " + nis(cap * cfg.riskpct / 100) + " per trade (" + cfg.riskpct + "% of capital)."
+      msg = "Risk per trade (1R): " + nis(cfg.riskabs > 0 ? cfg.riskabs : cap * cfg.riskpct / 100)
+        + (cfg.riskabs > 0 ? " (fixed)" : " (" + cfg.riskpct + "% of capital)") + "."
         + "\nThesis-break budget: " + nis(spec * cfg.gapspec / 100)
         + " — what a " + cfg.gapspec + "% gap costs on a " + nis(spec) + " position."
         + "\nAll of it is editable later under Your rules.";
