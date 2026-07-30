@@ -758,7 +758,7 @@
     initmult: 3.0,
     trailmult: 2.5,
     armpct: 15,
-    minstop: 8,
+    minstop: 5,
     // 30% not 45%: on a name like QBTS (ATR ~15% of price) 3x ATR is a 45% stop, which is not
     // protection at all. -30% also tested best of every fixed depth on the real trade history.
     maxstop: 30,
@@ -784,6 +784,7 @@
         });
         // Migrate the old 45% stop ceiling, which allowed absurd initial stops on high-ATR names.
         if (merged.maxstop === 45) merged.maxstop = DEFAULTS.maxstop;
+        if (merged.minstop === 8) merged.minstop = DEFAULTS.minstop;
         return merged;
       }
     } catch (e) {}
@@ -802,13 +803,32 @@
     return cfg.riskabs > 0 ? cfg.riskabs : cfg.capital * (cfg.riskpct / 100);
   }
 
-  // Volatility band from ATR, and the crash assumption that goes with it.
+  // Crash assumption as a CONTINUOUS function of ATR.
+  //
+  // The five settings are anchor points, not buckets: each is the measured ~96th-percentile
+  // 45-day drawdown at a representative ATR level, and we interpolate between them. Treating
+  // them as buckets made this a step function, so 2,607 tickers produced only five possible
+  // position sizes — MSFT at 3.04% ATR and META at 3.91% got identical caps. Interpolating
+  // makes the answer specific to each stock, which is the whole point.
+  function crashPctFor(atrPct) {
+    var x = [1.0, 2.0, 3.25, 5.0, 8.0];
+    var y = [cfg.gapt1, cfg.gapt2, cfg.gapt3, cfg.gapt4, cfg.gapt5];
+    if (!(atrPct > 0)) return y[0];
+    if (atrPct <= x[0]) return y[0];
+    if (atrPct >= x[4]) return y[4];
+    for (var i = 1; i < x.length; i++) {
+      if (atrPct <= x[i]) {
+        var f = (atrPct - x[i - 1]) / (x[i] - x[i - 1]);
+        return y[i - 1] + f * (y[i] - y[i - 1]);
+      }
+    }
+    return y[4];
+  }
+
   function bandFor(atrPct) {
-    if (atrPct < 1.5)  return { name: "very calm", gap: cfg.gapt1 };
-    if (atrPct < 2.5)  return { name: "calm",      gap: cfg.gapt2 };
-    if (atrPct < 4.0)  return { name: "active",    gap: cfg.gapt3 };
-    if (atrPct < 6.0)  return { name: "volatile",  gap: cfg.gapt4 };
-    return               { name: "wild",      gap: cfg.gapt5 };
+    var name = atrPct < 1.5 ? "very calm" : atrPct < 2.5 ? "calm"
+             : atrPct < 4.0 ? "active" : atrPct < 6.0 ? "volatile" : "wild";
+    return { name: name, gap: crashPctFor(atrPct) };
   }
 
   // Settings whose inputs are text-with-thousands-separators rather than type=number.
@@ -997,7 +1017,7 @@
       return '<span class="cand' + (k === binding ? " is-binding" : "") + '">'
         + (k === binding ? "▸ " : "· ") + k + " " + nis(cand[k]) + " (" + detail + ")</span>";
     }).join("") + '<span class="cand binding">ATR is ' + atrPct.toFixed(1) + "% of price → \u201c"
-      + band.name + "\u201d, so a " + band.gap + "% crash is assumed, costing "
+      + band.name + "\u201d, so a " + band.gap.toFixed(1) + "% crash is assumed, costing "
       + nis(size * band.gap / 100) + " at this size.</span>";
 
     // ---- the ladder: price level -> where the stop goes
@@ -1188,7 +1208,7 @@
       + " · <b>" + num(t.last, 2) + "</b> close " + (extra.asOf || "")
       + (a > 0 ? " · ATR <b>" + a.toFixed(2) + "</b> (" + (a / pxx * 100).toFixed(1) + "%)" : "")
       + (t.beta ? " · beta " + t.beta.toFixed(2) : "")
-      + (bnd ? " · <b>" + bnd.name + "</b>, assuming a " + bnd.gap + "% crash" : "");
+      + (bnd ? " · <b>" + bnd.name + "</b>, assuming a " + bnd.gap.toFixed(1) + "% crash" : "");
     el("feedStatus").textContent = "";
   }
 
