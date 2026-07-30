@@ -395,6 +395,36 @@
   .pos-empty { font-size: 13px; color: var(--text-dim); line-height: 1.5; }
   .pos-safe { color: var(--good); }
 
+.answer { display: flex; flex-direction: column; gap: 2px; }
+  .answer.alt { padding-top: 12px; border-top: 1px solid var(--ink-border); }
+  .answer-label {
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--text-dim);
+  }
+  .answer-num {
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+    font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1;
+  }
+  .answer.alt .answer-num { font-size: 26px; }
+  .answer-sub { font-size: 12.5px; color: var(--text-dim); }
+  .stock-line {
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
+    color: var(--text-dim);
+  }
+  .stock-line b { color: var(--text); }
+  details.manual, details.why {
+    border-top: 1px solid var(--ink-border); margin-top: 2px;
+  }
+  details.manual summary, details.why summary {
+    padding: 11px 0 2px; font-size: 12.5px; font-weight: 600; color: var(--text-dim);
+    cursor: pointer; list-style: none;
+  }
+  details.manual summary::-webkit-details-marker,
+  details.why summary::-webkit-details-marker { display: none; }
+  details.manual summary::before, details.why summary::before { content: "＋ "; }
+  details.manual[open] summary::before, details.why[open] summary::before { content: "− "; }
+  .manual-body { display: flex; flex-direction: column; gap: 10px; padding: 8px 0 4px; }
+
   .trailmode-row { margin: 2px 0; }
   .trailmode-row .seg { background: var(--ink-raised); }
   .ladder-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -510,165 +540,81 @@
   <div id="calcPanel">
 
   <section class="card">
-    <div class="section-label">Look up a ticker <span class="hint">— fills everything below</span></div>
     <div class="lookup-row">
-      <input type="text" autocomplete="off" autocapitalize="characters" id="in-lookup" placeholder="ASTS">
+      <input type="text" autocomplete="off" autocapitalize="characters" id="in-lookup" placeholder="TICKER">
       <button class="primary-btn" type="button" id="lookupBtn">Fill</button>
     </div>
+    <div class="stock-line" id="stockLine">Type a ticker and tap Fill.</div>
     <div class="sub" id="feedStatus"></div>
 
-    <div class="section-label">The stock</div>
-    <div class="row2">
-      <div class="field">
-        <label for="in-price">Entry price</label>
-        <input type="number" inputmode="decimal" step="0.01" id="in-price" placeholder="0.00">
+    <details class="manual" id="manualBox">
+      <summary>Enter or adjust by hand</summary>
+      <div class="manual-body">
+        <div class="row2">
+          <div class="field">
+            <label for="in-price">Entry price</label>
+            <input type="number" inputmode="decimal" step="0.01" id="in-price" placeholder="0.00">
+          </div>
+          <div class="field">
+            <label for="in-atr">ATR (14)</label>
+            <input type="number" inputmode="decimal" step="0.01" id="in-atr" placeholder="0.00">
+          </div>
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label for="in-ccy">Currency</label>
+            <select id="in-ccy">
+              <option value="NIS">₪ NIS</option>
+              <option value="USD">$ USD</option>
+            </select>
+          </div>
+          <div class="field" id="fx-field" hidden>
+            <label for="in-fx">USD / ILS</label>
+            <input type="number" inputmode="decimal" step="0.001" id="in-fx" placeholder="3.08">
+          </div>
+        </div>
+        <div class="field">
+          <label for="in-beta">Beta <span class="opt">optional</span></label>
+          <input type="number" inputmode="decimal" step="0.01" id="in-beta" placeholder="e.g. 1.16">
+        </div>
       </div>
-      <div class="field">
-        <label for="in-ccy">Currency</label>
-        <select id="in-ccy">
-          <option value="NIS">₪ NIS</option>
-          <option value="USD">$ USD</option>
-        </select>
-      </div>
-    </div>
-    <div class="field" id="fx-field" hidden>
-      <label for="in-fx">USD / ILS rate</label>
-      <input type="number" inputmode="decimal" step="0.001" id="in-fx" placeholder="3.65">
-    </div>
-    <div class="field">
-      <label for="in-atr">ATR (14-day) <span class="opt">same currency as price</span></label>
-      <input type="number" inputmode="decimal" step="0.01" id="in-atr" placeholder="e.g. 3.55">
-    </div>
-    <div class="field">
-      <label for="in-beta">Beta <span class="opt">used as an exposure cap, not the sizer</span></label>
-      <input type="number" inputmode="decimal" step="0.01" id="in-beta" placeholder="e.g. 1.16">
-    </div>
-    <div class="chip-row" id="betaChips"></div>
-
-    <div class="section-label">Risk tier <span class="hint">— what a thesis break costs</span></div>
-    <div class="seg" id="tierSeg" role="group" aria-label="Risk tier">
-      <button class="seg-btn" type="button" data-tier="quality" aria-pressed="false">Quality<small id="segQualityGap"></small></button>
-      <button class="seg-btn" type="button" data-tier="growth" aria-pressed="false">Growth<small id="segGrowthGap"></small></button>
-      <button class="seg-btn" type="button" data-tier="spec" aria-pressed="true">Speculative<small id="segSpecGap"></small></button>
-    </div>
-
-    <div class="section-label">Chart structure <span class="hint">— optional</span></div>
-    <div class="row2">
-      <div class="field">
-        <label for="in-support">Nearest support</label>
-        <input type="number" inputmode="decimal" step="0.01" id="in-support" placeholder="e.g. 39.53">
-      </div>
-      <div class="field">
-        <label for="in-resistance">Nearest resistance</label>
-        <input type="number" inputmode="decimal" step="0.01" id="in-resistance" placeholder="e.g. 56.34">
-      </div>
-    </div>
-
-    <div class="section-label">Liquidity &amp; trend <span class="hint">— optional</span></div>
-    <div class="field">
-      <label for="in-avgvol">Avg daily volume, shares</label>
-      <input type="text" inputmode="numeric" autocomplete="off" id="in-avgvol" placeholder="e.g. 31,000,000">
-    </div>
-    <div class="row2">
-      <div class="field">
-        <label for="in-52h">52-week high</label>
-        <input type="number" inputmode="decimal" step="0.01" id="in-52h" placeholder="0.00">
-      </div>
-      <div class="field">
-        <label for="in-52l">52-week low</label>
-        <input type="number" inputmode="decimal" step="0.01" id="in-52l" placeholder="0.00">
-      </div>
-    </div>
-
-    <div class="section-label">Entry timing <span class="hint">— optional, but this is mistake #4</span></div>
-    <div class="row2">
-      <div class="field">
-        <label for="in-rsi">RSI (14)</label>
-        <input type="number" inputmode="decimal" step="0.1" id="in-rsi" placeholder="e.g. 58">
-      </div>
-      <div class="field">
-        <label for="in-runup">1-month change % <span class="opt">−12 is fine</span></label>
-        <!-- no inputmode: the iOS decimal pad has no minus key, so negatives can't be typed -->
-        <input type="number" step="0.1" id="in-runup" placeholder="e.g. -12">
-      </div>
-    </div>
-
-    <div class="section-label">Timing <span class="hint">— optional</span></div>
-    <div class="row2">
-      <div class="field">
-        <label for="in-entrydate">Entry date</label>
-        <input type="date" id="in-entrydate">
-      </div>
-      <div class="field">
-        <label for="in-earnings">Next earnings</label>
-        <input type="date" id="in-earnings">
-      </div>
-    </div>
+    </details>
   </section>
 
-  <section class="card">
-    <div class="section-label">Position size</div>
-    <div class="result">
-      <div class="headline">
-        <span class="num" id="out-size">₪ —</span>
-        <span class="status-chip" id="out-size-status">enter price &amp; ATR</span>
-      </div>
-      <div class="sub" id="out-shares"></div>
-      <div class="grid3">
-        <div class="mini-stat">
-          <div class="label">Stop dist.</div>
-          <div class="val" id="out-stoppct">—</div>
-        </div>
-        <div class="mini-stat">
-          <div class="label">₪ at risk</div>
-          <div class="val" id="out-risk">—</div>
-        </div>
-        <div class="mini-stat">
-          <div class="label">% of capital</div>
-          <div class="val" id="out-ofcapital">—</div>
-        </div>
-      </div>
-      <div class="formula" id="out-size-formula"></div>
+  <section class="card" id="answerCard">
+    <div class="answer">
+      <div class="answer-label">Buy</div>
+      <div class="answer-num" id="out-size">₪ —</div>
+      <div class="answer-sub" id="out-shares">enter a price and ATR</div>
     </div>
-
-    <div class="section-label">Stop</div>
-    <div class="result">
-      <div class="headline">
-        <span class="num" id="out-stopprice">—</span>
-        <span class="status-chip" id="out-stop-status">—</span>
-      </div>
-      <div class="formula" id="out-stop-formula"></div>
+    <div class="answer alt">
+      <div class="answer-label">Stop</div>
+      <div class="answer-num" id="out-stopprice">—</div>
+      <div class="answer-sub" id="out-stopsub"></div>
     </div>
-
-    <div class="section-label">Stop ladder <span class="hint">— write this down, Leumi won't trail for you</span></div>
-    <div class="result">
-      <div class="headline">
-        <span class="num" id="out-arm">—</span>
-        <span class="status-chip" id="out-arm-chip">breakeven at</span>
-      </div>
-      <div class="sub" id="out-rule"></div>
-      <div class="trailmode-row">
-        <div class="seg" id="trailSeg" role="group" aria-label="Trail type">
-          <button class="seg-btn" type="button" data-mode="atr" aria-pressed="true">ATR distance<small>gap narrows as it rises</small></button>
-          <button class="seg-btn" type="button" data-mode="pct" aria-pressed="false">Constant %<small>gap always the same</small></button>
-        </div>
-      </div>
-      <div class="sub" id="out-trailnote"></div>
-      <div class="ladder-wrap">
-        <table class="ladder" id="out-ladder"></table>
-      </div>
-    </div>
-
     <div class="flag-row" id="out-flags"></div>
+
+    <details class="why">
+      <summary>Why this size?</summary>
+      <div class="formula" id="out-size-formula"></div>
+    </details>
 
     <div class="add-row">
       <div class="field">
-        <label for="in-ticker">Ticker <span class="opt">to track this position</span></label>
-        <input type="text" autocomplete="off" id="in-ticker" placeholder="e.g. ASTS">
+        <label for="in-ticker">Track it — ticker</label>
+        <input type="text" autocomplete="off" id="in-ticker" placeholder="ASTS">
       </div>
       <button class="primary-btn" type="button" id="addPosBtn" disabled>Track this position</button>
     </div>
   </section>
+
+  <section class="card" id="ladderCard">
+    <div class="section-label">Move the stop up as it rises</div>
+    <div class="ladder-wrap">
+      <table class="ladder" id="out-ladder"></table>
+    </div>
+  </section>
+
 
   </div>
 
@@ -676,9 +622,9 @@
     <summary>Your rules</summary>
     <div class="settings-body">
       <p class="settings-note">
-        Position size = the smallest of: risk-based size (1R ÷ stop %), thesis-break cap,
-        capital cap, beta-exposure cap, liquidity cap. If <b>1R (₪)</b> is set it overrides
-        the percentage, so your risk per trade stays fixed when capital moves.
+        Size = 1R ÷ stop%, then held down by the smallest cap that applies. The crash
+        percentages come from measured 45-day drawdowns and are picked automatically
+        from the stock's ATR.
       </p>
       <div class="settings-grid">
         <div class="field">
@@ -694,7 +640,7 @@
           <input type="number" inputmode="decimal" step="0.1" id="cfg-riskpct">
         </div>
         <div class="field">
-          <label for="cfg-breakbudget">Thesis-break budget (₪)</label>
+          <label for="cfg-breakbudget">Most you'd lose in a crash (₪)</label>
           <input type="text" inputmode="numeric" autocomplete="off" id="cfg-breakbudget">
         </div>
         <div class="field">
@@ -706,16 +652,24 @@
           <input type="number" inputmode="decimal" step="0.1" id="cfg-betaexpct">
         </div>
         <div class="field">
-          <label for="cfg-gapquality">Gap scenario — quality (%)</label>
-          <input type="number" inputmode="decimal" step="1" id="cfg-gapquality">
+          <label for="cfg-gapt1">Crash %, ATR &lt;1.5%</label>
+          <input type="number" inputmode="decimal" step="1" id="cfg-gapt1">
         </div>
         <div class="field">
-          <label for="cfg-gapgrowth">Gap scenario — growth (%)</label>
-          <input type="number" inputmode="decimal" step="1" id="cfg-gapgrowth">
+          <label for="cfg-gapt2">Crash %, ATR 1.5-2.5%</label>
+          <input type="number" inputmode="decimal" step="1" id="cfg-gapt2">
         </div>
         <div class="field">
-          <label for="cfg-gapspec">Gap scenario — spec. (%)</label>
-          <input type="number" inputmode="decimal" step="1" id="cfg-gapspec">
+          <label for="cfg-gapt3">Crash %, ATR 2.5-4%</label>
+          <input type="number" inputmode="decimal" step="1" id="cfg-gapt3">
+        </div>
+        <div class="field">
+          <label for="cfg-gapt4">Crash %, ATR 4-6%</label>
+          <input type="number" inputmode="decimal" step="1" id="cfg-gapt4">
+        </div>
+        <div class="field">
+          <label for="cfg-gapt5">Crash %, ATR &gt;6%</label>
+          <input type="number" inputmode="decimal" step="1" id="cfg-gapt5">
         </div>
         <div class="field">
           <label for="cfg-liqpct">Max % of avg volume</label>
@@ -732,10 +686,6 @@
         <div class="field">
           <label for="cfg-armpct">Arm trail at (+%)</label>
           <input type="number" inputmode="decimal" step="1" id="cfg-armpct">
-        </div>
-        <div class="field">
-          <label for="cfg-trailpct">Constant-% trail (%)</label>
-          <input type="number" inputmode="decimal" step="1" id="cfg-trailpct">
         </div>
         <div class="field">
           <label for="cfg-rsiwarn">Warn if RSI above</label>
@@ -773,15 +723,11 @@
   </details>
 
   <footer class="note">
-    Size comes from the stop, not from beta: risking your budget over the ATR/support stop distance.
-    That controls an <b>ordinary</b> loss. The <b>thesis-break cap</b> controls the other kind — a gap
-    through the stop on news, dilution, or a story that dies — by asking what a bad gap costs at that
-    size and holding it to your break budget. Beta is demoted to an exposure cap, so a high-beta name
-    can't take a full slot. Everything is typed in by you from the Yahoo Finance app: ATR(14) as a chart
-    indicator, Beta and Avg Volume on the Statistics tab, support/resistance and the 52-week range off
-    the chart, earnings on Summary. No live market connection. Once the stop reaches breakeven the trade is protected <b>95% of the time</b> — measured across 271,000
-    simulated trades, 4.9% of armed positions still ended negative because the price <b>gapped</b> below the
-    stop overnight and filled there. A stop is a promise the market keeps during trading hours only.
+    Everything is sized from the stop: risk 1R, divide by the stop distance, then take the
+    smallest cap. The stop starts at 3× ATR and only ever moves up — once the price is
+    +15% ahead it sits at your entry, which protects the trade <b>95%</b> of the time. The
+    other 5% is an overnight gap opening below the stop and filling there. Prices are daily
+    closes from Yahoo, not live quotes.
   </footer>
 
   </div>
@@ -800,14 +746,18 @@
     breakbudget: 0,
     maxpct: 20,
     betaexpct: 25,
-    gapquality: 20,
-    gapgrowth: 35,
-    gapspec: 55,
+    // Crash assumption per volatility band, from measured 45-day drawdowns across
+    // 271,464 trades at the ~96th percentile. Replaces the old manual quality/growth/
+    // speculative choice: ATR tells you the band, so you don't have to judge it.
+    gapt1: 22,          // ATR < 1.5% of price
+    gapt2: 25,          // 1.5 - 2.5%
+    gapt3: 34,          // 2.5 - 4%
+    gapt4: 44,          // 4 - 6%
+    gapt5: 55,          // > 6%
     liqpct: 5,
     initmult: 3.0,
     trailmult: 2.5,
     armpct: 15,
-    trailpct: 20,
     minstop: 8,
     // 30% not 45%: on a name like QBTS (ATR ~15% of price) 3x ATR is a 45% stop, which is not
     // protection at all. -30% also tested best of every fixed depth on the real trade history.
@@ -820,28 +770,8 @@
   };
 
   var KEY = "riskSizerSettings_v4";
-  var TIER_KEY = "riskSizerTier_v4";
-  var TRAILMODE_KEY = "riskSizerTrailMode_v4";
   var cfg = loadSettings();
-  var tier = loadTier();
-  var trailMode = loadTrailMode();
 
-  function loadTrailMode() {
-    try {
-      var m = localStorage.getItem(TRAILMODE_KEY);
-      if (m === "atr" || m === "pct") return m;
-    } catch (e) {}
-    return "atr";
-  }
-
-  var KNOWN_BETAS = [
-    { t: "MSFT", b: 1.13 },
-    { t: "IONQ", b: 3.23 },
-    { t: "PLTR", b: 1.56 },
-    { t: "NVDA", b: 2.21 },
-    { t: "OKLO", b: 1.16 },
-    { t: "LUMI.TA", b: 0.38 }
-  ];
 
   function loadSettings() {
     try {
@@ -866,28 +796,19 @@
     try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {}
   }
 
-  function loadTier() {
-    try {
-      var t = localStorage.getItem(TIER_KEY);
-      if (t === "quality" || t === "growth" || t === "spec") return t;
-    } catch (e) {}
-    return "spec";
-  }
-
-  function saveTier() {
-    try { localStorage.setItem(TIER_KEY, tier); } catch (e) {}
-  }
-
   // 1R in shekels. An absolute figure takes precedence over the percentage, so the
   // risk per trade stays fixed even if total capital moves.
   function riskBudgetNis() {
     return cfg.riskabs > 0 ? cfg.riskabs : cfg.capital * (cfg.riskpct / 100);
   }
 
-  function gapForTier(t) {
-    if (t === "quality") return cfg.gapquality;
-    if (t === "growth") return cfg.gapgrowth;
-    return cfg.gapspec;
+  // Volatility band from ATR, and the crash assumption that goes with it.
+  function bandFor(atrPct) {
+    if (atrPct < 1.5)  return { name: "very calm", gap: cfg.gapt1 };
+    if (atrPct < 2.5)  return { name: "calm",      gap: cfg.gapt2 };
+    if (atrPct < 4.0)  return { name: "active",    gap: cfg.gapt3 };
+    if (atrPct < 6.0)  return { name: "volatile",  gap: cfg.gapt4 };
+    return               { name: "wild",      gap: cfg.gapt5 };
   }
 
   // Settings whose inputs are text-with-thousands-separators rather than type=number.
@@ -933,10 +854,7 @@
   // Rungs land on round numbers: these get typed into Leumi by hand, so 80.00 beats 77.76.
   function buildLadder(price, atr, initialStop, armPrice) {
     var trailDist = cfg.trailmult * atr;
-    function trailStopFor(high) {
-      var dist = trailMode === "pct" ? high * (cfg.trailpct / 100) : trailDist;
-      return Math.min(high - dist, high);
-    }
+    function trailStopFor(high) { return Math.min(high - trailDist, high); }
     var rungs = [{ label: "— now —", stop: initialStop, why: "set this at entry", cls: "now" }];
     rungs.push({ px: armPrice, stop: price, why: "jumps to BREAKEVEN — protected bar a gap", cls: "arm" });
     var step = niceStep(Math.max(atr, price * 0.05));
@@ -1001,321 +919,130 @@
       '<span class="rule-chip">Cap <b>' + cfg.maxpct + "%</b></span>";
   }
 
-  function renderTierLabels() {
-    el("segQualityGap").textContent = "−" + cfg.gapquality + "% gap";
-    el("segGrowthGap").textContent = "−" + cfg.gapgrowth + "% gap";
-    el("segSpecGap").textContent = "−" + cfg.gapspec + "% gap";
-    Array.prototype.forEach.call(el("tierSeg").querySelectorAll(".seg-btn"), function (b) {
-      b.setAttribute("aria-pressed", b.dataset.tier === tier ? "true" : "false");
-    });
-    Array.prototype.forEach.call(el("trailSeg").querySelectorAll(".seg-btn"), function (b) {
-      b.setAttribute("aria-pressed", b.dataset.mode === trailMode ? "true" : "false");
-    });
-  }
-
-  el("trailSeg").addEventListener("click", function (e) {
-    var btn = e.target.closest(".seg-btn");
-    if (!btn) return;
-    trailMode = btn.dataset.mode;
-    try { localStorage.setItem(TRAILMODE_KEY, trailMode); } catch (err) {}
-    Array.prototype.forEach.call(el("trailSeg").querySelectorAll(".seg-btn"), function (b) {
-      b.setAttribute("aria-pressed", b.dataset.mode === trailMode ? "true" : "false");
-    });
-    recalc();
-  });
-
-  el("tierSeg").addEventListener("click", function (e) {
-    var btn = e.target.closest(".seg-btn");
-    if (!btn) return;
-    tier = btn.dataset.tier;
-    saveTier();
-    renderTierLabels();
-    recalc();
-  });
-
-  // ---- beta quick chips ----
-  function renderBetaChips() {
-    var container = el("betaChips");
-    container.innerHTML = "";
-    KNOWN_BETAS.forEach(function (item) {
-      var b = document.createElement("button");
-      b.type = "button";
-      b.className = "beta-chip";
-      b.textContent = item.t + " " + item.b.toFixed(2);
-      b.addEventListener("click", function () {
-        el("in-beta").value = item.b;
-        recalc();
-      });
-      container.appendChild(b);
-    });
-  }
-
   // ---- inputs ----
   var inPrice = el("in-price"), inCcy = el("in-ccy"), inFx = el("in-fx"), fxField = el("fx-field");
   var inAtr = el("in-atr"), inBeta = el("in-beta");
-  var inSupport = el("in-support"), inResistance = el("in-resistance");
-  var inAvgVol = el("in-avgvol"), in52h = el("in-52h"), in52l = el("in-52l");
-  var inEntryDate = el("in-entrydate"), inEarnings = el("in-earnings");
+  // Values that used to be typed in. Filled from the feed, never shown as fields.
+  var extra = { name: null, avgvol: null, h52: null, l52: null, asOf: null, last: null };
 
-  var outSize = el("out-size"), outSizeStatus = el("out-size-status"), outShares = el("out-shares");
-  var outStopPct = el("out-stoppct"), outRisk = el("out-risk"), outOfCapital = el("out-ofcapital");
+  var outSize = el("out-size"), outShares = el("out-shares");
   var outSizeFormula = el("out-size-formula");
-  var outStopPrice = el("out-stopprice"), outStopStatus = el("out-stop-status"), outStopFormula = el("out-stop-formula");
-  var outArm = el("out-arm"), outArmChip = el("out-arm-chip"), outRule = el("out-rule");
-  var outLadder = el("out-ladder");
-  var outFlags = el("out-flags");
-  var inRsi = el("in-rsi"), inRunup = el("in-runup");
+  var outStopPrice = el("out-stopprice");
+  var outLadder = el("out-ladder"), outStopSub = el("out-stopsub");
+  var outFlags = el("out-flags"), stockLine = el("stockLine");
 
   function blankOut(msg) {
     outSize.textContent = "₪ —";
-    outSizeStatus.textContent = msg;
-    outSizeStatus.className = "status-chip";
-    outShares.textContent = "";
-    outStopPct.textContent = "—";
-    outRisk.textContent = "—";
-    outOfCapital.textContent = "—";
-    outSizeFormula.textContent = "";
+    outShares.textContent = msg;
     outStopPrice.textContent = "—";
-    outStopStatus.textContent = "—";
-    outStopStatus.className = "status-chip";
-    outStopFormula.textContent = "";
-    outArm.textContent = "—";
-    outArmChip.textContent = "breakeven at";
-    outArmChip.className = "status-chip";
-    outRule.textContent = "";
+    outStopSub.textContent = "";
+    outSizeFormula.textContent = "";
     outLadder.innerHTML = "";
     outFlags.innerHTML = "";
   }
 
   function recalc() {
     fxField.hidden = inCcy.value !== "USD";
+    syncAddBtn();
 
-    if (!(cfg.capital > 0) || !(cfg.breakbudget > 0)) {
-      blankOut("set up your rules");
-      return;
-    }
+    if (!(cfg.capital > 0) || !(cfg.breakbudget > 0)) { blankOut("set up your rules"); return; }
 
     var price = parseFloat(inPrice.value);
     var atr = parseFloat(inAtr.value);
     var beta = parseFloat(inBeta.value);
     var fx = parseFloat(inFx.value) || cfg.fx;
+    if (!(price > 0) || !(atr > 0)) { blankOut("enter a price and ATR"); return; }
 
-    if (!(price > 0) || !(atr > 0)) {
-      blankOut("enter price & ATR");
-      return;
-    }
+    var atrPct = atr / price * 100;
+    var band = bandFor(atrPct);
 
-    // ---- initial stop: N x ATR, and support may only WIDEN it, never tighten it.
-    // A level closer than the ATR floor sits inside the daily noise band and gets wicked out;
-    // measured on 40 of Asaf's own positions, stops inside ~2.5x ATR were wrong 80-93% of the time.
-    var atrStopDistance = cfg.initmult * atr;
-    var support = parseFloat(inSupport.value);
-    var stopDistance, stopBasis;
-    if (support > 0 && support < price && (price - support) > atrStopDistance) {
-      stopDistance = price - support;
-      stopBasis = "below support " + num(support, 2) + " (wider than " + cfg.initmult.toFixed(1) + "x ATR)";
-    } else {
-      stopDistance = atrStopDistance;
-      stopBasis = cfg.initmult.toFixed(1) + "x ATR"
-        + (support > 0 && support < price ? " (support " + num(support, 2) + " is inside the noise band — ignored)" : "");
-    }
-
-    var rawStopPct = (stopDistance / price) * 100;
+    // ---- initial stop: 3x ATR, held inside sane bounds
+    var rawStopPct = (cfg.initmult * atr) / price * 100;
     var stopPct = clamp(rawStopPct, cfg.minstop, cfg.maxstop);
-    var wasClamped = Math.abs(stopPct - rawStopPct) > 0.001;
     var stopPrice = price * (1 - stopPct / 100);
-    // If the clamp moved the stop, the effective distance moves with it.
-    var effStopDistance = price * (stopPct / 100);
 
-    // ---- size candidates ----
+    // ---- size: 1R / stop%, then the smallest cap wins
     var riskBudget = riskBudgetNis();
-    var gapPct = gapForTier(tier);
-    var candidates = {};
-
-    candidates["risk-based"] = riskBudget / (stopPct / 100);
-    candidates["thesis-break cap"] = cfg.breakbudget / (gapPct / 100);
-    candidates["capital cap"] = cfg.capital * (cfg.maxpct / 100);
-    if (beta > 0) {
-      candidates["beta-exposure cap"] = (cfg.capital * (cfg.betaexpct / 100)) / beta;
+    var cand = {};
+    cand["risk-based"] = riskBudget / (stopPct / 100);
+    cand["crash cap"] = cfg.breakbudget / (band.gap / 100);
+    cand["capital cap"] = cfg.capital * (cfg.maxpct / 100);
+    if (beta > 0) cand["beta cap"] = (cfg.capital * (cfg.betaexpct / 100)) / beta;
+    if (extra.avgvol > 0) {
+      var dv = toNis(extra.avgvol * price, inCcy.value, fx);
+      if (dv) cand["liquidity cap"] = dv * (cfg.liqpct / 100);
     }
-
-    var avgVol = numFrom(inAvgVol);
-    if (avgVol > 0) {
-      var dollarVolNis = toNis(avgVol * price, inCcy.value, fx);
-      if (dollarVolNis) candidates["liquidity cap"] = dollarVolNis * (cfg.liqpct / 100);
-    }
-
-    var size = Math.min.apply(null, Object.values(candidates));
-    var binding = Object.keys(candidates).reduce(function (a, b) {
-      return candidates[a] <= candidates[b] ? a : b;
-    });
-
-    // ---- size outputs ----
+    var size = Math.min.apply(null, Object.values(cand));
+    var binding = Object.keys(cand).reduce(function (a, b) { return cand[a] <= cand[b] ? a : b; });
     var riskAmount = size * (stopPct / 100);
-    var gapLoss = size * (gapPct / 100);
 
+    // ---- the two answers
+    var inCcyAmt = inCcy.value === "USD" ? size / fx : size;
+    var shares = inCcyAmt / price;
     outSize.textContent = nis(size);
-    if (binding === "risk-based") {
-      outSizeStatus.textContent = "risk-sized";
-      outSizeStatus.className = "status-chip good";
-    } else {
-      outSizeStatus.textContent = "capped: " + binding;
-      outSizeStatus.className = "status-chip warn";
-    }
-
-    var amountInPriceCcy = inCcy.value === "USD" ? size / fx : size;
-    var shares = amountInPriceCcy / price;
-    outShares.textContent = "≈ " + num(shares, shares < 10 ? 2 : 0) + " shares"
-      + (inCcy.value === "USD" ? "  ·  $" + num(amountInPriceCcy, 0) + " @ " + fx.toFixed(3) : "");
-
-    outStopPct.textContent = pct(stopPct);
-    outRisk.textContent = nis(riskAmount);
-    outOfCapital.textContent = pct(size / cfg.capital * 100);
-
-    var candHtml = Object.keys(candidates).map(function (k) {
-      var detail = "";
-      if (k === "risk-based") detail = nis(riskBudget) + " risk ÷ " + pct(stopPct) + " stop";
-      else if (k === "thesis-break cap") detail = nis(cfg.breakbudget) + " break budget ÷ " + gapPct + "% gap";
-      else if (k === "capital cap") detail = cfg.maxpct + "% of capital";
-      else if (k === "beta-exposure cap") detail = cfg.betaexpct + "% ÷ beta " + beta.toFixed(2);
-      else if (k === "liquidity cap") detail = cfg.liqpct + "% of avg $ volume";
-      return '<span class="cand' + (k === binding ? " is-binding" : "") + '">'
-        + (k === binding ? "▸ " : "· ") + k + ": " + nis(candidates[k]) + "  (" + detail + ")</span>";
-    }).join("");
-    outSizeFormula.innerHTML = candHtml
-      + '<span class="cand binding">→ bound by ' + binding + "; a " + gapPct + "% gap here costs " + nis(gapLoss) + "</span>";
-
-    // ---- stop outputs ----
+    outShares.textContent = num(shares, shares < 10 ? 2 : 0) + " shares"
+      + (inCcy.value === "USD" ? " · $" + num(inCcyAmt, 0) : "")
+      + " · " + pct(size / cfg.capital * 100) + " of capital";
     outStopPrice.textContent = num(stopPrice, 2);
-    var riskRatio = riskAmount / riskBudget;
-    if (riskRatio <= 1.001) {
-      outStopStatus.textContent = "within " + cfg.riskpct + "% budget";
-      outStopStatus.className = "status-chip good";
-    } else {
-      outStopStatus.textContent = "over budget — trim";
-      outStopStatus.className = "status-chip bad";
-    }
-    outStopFormula.textContent = [
-      "stop: " + stopBasis + " = " + num(stopDistance, 2) + " = " + pct(rawStopPct)
-        + (wasClamped ? " → clamped to " + pct(stopPct) : ""),
-      nis(riskAmount) + " at risk of " + nis(riskBudget) + " budget"
-    ].join(" · ");
+    outStopSub.textContent = pct(stopPct) + " below entry · risking " + nis(riskAmount)
+      + (binding === "risk-based" ? "" : " · size held down by the " + binding);
 
-    // ---- stop ladder ----
-    // The trail only arms once price has been up armpct%, and is floored at entry from then on,
-    // so a trade that has worked can never become a loser. This is the piece that fixes both
-    // selling winners early AND riding losers down.
+    // ---- the reasoning, folded away
+    outSizeFormula.innerHTML = Object.keys(cand).map(function (k) {
+      var detail = k === "risk-based" ? nis(riskBudget) + " ÷ " + pct(stopPct) + " stop"
+        : k === "crash cap" ? nis(cfg.breakbudget) + " ÷ " + band.gap + "% crash"
+        : k === "capital cap" ? cfg.maxpct + "% of capital"
+        : k === "beta cap" ? cfg.betaexpct + "% ÷ beta " + beta.toFixed(2)
+        : cfg.liqpct + "% of daily volume";
+      return '<span class="cand' + (k === binding ? " is-binding" : "") + '">'
+        + (k === binding ? "▸ " : "· ") + k + " " + nis(cand[k]) + " (" + detail + ")</span>";
+    }).join("") + '<span class="cand binding">ATR is ' + atrPct.toFixed(1) + "% of price → \u201c"
+      + band.name + "\u201d, so a " + band.gap + "% crash is assumed, costing "
+      + nis(size * band.gap / 100) + " at this size.</span>";
+
+    // ---- the ladder: price level -> where the stop goes
     var armPrice = price * (1 + cfg.armpct / 100);
-    var trailDist = trailMode === "pct" ? null : cfg.trailmult * atr;
-    function trailStopFor(high) {
-      var d = trailMode === "pct" ? high * (cfg.trailpct / 100) : trailDist;
-      return Math.min(high - d, high);
+    var all = buildLadder(price, atr, stopPrice, armPrice);
+    var rungs = [], seen = null;
+    for (var ri = 0; ri < all.length && rungs.length < 7; ri++) {
+      // skip rungs that repeat the previous stop — they tell you nothing new
+      if (seen !== null && Math.abs(all[ri].stop - seen) < 0.005) continue;
+      rungs.push(all[ri]); seen = all[ri].stop;
     }
-    outArm.textContent = num(armPrice, 2);
-    outArmChip.textContent = "breakeven at +" + cfg.armpct + "%";
-    outArmChip.className = "status-chip good";
-    el("out-trailnote").textContent = trailMode === "pct"
-      ? "Constant % mode: the stop always sits " + cfg.trailpct + "% below the highest price — that is why every row shows "
-        + cfg.trailpct + "%. Switch to ATR distance for a gap that narrows as the trade works."
-      : "ATR mode: the stop sits a fixed " + num(cfg.trailmult * atr, 2) + " below the highest price ("
-        + cfg.trailmult + "x ATR), so the gap narrows in percentage terms as price rises.";
-    outRule.textContent = trailMode === "pct"
-      ? "stop = max(" + num(stopPrice, 2) + ", highest price − " + cfg.trailpct + "%), never below "
-        + num(price, 2) + " once " + num(armPrice, 2) + " trades"
-      : "stop = max(" + num(stopPrice, 2) + ", highest price − " + num(trailDist, 2) + "), never below "
-        + num(price, 2) + " once " + num(armPrice, 2) + " trades";
+    outLadder.innerHTML = "<tr><th>when it reaches</th><th>move stop to</th><th></th></tr>"
+      + rungs.map(function (r) {
+        var at = r.px === undefined ? price : r.px;
+        var note = r.cls === "now" ? "set today" : r.cls === "arm" ? "now protected" : "";
+        return '<tr class="' + r.cls + '"><td>' + num(at, 2)
+          + (r.px === undefined ? "" : " <small>(" + (at / price - 1 >= 0 ? "+" : "")
+             + ((at / price - 1) * 100).toFixed(0) + "%)</small>")
+          + "</td><td>" + num(r.stop, 2) + "</td><td>" + note + "</td></tr>";
+      }).join("");
 
-    var rungs = buildLadder(price, atr, stopPrice, armPrice);
-    var lh = "<tr><th>price reaches</th><th>move stop to</th><th>stop sits<br>below price</th>"
-      + "<th>if the stop<br>is hit there</th><th>why</th></tr>";
-    lh += rungs.map(function (r) {
-      var at = r.px === undefined ? price : r.px;
-      var pnl = (r.stop - price) / price * 100;
-      var pnlTxt = (pnl >= 0.05 ? "you make +" : pnl <= -0.05 ? "you lose " : "you break even")
-        + (Math.abs(pnl) >= 0.05 ? Math.abs(pnl).toFixed(1) + "%" : "");
-      var label = r.px === undefined
-        ? num(price, 2) + " <small>(now)</small>"
-        : num(r.px, 2) + " <small>(" + (r.px / price - 1 >= 0 ? "+" : "")
-          + ((r.px / price - 1) * 100).toFixed(0) + "%)</small>";
-      return '<tr class="' + r.cls + '"><td>' + label + "</td><td>" + num(r.stop, 2) + "</td><td>"
-        + pct((at - r.stop) / at * 100) + "</td><td>" + pnlTxt + "</td><td>" + r.why + "</td></tr>";
-    }).join("");
-    outLadder.innerHTML = lh;
-
-    // ---- flags ----
-    var flagsHtml = "";
-
-    var rsi = parseFloat(inRsi.value), runup = parseFloat(inRunup.value);
-    var extended = [];
-    if (rsi > 0 && rsi > cfg.rsiwarn) extended.push("RSI " + rsi.toFixed(0) + " (>" + cfg.rsiwarn + ")");
-    if (!isNaN(runup) && runup > cfg.runupwarn) extended.push("up " + runup.toFixed(0) + "% in a month (>" + cfg.runupwarn + "%)");
-    if (extended.length) {
-      flagsHtml += '<div class="flag quiet"><span></span><span>Extended entry (<b>'
-        + extended.join(", ") + "</b>) — noted, but <b>not a reason to skip</b>. This warning was "
-        + "built on 40 of your own trades; across 271,000 simulated trades entries at RSI&gt;70 actually "
-        + "returned slightly <i>more</i> (+0.23R vs +0.18R average). Treat it as context, not a signal.</span></div>";
-    }
-
-    if (tier === "spec" && binding === "thesis-break cap") {
-      flagsHtml += '<div class="flag warn"><span class="dot"></span><span>Speculative name held to the break cap — sized so a '
-        + gapPct + "% drawdown costs " + nis(gapLoss) + ", which you can sit through.</span></div>";
-    }
-
-    if (stopPct < cfg.minstop + 0.01 && rawStopPct < cfg.minstop) {
-      flagsHtml += '<div class="flag warn"><span class="dot"></span><span>The ATR stop would sit only '
-        + pct(rawStopPct) + " away — widened to the " + cfg.minstop + "% floor. Anything tighter gets wicked out.</span></div>";
-    }
-
-    var atrPctOfPrice = atr / price * 100;
+    // ---- at most two flags, and only when they change a decision
+    var flags = [];
     if (rawStopPct > cfg.maxstop + 0.01) {
-      flagsHtml += '<div class="flag bad"><span class="dot"></span><span>This name is too volatile for a clean stop: ATR is <b>'
-        + atrPctOfPrice.toFixed(1) + "% of price</b>, so " + cfg.initmult.toFixed(1) + "x ATR would put the stop "
-        + pct(rawStopPct) + " away. Capped at " + cfg.maxstop + "% — which means the stop is inside "
-        + (cfg.maxstop / atrPctOfPrice).toFixed(1) + "x ATR and will get wicked out more often. Size small and treat the stop as a disaster cap, not a plan.</span></div>";
-    } else if (atrPctOfPrice > 10) {
-      flagsHtml += '<div class="flag warn"><span class="dot"></span><span>ATR is <b>' + atrPctOfPrice.toFixed(1)
-        + "% of price</b> — this stock moves that much on an average day. Expect the stop to be tested.</span></div>";
+      flags.push(["bad", "Too volatile to stop cleanly. ATR is " + atrPct.toFixed(1)
+        + "% of price, so a proper stop would sit " + pct(rawStopPct)
+        + " away. Capped at " + cfg.maxstop + "% — expect it to be tested."]);
+    } else if (rawStopPct < cfg.minstop) {
+      flags.push(["quiet", "Stop widened to the " + cfg.minstop + "% floor; " + cfg.initmult
+        + "× ATR would have been only " + pct(rawStopPct) + " away."]);
     }
-
-    var high52 = parseFloat(in52h.value), low52 = parseFloat(in52l.value);
-    if (high52 > 0) {
-      var pctOffHigh = (high52 - price) / high52 * 100;
-      var pctAboveLow = low52 > 0 ? (price - low52) / low52 * 100 : null;
-      var rangeSub = pctOffHigh.toFixed(0) + "% off 52w high"
-        + (pctAboveLow !== null ? ", " + pctAboveLow.toFixed(0) + "% above 52w low" : "");
-      if (pctOffHigh > cfg.drawdown) {
-        flagsHtml += '<div class="flag warn"><span class="dot"></span><span>' + rangeSub
-          + " — deep drawdown, verify the catalyst/thesis before sizing up.</span></div>";
-      } else {
-        flagsHtml += '<div class="flag quiet"><span></span><span>' + rangeSub + "</span></div>";
-      }
+    if (extra.h52 > 0) {
+      var off = (extra.h52 - price) / extra.h52 * 100;
+      if (off > cfg.drawdown) flags.push(["quiet", off.toFixed(0) + "% below its 52-week high."]);
     }
-
-    var entryDate = inEntryDate.value || todayStr();
-    var reviewBy = addDays(entryDate, cfg.holddays);
-    flagsHtml += '<div class="flag quiet"><span></span><span>Review by <b>' + reviewBy + "</b> ("
-      + cfg.holddays + " days) — exit if the thesis hasn't played out.</span></div>";
-
-    var earnings = inEarnings.value;
-    if (earnings) {
-      if (earnings >= entryDate && earnings <= reviewBy) {
-        flagsHtml += '<div class="flag bad"><span class="dot"></span><span>Earnings on <b>' + earnings
-          + "</b> falls inside your holding window — gap risk, this stop won't protect you from a gap.</span></div>";
-      } else {
-        flagsHtml += '<div class="flag quiet"><span></span><span>Earnings on ' + earnings
-          + " — outside your holding window.</span></div>";
-      }
-    }
-
-    outFlags.innerHTML = flagsHtml;
+    outFlags.innerHTML = flags.slice(0, 2).map(function (f) {
+      return '<div class="flag ' + f[0] + '">' + (f[0] === "quiet" ? "<span></span>" : '<span class="dot"></span>')
+        + "<span>" + f[1] + "</span></div>";
+    }).join("");
   }
 
-  [inPrice, inCcy, inFx, inAtr, inBeta, inSupport, inResistance, in52h, in52l, inEntryDate, inEarnings, inRsi, inRunup]
-    .forEach(function (input) {
-      input.addEventListener("input", recalc);
-      input.addEventListener("change", recalc);
-    });
-  groupDigits(inAvgVol, recalc);
+  [inPrice, inCcy, inFx, inAtr, inBeta].forEach(function (input) {
+    input.addEventListener("input", recalc);
+    input.addEventListener("change", recalc);
+  });
 
   // ---- settings ----
   var cfgInputs = {};
@@ -1336,7 +1063,6 @@
 
   function refreshAll() {
     renderRulesStrip();
-    renderTierLabels();
     recalc();
     renderPositions();
   }
@@ -1362,6 +1088,7 @@
   var feed = null, feedErr = null;
 
   function fetchFeed() {
+    if (typeof fetch !== "function") { feedErr = "unsupported browser"; renderFeedStatus(); return; }
     el("feedStatus").textContent = "loading market data…";
     fetch(FEED_URL, { cache: "no-cache" })
       .then(function (r) {
@@ -1397,10 +1124,9 @@
     var syms = Object.keys(feed.tickers || {}).length;
     var stale = age !== null && age > 24;
     n.className = "sub" + (stale ? " feed-stale" : "");
-    n.textContent = syms + " tickers · updated "
+    n.textContent = syms + " tickers, updated "
       + (age === null ? feed.updated : age < 1 ? Math.round(age * 60) + " min ago" : age.toFixed(0) + "h ago")
-      + (stale ? " — stale, check the Actions tab" : "")
-      + (feed.fx ? " · USD/ILS " + feed.fx.toFixed(3) : "");
+      + (stale ? " — stale" : "");
   }
 
   // ---- indicators computed from the published bars: [date, high, low, close] ----
@@ -1479,31 +1205,26 @@
     inPrice.value = t.last;
     var atr = wilderAtr(bars, 14);
     if (atr) inAtr.value = atr.toFixed(2);
-    if (t.beta) inBeta.value = t.beta;
-    if (t.avgvol) inAvgVol.value = Math.round(t.avgvol).toLocaleString("en-US");
-    if (t.h52) in52h.value = t.h52;
-    if (t.l52) in52l.value = t.l52;
-    var r = rsi14(bars, 14); if (r !== null) inRsi.value = r.toFixed(0);
-    var m = monthChange(bars); if (m !== null) inRunup.value = m.toFixed(1);
+    if (t.beta) inBeta.value = t.beta; else inBeta.value = "";
+    extra.name = t.name || null;
+    extra.avgvol = t.avgvol || null;
+    extra.h52 = t.h52 || null;
+    extra.l52 = t.l52 || null;
+    extra.last = t.last;
+    extra.asOf = bars.length ? bars[bars.length - 1][0] : null;
     inTicker.value = sym;
     renderFeedStatus();
     syncAddBtn();
     recalc();
 
-    // Show the provenance so you can check these against your chart rather than trust them.
-    var n = el("feedStatus");
-    var lastBar = bars[bars.length - 1];
-    n.className = "sub";
-    n.innerHTML = "<b>" + esc(sym) + "</b>" + (t.name ? " · " + esc(t.name) : "")
-      + " — filled from the close of <b>" + lastBar[0] + "</b> (" + num(lastBar[3], 2)
-      + "), not a live price."
-      + "<br>ATR is Wilder/RMA(14) — set your chart's ATR smoothing to RMA to compare."
-      + " RSI is Wilder(14). 1-month change is calendar (vs the close on or before "
-      + monthRefDate(bars) + ")."
-      + "<br>Source: Yahoo Finance daily bars, " + bars.length + " of them, published "
-      + (feedAgeHours() === null ? feed.updated
-         : feedAgeHours() < 1 ? Math.round(feedAgeHours() * 60) + " min ago"
-         : feedAgeHours().toFixed(0) + "h ago") + ".";
+    var a = parseFloat(inAtr.value), pxx = parseFloat(inPrice.value);
+    var bnd = (a > 0 && pxx > 0) ? bandFor(a / pxx * 100) : null;
+    stockLine.innerHTML = "<b>" + esc(sym) + "</b>" + (t.name ? " " + esc(t.name) : "")
+      + " · <b>" + num(t.last, 2) + "</b> close " + (extra.asOf || "")
+      + (a > 0 ? " · ATR <b>" + a.toFixed(2) + "</b> (" + (a / pxx * 100).toFixed(1) + "%)" : "")
+      + (t.beta ? " · beta " + t.beta.toFixed(2) : "")
+      + (bnd ? ' · <b>' + bnd.name + "</b>, assuming a " + bnd.gap + "% crash" : "");
+    el("feedStatus").textContent = "";
   }
 
   function monthRefDate(bars) {
@@ -1567,8 +1288,7 @@
       high = Math.max(high, cl);
       if (!armed && high >= armPrice) { armed = true; stop = Math.max(stop, p.entry); }
       if (armed) {
-        var d = trailMode === "pct" ? high * (cfg.trailpct / 100) : trailDist;
-        stop = Math.max(stop, Math.min(high - d, high), p.entry);
+        stop = Math.max(stop, Math.min(high - trailDist, high), p.entry);
       }
     }
     return { stop: stop, high: high, last: bars[bars.length - 1][3],
@@ -1672,7 +1392,7 @@
     var price = parseFloat(inPrice.value), atr = parseFloat(inAtr.value);
     if (!(price > 0 && atr > 0)) return;
     positions.push({ tick: inTicker.value.trim().toUpperCase(), entry: price, atr: atr,
-                     rung: 0, tier: tier, added: todayStr() });
+                     rung: 0, added: todayStr() });
     savePositions();
     inTicker.value = "";
     syncAddBtn();
@@ -1729,8 +1449,8 @@
     } else {
       msg = "Risk per trade (1R): " + nis(cfg.riskabs > 0 ? cfg.riskabs : cap * cfg.riskpct / 100)
         + (cfg.riskabs > 0 ? " (fixed)" : " (" + cfg.riskpct + "% of capital)") + "."
-        + "\nThesis-break budget: " + nis(spec * cfg.gapspec / 100)
-        + " — what a " + cfg.gapspec + "% gap costs on a " + nis(spec) + " position."
+        + "\nCrash budget: " + nis(spec * cfg.gapt5 / 100)
+        + " — what a " + cfg.gapt5 + "% crash costs on a " + nis(spec) + " position."
         + "\nAll of it is editable later under Your rules.";
     }
     setupDerived.textContent = msg;
@@ -1745,7 +1465,7 @@
     var spec = numFrom(setupMaxSpec);
     if (!(cap > 0) || !(spec > 0) || spec > cap) return;
     cfg.capital = cap;
-    cfg.breakbudget = spec * (cfg.gapspec / 100);
+    cfg.breakbudget = spec * (cfg.gapt5 / 100);
     saveSettings();
     try { localStorage.setItem(SETUP_KEY, "1"); } catch (e) {}
     renderSettingsInputs();
@@ -1766,10 +1486,8 @@
   });
 
   // ---- init ----
-  renderBetaChips();
   renderSettingsInputs();
   inFx.value = cfg.fx;
-  inEntryDate.value = todayStr();
   if (isSetUp()) showApp(); else showSetup();
   refreshAll();
   fetchFeed();
