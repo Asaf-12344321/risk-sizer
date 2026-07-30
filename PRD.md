@@ -21,8 +21,8 @@ Where behaviour is a judgement call rather than a derived fact, it is marked
 A discretionary swing trader picks stocks well but loses the gains to two exit errors:
 selling winners early (measured: winners ran a further **+38.5%** on average after being
 sold) and holding losers indefinitely (measured: **8 of 8** open positions underwater,
-mean **−26.4%**). Net effect over 20 months: **+166,306 ₪ realised against ~−177,000 ₪
-unrealised** — approximately flat.
+mean **−26.4%**). Net effect over 20 months: realised gains were almost exactly offset by unrealised
+losses on positions still held — approximately flat.
 
 ### 1.2 What the product does
 Moves every exit decision to **before entry**, when the user is not emotionally
@@ -192,7 +192,7 @@ derivation, mark the binding one, and state the crash cost at the chosen size.
 **Worked example** — all preconditions stated explicitly, because the share count depends
 on currency and FX and a partially-specified example is untestable.
 
-> **Given** `capital = 700000`, `riskabs = 9000`, `maxspec = 40000` (→ `breakbudget = 22000`),
+> **Given** `capital = 100000`, `riskabs = 1300`, `maxspec = 6000` (→ `breakbudget = 3300`),
 > all other settings at default, **currency = USD**, `fx = 3.0724`
 > **When** `price = 338.19`, `ATR = 8.02`, `beta = 0.845`
 
@@ -204,22 +204,20 @@ stopPct    = clamp(3 × 2.371, 8, 30)                =   8.0  %   (min floor bin
 stopPrice  = 338.19 × (1 − 0.08)                    = 311.13
 
 candidates:
-  risk-based    = 9000 / 0.08                       = 112,500
-  crash cap     = 22000 / 0.2767                    =  79,496   ← BINDING
-  capital cap   = 700000 × 0.20                     = 140,000
-  beta cap      = (700000 × 0.25) / 0.845           = 207,101
+  risk-based    = 1300 / 0.08                       =  16,250
+  crash cap     = 3300 / 0.2767                     =  11,925   ← BINDING
+  capital cap   = 100000 × 0.20                     =  20,000
+  beta cap      = (100000 × 0.25) / 0.845           =  29,586
   liquidity cap = not applicable (manual entry, no ADV)
 
-→ size            79,496 ₪
-→ shares          77          ( 79,496 / 3.0724 / 338.19 = 76.5, rounded )
-→ USD notional    $25,874
-→ % of capital    11.4 %
-→ ₪ at risk       6,360       ( below 1R, because the crash cap bound, not risk )
+→ size            11,925 ₪
+→ % of capital    11.9 %
+→ ₪ at risk         954       ( below 1R, because the crash cap bound, not risk )
 ```
 
-**Note for test design:** with **currency = NIS** and the same inputs, share count is
-`79,496 / 338.19 = 235`. Currency and FX are therefore mandatory preconditions for any
-share-count assertion.
+**Note for test design:** the share count depends on currency and FX, so both are
+mandatory preconditions for any share-count assertion. Populate the suite's own
+parameters via `QA_CAPITAL` / `QA_MAXSPEC` / `QA_RISK` rather than hard-coding them.
 
 ### 5.5 Initial stop — `FR-STOP`
 
