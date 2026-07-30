@@ -119,7 +119,7 @@ header, so the browser cannot call it directly. `raw.githubusercontent.com` does
 | FR-SET-08 | "Reset & redo setup" **shall** clear settings, clear the setup flag, and return to the setup card | Must |
 | FR-SET-09 | Settings present but the setup flag absent **shall** force setup to re-run (guards against stale placeholder values being trusted) | Must |
 
-**Worked example:** capital `700000`, maxspec `40000` → `breakbudget = 40000 × 55/100 = 22,000`.
+**Worked example:** capital `100000`, maxspec `6000` → `breakbudget = 6000 × 55/100 = 3,300`.
 
 ### 5.2 Ticker lookup and market data — `FR-FEED`
 
