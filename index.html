@@ -758,7 +758,7 @@
     initmult: 3.0,
     trailmult: 2.5,
     armpct: 15,
-    minstop: 5,
+    minstop: 8,
     // 30% not 45%: on a name like QBTS (ATR ~15% of price) 3x ATR is a 45% stop, which is not
     // protection at all. -30% also tested best of every fixed depth on the real trade history.
     maxstop: 30,
@@ -784,7 +784,7 @@
         });
         // Migrate the old 45% stop ceiling, which allowed absurd initial stops on high-ATR names.
         if (merged.maxstop === 45) merged.maxstop = DEFAULTS.maxstop;
-        if (merged.minstop === 8) merged.minstop = DEFAULTS.minstop;
+        if (merged.minstop === 5) merged.minstop = DEFAULTS.minstop;   // revert my unvalidated 5% change
         return merged;
       }
     } catch (e) {}
