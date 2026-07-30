@@ -19,7 +19,7 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -31,6 +31,9 @@ jobs:
       - run: pip install --quiet -r requirements.txt
 
       - name: Fetch quotes and history
+        env:
+          UNIVERSE_LIMIT: "3000"     # SEC list is largest-first; 3000 covers everything liquid
+          MIN_ADV_USD: "5e6"         # drop anything you couldn't exit
         run: python3 fetch_data.py
 
       - name: Publish to the data branch
@@ -38,14 +41,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          test -s data.json
+          test -s out/quotes.json
           pub=$(mktemp -d)
-          cp data.json "$pub/"
+          cp -r out/. "$pub/"
           cd "$pub"
           git init -q -b data
           git config user.name  "risk-sizer-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data.json
+          git add -A
           git commit -q -m "market data $(date -u '+%Y-%m-%d %H:%M UTC')"
           git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" data
-          echo "published $(du -h data.json | cut -f1) to the data branch"
+          echo "published $(du -sh . | cut -f1) to the data branch"

@@ -1,20 +1,53 @@
 #!/usr/bin/env python3
-"""Publish a compact quote/history file for risk-sizer.html to read.
+"""Publish market data for risk-sizer.html.
 
-Runs in GitHub Actions. Yahoo sends no CORS header, so the browser cannot call it
-directly; this fetches server-side and commits the result, which raw.githubusercontent.com
-does serve cross-origin. The page derives ATR, RSI, 1-month change and each position's
-high-since-entry from `bars` itself, so this file needs no knowledge of open positions.
+Yahoo sends no CORS header so the browser cannot call it; this runs in GitHub Actions
+and force-pushes the result to a `data` branch, which raw.githubusercontent.com does
+serve cross-origin.
+
+Two outputs, because putting daily bars for the whole market in one file would be ~50 MB:
+
+  quotes.json        every liquid US ticker, metrics only (no bars). ~500 KB.
+                     This is all the position-size calculator needs.
+  bars/{TICKER}.json ~1y of daily bars, only for tickers listed in tickers.txt.
+                     Only the position tracker needs these, and only for what you hold.
+
+No per-ticker .info calls: they are one HTTP request each and would take hours over a
+few thousand symbols. Beta is computed from returns against SPY, and company names come
+from the SEC's own ticker file.
 """
-import json, sys, datetime, warnings
+import json, os, shutil, sys, time, datetime, warnings
 warnings.filterwarnings("ignore")
+import numpy as np
+import pandas as pd
 import yfinance as yf
 
-BARS = 260          # ~1 trading year: enough for ATR(14), RSI(14) and a year-old position
-OUT = "data.json"
+UNIVERSE_LIMIT = int(os.environ.get("UNIVERSE_LIMIT", "3000"))
+MIN_ADV_USD    = float(os.environ.get("MIN_ADV_USD", "5e6"))
+MIN_PRICE      = 3.0
+BATCH          = 250
+BARS_KEEP      = 260
+UNIVERSE_FILE  = "universe.csv"
 
 
-def tickers():
+def sec_universe(limit):
+    """Tickers + names from universe.csv, which is the SEC's own company_tickers.json
+    flattened and committed here. Fetching it at runtime needs a User-Agent carrying
+    personal contact details, which does not belong in a public repo — and a committed
+    list means one less thing that can fail mid-run. Refresh it by hand occasionally."""
+    import csv
+    out = []
+    with open(UNIVERSE_FILE, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            t = row["ticker"].strip().upper()
+            if t:
+                out.append((t, row.get("name", "").strip()))
+    return out[:limit]
+
+
+def tracked():
+    if not os.path.exists("tickers.txt"):
+        return []
     out = []
     for line in open("tickers.txt", encoding="utf-8"):
         s = line.strip()
@@ -23,56 +56,100 @@ def tickers():
     return sorted(set(out))
 
 
-def usdils():
-    try:
-        h = yf.Ticker("ILS=X").history(period="5d")["Close"]
-        return round(float(h.iloc[-1]), 4)
-    except Exception:
-        return None
+def wilder_atr(h, l, c, n=14):
+    pc = c.shift(1)
+    tr = pd.concat([h - l, (h - pc).abs(), (l - pc).abs()], axis=1).max(axis=1)
+    return tr.ewm(alpha=1 / n, adjust=False, min_periods=n).mean().iloc[-1]
 
 
 def main():
-    syms = tickers()
-    print(f"fetching {len(syms)} tickers: {' '.join(syms)}")
-    out = {"updated": datetime.datetime.now(datetime.timezone.utc)
-                       .strftime("%Y-%m-%dT%H:%M:%SZ"),
-           "fx": usdils(), "tickers": {}}
+    t0 = time.time()
+    uni = sec_universe(UNIVERSE_LIMIT)
+    names = dict(uni)
+    syms = [t for t, _ in uni]
+    keep = tracked()
+    for k in keep:                      # always include what you hold
+        if k not in names:
+            syms.append(k); names[k] = k
+    print(f"universe: {len(syms)} tickers (limit {UNIVERSE_LIMIT}), {len(keep)} tracked for bars")
 
-    hist = yf.download(syms, period="1y", interval="1d", auto_adjust=False,
-                       progress=False, group_by="ticker", threads=True)
-    ok = fail = 0
-    for s in syms:
+    # SPY first — needed as the beta benchmark
+    spy = yf.download("SPY", period="1y", interval="1d", auto_adjust=True,
+                      progress=False)["Close"]
+    if isinstance(spy, pd.DataFrame):
+        spy = spy.iloc[:, 0]
+    spy_ret = spy.pct_change().dropna()
+    spy_var = float(spy_ret.var())
+    print(f"benchmark SPY: {len(spy)} bars")
+
+    quotes, bars_out, fails = {}, {}, 0
+    for i in range(0, len(syms), BATCH):
+        chunk = syms[i:i + BATCH]
         try:
-            sub = hist[s][["High", "Low", "Close"]].dropna().tail(BARS)
-            if len(sub) < 30:
-                raise ValueError(f"only {len(sub)} bars")
-            bars = [[d.strftime("%Y-%m-%d"), round(float(r.High), 4),
-                     round(float(r.Low), 4), round(float(r.Close), 4)]
-                    for d, r in sub.iterrows()]
-            rec = {"bars": bars, "last": bars[-1][3]}
-            try:                                  # metadata is best-effort
-                i = yf.Ticker(s).info
-                rec["name"] = i.get("shortName") or s
-                rec["ccy"] = i.get("currency") or "USD"
-                for key, src in (("beta", "beta"), ("avgvol", "averageVolume"),
-                                 ("h52", "fiftyTwoWeekHigh"), ("l52", "fiftyTwoWeekLow")):
-                    v = i.get(src)
-                    if isinstance(v, (int, float)):
-                        rec[key] = round(float(v), 4)
-            except Exception as e:
-                print(f"  {s}: metadata unavailable ({e})")
-            out["tickers"][s] = rec
-            ok += 1
-            print(f"  {s}: {len(bars)} bars, last {rec['last']}, beta {rec.get('beta')}")
+            df = yf.download(chunk, period="1y", interval="1d", auto_adjust=True,
+                             progress=False, group_by="ticker", threads=True)
         except Exception as e:
-            fail += 1
-            print(f"  {s}: FAILED — {e}")
+            print(f"  batch {i//BATCH+1} failed entirely: {e}")
+            fails += len(chunk); continue
+        for s in chunk:
+            try:
+                sub = df[s][["Open", "High", "Low", "Close", "Volume"]].dropna()
+                if len(sub) < 60:
+                    fails += 1; continue
+                c = sub.Close
+                adv = float((c * sub.Volume).tail(20).mean())
+                last = float(c.iloc[-1])
+                if last < MIN_PRICE or adv < MIN_ADV_USD:
+                    continue
+                atr = wilder_atr(sub.High, sub.Low, c)
+                if not np.isfinite(atr) or atr <= 0:
+                    continue
+                r = c.pct_change().dropna()
+                j = r.index.intersection(spy_ret.index)
+                beta = None
+                if len(j) > 120 and spy_var > 0:
+                    beta = float(np.cov(r.loc[j], spy_ret.loc[j])[0][1] / spy_var)
+                q = {"n": names.get(s, s)[:40], "l": round(last, 4),
+                     "a": round(float(atr), 4), "v": int(adv),
+                     "h": round(float(c.max()), 4), "o": round(float(c.min()), 4),
+                     "d": sub.index[-1].strftime("%Y-%m-%d")}
+                if beta is not None and np.isfinite(beta):
+                    q["b"] = round(beta, 3)
+                quotes[s] = q
+                if s in keep:
+                    tail = sub.tail(BARS_KEEP)
+                    bars_out[s] = [[d.strftime("%Y-%m-%d"), round(float(r_.High), 4),
+                                    round(float(r_.Low), 4), round(float(r_.Close), 4)]
+                                   for d, r_ in tail.iterrows()]
+            except Exception:
+                fails += 1
+        print(f"  batch {i//BATCH+1}/{(len(syms)-1)//BATCH+1}: "
+              f"{len(quotes):,} kept, {fails} skipped, {time.time()-t0:.0f}s")
 
-    if not out["tickers"]:
-        sys.exit("no tickers fetched; refusing to publish an empty file")
-    json.dump(out, open(OUT, "w"), separators=(",", ":"))
-    import os
-    print(f"wrote {OUT}: {os.path.getsize(OUT)/1024:.0f} KB, {ok} ok, {fail} failed, fx {out['fx']}")
+    if len(quotes) < 100:
+        sys.exit(f"only {len(quotes)} tickers survived; refusing to publish")
+
+    fx = None
+    try:
+        h = yf.Ticker("ILS=X").history(period="5d")["Close"]
+        fx = round(float(h.iloc[-1]), 4)
+    except Exception:
+        pass
+
+    os.makedirs("out/bars", exist_ok=True)
+    meta = {"updated": datetime.datetime.now(datetime.timezone.utc)
+                        .strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "fx": fx, "count": len(quotes), "tickers": quotes}
+    with open("out/quotes.json", "w") as f:
+        json.dump(meta, f, separators=(",", ":"))
+    for s, b in bars_out.items():
+        with open(f"out/bars/{s}.json", "w") as f:
+            json.dump({"s": s, "bars": b}, f, separators=(",", ":"))
+
+    qkb = os.path.getsize("out/quotes.json") / 1024
+    print(f"\nquotes.json: {len(quotes):,} tickers, {qkb:.0f} KB")
+    print(f"bars/: {len(bars_out)} files")
+    print(f"fx {fx} · skipped {fails} · {time.time()-t0:.0f}s total")
 
 
 if __name__ == "__main__":

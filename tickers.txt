@@ -1,5 +1,9 @@
-# One ticker per line. Edit this file on github.com (works fine from your phone)
-# and the next scheduled run picks it up. Lines starting with # are ignored.
+# Tickers you HOLD or WATCH — these get daily bars published, which the position
+# tracker needs to advance your stop automatically.
+#
+# You do NOT need to list a stock here just to size a trade: the calculator covers
+# the whole liquid US market from quotes.json (~2,500 names, refreshed every 30 min).
+# Only add a ticker here once you own it.
 ASTS
 CRWV
 INVZ

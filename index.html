@@ -1084,7 +1084,9 @@
   // A GitHub Action fetches Yahoo server-side (Yahoo sends no CORS header, so the
   // browser can't) and force-pushes data.json to the `data` branch.
   // raw.githubusercontent.com does allow cross-origin reads.
-  var FEED_URL = "https://raw.githubusercontent.com/Asaf-12344321/risk-sizer/data/data.json";
+  var FEED_BASE = "https://raw.githubusercontent.com/Asaf-12344321/risk-sizer/data";
+  var FEED_URL = FEED_BASE + "/quotes.json";
+  var barsCache = {};        // ticker -> bars, fetched only for positions you hold
   var feed = null, feedErr = null;
 
   function fetchFeed() {
@@ -1098,7 +1100,7 @@
       .then(function (j) {
         feed = j; feedErr = null;
         renderFeedStatus();
-        renderPositions();
+        ensureBars(positions.map(function (p) { return p.tick; }), renderPositions);
       })
       .catch(function (e) {
         feedErr = e.message || String(e);
@@ -1124,67 +1126,32 @@
     var syms = Object.keys(feed.tickers || {}).length;
     var stale = age !== null && age > 24;
     n.className = "sub" + (stale ? " feed-stale" : "");
-    n.textContent = syms + " tickers, updated "
+    n.textContent = (feed.count || syms) + " US tickers, updated "
       + (age === null ? feed.updated : age < 1 ? Math.round(age * 60) + " min ago" : age.toFixed(0) + "h ago")
       + (stale ? " — stale" : "");
   }
 
-  // ---- indicators computed from the published bars: [date, high, low, close] ----
-  function wilderAtr(bars, period) {
-    if (bars.length < period + 1) return null;
-    var tr = [];
-    for (var i = 1; i < bars.length; i++) {
-      var h = bars[i][1], l = bars[i][2], pc = bars[i - 1][3];
-      tr.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
-    }
-    var a = 0;
-    for (var j = 0; j < period; j++) a += tr[j];
-    a /= period;
-    for (var k = period; k < tr.length; k++) a = (a * (period - 1) + tr[k]) / period;
-    return a;
-  }
-
-  // Wilder-smoothed RSI over the whole series — this is what TradingView and Yahoo show.
-  // A simple mean of the last 14 deltas (which this used to do) is off by up to 9 points.
-  function rsi14(bars, period) {
-    var n = period || 14;
-    if (bars.length < n + 2) return null;
-    var gains = [], losses = [];
-    for (var i = 1; i < bars.length; i++) {
-      var d = bars[i][3] - bars[i - 1][3];
-      gains.push(d > 0 ? d : 0);
-      losses.push(d < 0 ? -d : 0);
-    }
-    var ag = 0, al = 0, j;
-    for (j = 0; j < n; j++) { ag += gains[j]; al += losses[j]; }
-    ag /= n; al /= n;
-    for (j = n; j < gains.length; j++) {
-      ag = (ag * (n - 1) + gains[j]) / n;
-      al = (al * (n - 1) + losses[j]) / n;
-    }
-    if (al === 0) return 100;
-    return 100 - 100 / (1 + ag / al);
-  }
-
-  // Calendar month, not 22 trading bars — Yahoo quotes a calendar month, and on a
-  // volatile name the two differ by more than 14 percentage points.
-  function monthChange(bars) {
-    if (bars.length < 5) return null;
-    var lastBar = bars[bars.length - 1];
-    var target = new Date(lastBar[0] + "T00:00:00Z");
-    target.setUTCDate(target.getUTCDate() - 30);
-    var iso = target.toISOString().slice(0, 10);
-    var ref = null;
-    for (var i = bars.length - 1; i >= 0; i--) {
-      if (bars[i][0] <= iso) { ref = bars[i][3]; break; }
-    }
-    if (!ref) return null;
-    return (lastBar[3] / ref - 1) * 100;
-  }
-
   function lookupTicker(sym) {
     if (!feed || !feed.tickers) return null;
-    return feed.tickers[String(sym).trim().toUpperCase()] || null;
+    var q = feed.tickers[String(sym).trim().toUpperCase()];
+    if (!q) return null;
+    return { name: q.n, last: q.l, atr: q.a, beta: q.b, avgvol: q.v,
+             h52: q.h, l52: q.o, asOf: q.d, ccy: "USD" };
+  }
+
+  // Bars are a separate file per ticker, so the calculator never downloads them.
+  // Only the position tracker needs them, and only for what you actually hold.
+  function ensureBars(syms, done) {
+    var need = syms.filter(function (s) { return s && !(s in barsCache); });
+    if (!need.length || typeof fetch !== "function") { done(); return; }
+    var left = need.length;
+    need.forEach(function (s) {
+      fetch(FEED_BASE + "/bars/" + encodeURIComponent(s) + ".json", { cache: "no-cache" })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) { barsCache[s] = (j && j.bars) || null; })
+        .catch(function () { barsCache[s] = null; })
+        .then(function () { if (--left === 0) done(); });
+    });
   }
 
   function fillFromFeed() {
@@ -1194,24 +1161,22 @@
     if (!t) {
       el("feedStatus").className = "sub feed-bad";
       el("feedStatus").textContent = feed
-        ? sym + " is not in the watchlist — add it to tickers.txt in the repo, or type the numbers by hand."
+        ? sym + " not found. It may be too illiquid, an ETF, or newly listed — enter the numbers by hand below."
         : "Market data hasn't loaded yet.";
       return;
     }
-    var bars = t.bars || [];
-    inCcy.value = t.ccy === "ILS" ? "NIS" : "USD";
+    inCcy.value = "USD";
     inCcy.dispatchEvent(new Event("change"));
     if (feed.fx) inFx.value = feed.fx;
     inPrice.value = t.last;
-    var atr = wilderAtr(bars, 14);
-    if (atr) inAtr.value = atr.toFixed(2);
-    if (t.beta) inBeta.value = t.beta; else inBeta.value = "";
+    inAtr.value = t.atr ? t.atr.toFixed(2) : "";
+    inBeta.value = t.beta ? t.beta : "";
     extra.name = t.name || null;
     extra.avgvol = t.avgvol || null;
     extra.h52 = t.h52 || null;
     extra.l52 = t.l52 || null;
     extra.last = t.last;
-    extra.asOf = bars.length ? bars[bars.length - 1][0] : null;
+    extra.asOf = t.asOf || null;
     inTicker.value = sym;
     renderFeedStatus();
     syncAddBtn();
@@ -1223,17 +1188,10 @@
       + " · <b>" + num(t.last, 2) + "</b> close " + (extra.asOf || "")
       + (a > 0 ? " · ATR <b>" + a.toFixed(2) + "</b> (" + (a / pxx * 100).toFixed(1) + "%)" : "")
       + (t.beta ? " · beta " + t.beta.toFixed(2) : "")
-      + (bnd ? ' · <b>' + bnd.name + "</b>, assuming a " + bnd.gap + "% crash" : "");
+      + (bnd ? " · <b>" + bnd.name + "</b>, assuming a " + bnd.gap + "% crash" : "");
     el("feedStatus").textContent = "";
   }
 
-  function monthRefDate(bars) {
-    var target = new Date(bars[bars.length - 1][0] + "T00:00:00Z");
-    target.setUTCDate(target.getUTCDate() - 30);
-    var iso = target.toISOString().slice(0, 10);
-    for (var i = bars.length - 1; i >= 0; i--) if (bars[i][0] <= iso) return bars[i][0];
-    return iso;
-  }
 
   el("lookupBtn").addEventListener("click", fillFromFeed);
   el("in-lookup").addEventListener("keydown", function (e) {
@@ -1274,9 +1232,9 @@
   // Replay the ladder against real bars since entry, so the stop advances itself.
   // Returns null when there's no feed for this ticker (falls back to manual rungs).
   function liveState(p) {
-    var t = lookupTicker(p.tick);
-    if (!t || !t.bars || !t.bars.length || !p.added) return null;
-    var bars = t.bars.filter(function (b) { return b[0] >= p.added; });
+    var raw = barsCache[p.tick];
+    if (!raw || !raw.length || !p.added) return null;
+    var bars = raw.filter(function (b) { return b[0] >= p.added; });
     if (!bars.length) return null;
     var stop = initialStopFor(p.entry, p.atr);
     var armPrice = p.entry * (1 + cfg.armpct / 100);
@@ -1407,7 +1365,10 @@
     el("tab-calc").setAttribute("aria-selected", pos ? "false" : "true");
     el("posPanel").hidden = !pos;
     el("calcPanel").hidden = pos;
-    if (pos) renderPositions();
+    if (pos) {
+      renderPositions();
+      ensureBars(positions.map(function (p) { return p.tick; }), renderPositions);
+    }
   }
   el("tab-calc").addEventListener("click", function () { selectTab("calc"); });
   el("tab-pos").addEventListener("click", function () { selectTab("pos"); });
