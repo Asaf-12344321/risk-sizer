@@ -700,14 +700,6 @@
           <input type="number" inputmode="decimal" step="1" id="cfg-armpct">
         </div>
         <div class="field">
-          <label for="cfg-rsiwarn">Warn if RSI above</label>
-          <input type="number" inputmode="decimal" step="1" id="cfg-rsiwarn">
-        </div>
-        <div class="field">
-          <label for="cfg-runupwarn">Warn if 1-mo run-up &gt; (%)</label>
-          <input type="number" inputmode="decimal" step="1" id="cfg-runupwarn">
-        </div>
-        <div class="field">
           <label for="cfg-minstop">Min stop bound (%)</label>
           <input type="number" inputmode="decimal" step="0.1" id="cfg-minstop">
         </div>
@@ -720,7 +712,7 @@
           <input type="number" inputmode="decimal" step="1" id="cfg-drawdown">
         </div>
         <div class="field">
-          <label for="cfg-holddays">Max holding days</label>
+          <label for="cfg-holddays">Warn when a position is older than (days)</label>
           <input type="number" inputmode="decimal" step="1" id="cfg-holddays">
         </div>
         <div class="field">
@@ -781,10 +773,8 @@
     // 30% not 45%: on a name like QBTS (ATR ~15% of price) 3x ATR is a 45% stop, which is not
     // protection at all. -30% also tested best of every fixed depth on the real trade history.
     maxstop: 30,
-    rsiwarn: 60,
-    runupwarn: 15,
     drawdown: 40,
-    holddays: 45,
+    holddays: 90,       // your own history: the 90+ day bucket was the only losing one
     fx: 3.65
   };
 
@@ -932,6 +922,10 @@
   function nis(v) { return "₪" + Math.round(v).toLocaleString("en-US"); }
   function pct(v) { return v.toFixed(1) + "%"; }
   function num(v, d) { return v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }); }
+
+  // DEF-004: two decimals renders a sub-dollar stop as "0.00". Only reachable by manual
+  // entry (the feed filters below $3), but a displayed stop of zero is indefensible.
+  function px(v) { return num(v, v < 1 ? 4 : v < 10 ? 3 : 2); }
   function el(id) { return document.getElementById(id); }
 
   function toNis(amountNative, ccyValue, fxValue) {
@@ -1029,7 +1023,7 @@
     outShares.textContent = num(shares, shares < 10 ? 2 : 0) + " shares"
       + (inCcy.value === "USD" ? " · $" + num(inCcyAmt, 0) : "")
       + " · " + pct(size / cfg.capital * 100) + " of capital";
-    outStopPrice.textContent = num(stopPrice, 2);
+    outStopPrice.textContent = px(stopPrice);
     outStopSub.textContent = pct(stopPct) + " below entry · risking " + nis(riskAmount)
       + (binding === "risk-based" ? "" : " · size held down by the " + binding);
 
@@ -1059,10 +1053,10 @@
       + rungs.map(function (r) {
         var at = r.px === undefined ? price : r.px;
         var note = r.cls === "now" ? "set today" : r.cls === "arm" ? "now protected" : "";
-        return '<tr class="' + r.cls + '"><td>' + num(at, 2)
+        return '<tr class="' + r.cls + '"><td>' + px(at)
           + (r.px === undefined ? "" : " <small>(" + (at / price - 1 >= 0 ? "+" : "")
              + ((at / price - 1) * 100).toFixed(0) + "%)</small>")
-          + "</td><td>" + num(r.stop, 2) + "</td><td>" + note + "</td></tr>";
+          + "</td><td>" + px(r.stop) + "</td><td>" + note + "</td></tr>";
       }).join("");
 
     // ---- at most two flags, and only when they change a decision
@@ -1231,7 +1225,7 @@
     var a = parseFloat(inAtr.value), pxx = parseFloat(inPrice.value);
     var bnd = (a > 0 && pxx > 0) ? bandFor(a / pxx * 100) : null;
     stockLine.innerHTML = "<b>" + esc(sym) + "</b>" + (t.name ? " " + esc(t.name) : "")
-      + " · <b>" + num(t.last, 2) + "</b> close " + (extra.asOf || "")
+      + " · <b>" + px(t.last) + "</b> close " + (extra.asOf || "")
       + (a > 0 ? " · ATR <b>" + a.toFixed(2) + "</b> (" + (a / pxx * 100).toFixed(1) + "%)" : "")
       + (t.beta ? " · beta " + t.beta.toFixed(2) : "")
       + (bnd ? " · <b>" + bnd.name + "</b>, assuming a " + bnd.gap.toFixed(1) + "% crash" : "");
@@ -1317,25 +1311,35 @@
       var lockedPct = (stop - p.entry) / p.entry * 100;
       var out = '<div class="pos">'
         + '<div class="pos-head"><span class="pos-tick">' + esc(p.tick || "—") + "</span>"
-        + '<span class="pos-meta">entry ' + num(p.entry, 2) + " · ATR " + num(p.atr, 2)
+        + '<span class="pos-meta">entry ' + px(p.entry) + " · ATR " + px(p.atr)
         + (p.added ? " · " + p.added : "") + "</span></div>"
-        + '<div class="pos-now"><span class="lbl">stop now</span><span class="stop">' + num(stop, 2) + "</span>"
+        + '<div class="pos-now"><span class="lbl">stop now</span><span class="stop">' + px(stop) + "</span>"
         + '<span class="lbl">' + (atBreakeven
             ? '<span class="pos-safe">' + (lockedPct > 0.05 ? "locked in +" + lockedPct.toFixed(1) + "%" : "at breakeven — protected") + "</span>"
             : "risking " + pct((p.entry - stop) / p.entry * 100)) + "</span></div>";
 
+      // DEF-003: holddays was a dead setting. Wired to the one time-based finding the
+      // history actually supports — the 90+ day bucket was the only losing one.
+      var ageDays = p.added
+        ? Math.floor((Date.now() - new Date(p.added + "T00:00:00Z").getTime()) / 86400000) : 0;
+      if (p.added && ageDays >= cfg.holddays) {
+        out += '<div class="pos-next"><span class="pos-hit">Held ' + ageDays + ' days.</span> '
+          + "Positions you kept beyond " + cfg.holddays + " days were the only group that "
+          + "lost money in your own record. Worth a decision, not a default.</div>";
+      }
+
       if (live) {
         var pnl = (live.last - p.entry) / p.entry * 100;
-        out += '<div class="pos-live">live ' + num(live.last, 2) + " (" + (pnl >= 0 ? "+" : "")
-          + pnl.toFixed(1) + "%) · high since entry " + num(live.high, 2) + " · " + live.asOf + "</div>";
+        out += '<div class="pos-live">live ' + px(live.last) + " (" + (pnl >= 0 ? "+" : "")
+          + pnl.toFixed(1) + "%) · high since entry " + px(live.high) + " · " + live.asOf + "</div>";
         if (live.hit) {
           out += '<div class="pos-next"><span class="pos-hit">This should already be closed.</span> The stop was breached on <b>'
-            + live.hit.date + "</b> at <b>" + num(live.hit.price, 2)
+            + live.hit.date + "</b> at <b>" + px(live.hit.price)
             + "</b>. If you still hold it, you are past your own rule.</div>";
         } else if (!live.armed) {
           out += '<div class="pos-next">Keep the stop at <b>' + num(stop, 2)
-            + "</b>. It moves up to breakeven (<b>" + num(p.entry, 2) + "</b>) once the price closes at <b>"
-            + num(p.entry * (1 + cfg.armpct / 100), 2) + "</b> — the move that protects this trade.</div>";
+            + "</b>. It moves up to breakeven (<b>" + px(p.entry) + "</b>) once the price closes at <b>"
+            + px(p.entry * (1 + cfg.armpct / 100)) + "</b> — the move that protects this trade.</div>";
         } else {
           out += '<div class="pos-next">Trailing on its own. Set the stop to <b>' + num(stop, 2)
             + "</b> at Leumi; it rises whenever the price closes at a new high.</div>";
@@ -1348,12 +1352,12 @@
 
       out += '<div class="pos-next">No live data for ' + esc(p.tick || "?")
         + " — add it to tickers.txt in the repo. Manual mode: "
-        + (next ? "alert at <b>" + num(next.px, 2) + "</b> → then move the stop to <b>" + num(next.stop, 2) + "</b>"
+        + (next ? "alert at <b>" + px(next.px) + "</b> → then move the stop to <b>" + px(next.stop) + "</b>"
              + (next.cls === "arm" ? " — the one that protects the trade" : "")
-           : "ladder complete, keep the stop at <b>" + num(stop, 2) + "</b>") + "</div>";
+           : "ladder complete, keep the stop at <b>" + px(stop) + "</b>") + "</div>";
       out += '<div class="pos-actions">'
         + '<button class="btn-reached" type="button" data-act="reached" data-i="' + i + '"'
-        + (next ? "" : " disabled") + ">✓ Reached " + (next ? num(next.px, 2) : "—") + "</button>"
+        + (next ? "" : " disabled") + ">✓ Reached " + (next ? px(next.px) : "—") + "</button>"
         + (idx > 0 ? '<button class="btn-undo" type="button" data-act="undo" data-i="' + i + '">Undo</button>' : "")
         + '<button class="btn-close" type="button" data-act="close" data-i="' + i + '">Sold</button>'
         + "</div></div>";
@@ -1420,7 +1424,13 @@
   el("tab-pos").addEventListener("click", function () { selectTab("pos"); });
 
   // ---- first-run setup gate ----
-  var SETUP_KEY = "riskSizerSetup_v3";
+  var SETUP_KEY = "riskSizerSetup_v4";
+  var SETUP_KEY_OLD = "riskSizerSetup_v3";   // DEF-002: was left on v3 while the rest moved to v4
+  try {
+    if (!localStorage.getItem(SETUP_KEY) && localStorage.getItem(SETUP_KEY_OLD) === "1") {
+      localStorage.setItem(SETUP_KEY, "1");   // migrate, so nobody is sent back through setup
+    }
+  } catch (e) {}
   var setupCapital = el("setup-capital"), setupMaxSpec = el("setup-maxspec");
   var setupDerived = el("setupDerived"), setupSave = el("setupSave");
 

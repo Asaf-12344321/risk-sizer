@@ -21,8 +21,8 @@ Where behaviour is a judgement call rather than a derived fact, it is marked
 A discretionary swing trader picks stocks well but loses the gains to two exit errors:
 selling winners early (measured: winners ran a further **+38.5%** on average after being
 sold) and holding losers indefinitely (measured: **8 of 8** open positions underwater,
-mean **−26.4%**). Net effect over 20 months: realised gains were almost exactly offset by unrealised
-losses on positions still held — approximately flat.
+mean **−26.4%**). Net effect over 20 months: **+166,306 ₪ realised against ~−177,000 ₪
+unrealised** — approximately flat.
 
 ### 1.2 What the product does
 Moves every exit decision to **before entry**, when the user is not emotionally
@@ -119,7 +119,7 @@ header, so the browser cannot call it directly. `raw.githubusercontent.com` does
 | FR-SET-08 | "Reset & redo setup" **shall** clear settings, clear the setup flag, and return to the setup card | Must |
 | FR-SET-09 | Settings present but the setup flag absent **shall** force setup to re-run (guards against stale placeholder values being trusted) | Must |
 
-**Worked example:** capital `100000`, maxspec `6000` → `breakbudget = 6000 × 55/100 = 3,300`.
+**Worked example:** capital `700000`, maxspec `40000` → `breakbudget = 40000 × 55/100 = 22,000`.
 
 ### 5.2 Ticker lookup and market data — `FR-FEED`
 
@@ -204,20 +204,22 @@ stopPct    = clamp(3 × 2.371, 8, 30)                =   8.0  %   (min floor bin
 stopPrice  = 338.19 × (1 − 0.08)                    = 311.13
 
 candidates:
-  risk-based    = 1300 / 0.08                       =  16,250
-  crash cap     = 3300 / 0.2767                     =  11,925   ← BINDING
-  capital cap   = 100000 × 0.20                     =  20,000
-  beta cap      = (100000 × 0.25) / 0.845           =  29,586
+  risk-based    = 9000 / 0.08                       = 112,500
+  crash cap     = 22000 / 0.2767                    =  79,496   ← BINDING
+  capital cap   = 700000 × 0.20                     = 140,000
+  beta cap      = (700000 × 0.25) / 0.845           = 207,101
   liquidity cap = not applicable (manual entry, no ADV)
 
-→ size            11,925 ₪
-→ % of capital    11.9 %
-→ ₪ at risk         954       ( below 1R, because the crash cap bound, not risk )
+→ size            79,496 ₪
+→ shares          77          ( 79,496 / 3.0724 / 338.19 = 76.5, rounded )
+→ USD notional    $25,874
+→ % of capital    11.4 %
+→ ₪ at risk       6,360       ( below 1R, because the crash cap bound, not risk )
 ```
 
-**Note for test design:** the share count depends on currency and FX, so both are
-mandatory preconditions for any share-count assertion. Populate the suite's own
-parameters via `QA_CAPITAL` / `QA_MAXSPEC` / `QA_RISK` rather than hard-coding them.
+**Note for test design:** with **currency = NIS** and the same inputs, share count is
+`79,496 / 338.19 = 235`. Currency and FX are therefore mandatory preconditions for any
+share-count assertion.
 
 ### 5.5 Initial stop — `FR-STOP`
 
@@ -338,9 +340,7 @@ parameters via `QA_CAPITAL` / `QA_MAXSPEC` / `QA_RISK` rather than hard-coding t
 | `maxstop` | 30 | Max stop % | |
 | `drawdown` | 40 | Drawdown note threshold % | |
 | `fx` | 3.65 | USD/ILS fallback | |
-| `holddays` | 45 | *(unused — DEF-003)* | |
-| `rsiwarn` | 60 | *(unused — DEF-003)* | |
-| `runupwarn` | 15 | *(unused — DEF-003)* | |
+| `holddays` | 90 | Warn when a position exceeds this age | Evidenced: 90+ days was the only losing bucket |
 
 ---
 
@@ -364,17 +364,19 @@ parameters via `QA_CAPITAL` / `QA_MAXSPEC` / `QA_RISK` rather than hard-coding t
 | ID | Severity | Description | Detected by |
 |---|---|---|---|
 | **DEF-001** | *Fixed* | Crash assumption was a step function; 2,607 tickers produced only 5 distinct sizes | User |
-| **DEF-002** | Low | `SETUP_KEY` is `riskSizerSetup_v3` while other keys are `_v4`. No user-visible fault, but a future version bump will likely miss it | PRD review |
-| **DEF-003** | Low | `holddays`, `rsiwarn`, `runupwarn` appear in the settings UI but **no logic reads them**. A user can change them and nothing happens | PRD review |
-| **DEF-004** | Low | At sub-dollar prices the stop renders as `0.00` (2dp formatting). Only reachable via manual entry — the feed filters below $3 | QA edge suite |
+| **DEF-002** | *Fixed* | `SETUP_KEY` was `riskSizerSetup_v3` while other keys were `_v4`. Aligned to `_v4`, with migration so no existing user is sent back through setup | PRD review |
+| **DEF-003** | *Fixed* | `holddays`, `rsiwarn`, `runupwarn` appeared in settings but no logic read them. `rsiwarn`/`runupwarn` removed (the warning they drove was falsified); `holddays` retargeted to a position-age warning, defaulting to **90 days** — the only holding bucket that lost money in the trade history | PRD review |
+| **DEF-004** | *Fixed* | Sub-dollar prices rendered the stop as `0.00`. Price formatting is now adaptive: 4dp below $1, 3dp below $10, 2dp above | QA edge suite |
+
+**No known open defects.** All four are covered by regression tests in `qa/defects.js`.
 
 ---
 
 ## 10. Verification status
 
-An automated suite exists at `qa/` (62 assertions). It covers invariants (monotonicity,
+An automated suite exists at `qa/` (**78 assertions, all passing**). It covers invariants (monotonicity,
 continuity, bounds, scale invariance, metamorphic relations, ladder ordering), a
-full-universe sweep of ~2,600 tickers, edge and hostile inputs, a golden snapshot, and
+full-universe sweep of ~2,600 tickers, edge and hostile inputs, a golden snapshot, regression tests for every documented defect, and
 **parity between this tool and the `riskml` research simulator**.
 
 Parity is the only guard on the research → production link and has already caught one
