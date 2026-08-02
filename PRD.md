@@ -392,6 +392,21 @@ real regression (an unvalidated `minstop` change).
 
 ---
 
+## 10a. Capital model — active sleeve
+
+`capital` is the **active trading sleeve**, not net worth. A cash or money-market reserve
+held deliberately outside the model is represented by its absence: capital carrying no
+market risk should not scope risk limits.
+
+Consequence: every percentage cap (`maxpct`, `betaexpct`) applies to the sleeve, and `1R`
+as a fraction of it is the meaningful per-trade risk figure. Entering total net worth
+instead inflates those caps — a 20% cap on total capital can exceed the entire sleeve,
+which is how the setting silently stops capping anything.
+
+Deliberately **not** modelled: aggregate exposure across open positions (portfolio heat).
+The tool is stateless by requirement. Total exposure is therefore bounded by the operator,
+not the software — see RFC-001, closed.
+
 ## 11. Calibration caveats
 
 These bound what may legitimately be asserted as "correct":
