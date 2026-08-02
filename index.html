@@ -496,7 +496,7 @@
       <span class="mark" aria-hidden="true"></span>
       <h1>Risk Sizer</h1>
     </div>
-    <p class="tagline">Position size driven by the stop, capped by what a thesis break costs.</p>
+    <p class="tagline">How much to buy, where the stop goes, and when to move it up.</p>
     <div class="rules-strip" id="rulesStrip"></div>
   </header>
 
@@ -541,7 +541,7 @@
 
   <section class="card">
     <div class="lookup-row">
-      <input type="text" autocomplete="off" autocapitalize="characters" id="in-lookup" placeholder="TICKER">
+      <input type="text" autocomplete="off" autocapitalize="characters" id="in-lookup" placeholder="Ticker, e.g. AAPL">
       <button class="primary-btn" type="button" id="lookupBtn">Fill</button>
     </div>
     <div class="stock-line" id="stockLine">Type a ticker and tap Fill.</div>
@@ -581,7 +581,7 @@
     </details>
   </section>
 
-  <section class="card" id="answerCard">
+  <section class="card" id="answerCard" hidden>
     <div class="answer">
       <div class="answer-label">Buy</div>
       <div class="answer-num" id="out-size">₪ —</div>
@@ -599,16 +599,16 @@
       <div class="formula" id="out-size-formula"></div>
     </details>
 
-    <div class="add-row">
+    <div class="add-row" id="addRow" hidden>
       <div class="field">
-        <label for="in-ticker">Track it — ticker</label>
+        <label for="in-ticker">Ticker to track</label>
         <input type="text" autocomplete="off" id="in-ticker" placeholder="ASTS">
       </div>
       <button class="primary-btn" type="button" id="addPosBtn" disabled>Track this position</button>
     </div>
   </section>
 
-  <section class="card" id="ladderCard">
+  <section class="card" id="ladderCard" hidden>
     <div class="section-label">Move the stop up as it rises</div>
     <div class="ladder-wrap">
       <table class="ladder" id="out-ladder"></table>
@@ -972,6 +972,10 @@
   var outFlags = el("out-flags"), stockLine = el("stockLine");
 
   function blankOut(msg) {
+    // nothing to show yet — keep the result cards out of the way entirely
+    el("answerCard").hidden = true;
+    el("ladderCard").hidden = true;
+    el("addRow").hidden = true;
     outSize.textContent = "₪ —";
     outShares.textContent = msg;
     outStopPrice.textContent = "—";
@@ -992,6 +996,10 @@
     var beta = parseFloat(inBeta.value);
     var fx = parseFloat(inFx.value) || cfg.fx;
     if (!(price > 0) || !(atr > 0)) { blankOut("enter a price and ATR"); return; }
+
+    el("answerCard").hidden = false;
+    el("ladderCard").hidden = false;
+    el("addRow").hidden = false;
 
     var atrPct = atr / price * 100;
     var band = bandFor(atrPct);
@@ -1164,11 +1172,15 @@
     if (!feed) { n.className = "sub"; n.textContent = "loading market data…"; return; }
     var age = feedAgeHours();
     var syms = Object.keys(feed.tickers || {}).length;
-    var stale = age !== null && age > 24;
+    // The job only runs Mon-Fri, so a Saturday or Sunday reading is legitimately old.
+    // Warning every weekend would train the warning to be ignored.
+    var dow = new Date().getUTCDay();              // 0 Sun, 6 Sat
+    var allowance = (dow === 0 || dow === 6 || dow === 1) ? 80 : 24;
+    var stale = age !== null && age > allowance;
     n.className = "sub" + (stale ? " feed-stale" : "");
     n.textContent = (feed.count || syms) + " US tickers, updated "
       + (age === null ? feed.updated : age < 1 ? Math.round(age * 60) + " min ago" : age.toFixed(0) + "h ago")
-      + (stale ? " — stale" : "");
+      + (stale ? " — stale" : age !== null && age > 24 ? " (market closed)" : "");
   }
 
   function lookupTicker(sym) {
