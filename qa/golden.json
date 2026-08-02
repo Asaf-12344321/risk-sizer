@@ -1,30 +1,30 @@
 {
   "very calm": {
-    "size": 15000,
+    "size": 15818,
     "stop": 92,
     "stopPct": 8,
-    "risk": 1200,
+    "risk": 1265,
     "rungs": 7
   },
   "calm": {
-    "size": 13200,
+    "size": 13920,
     "stop": 92,
     "stopPct": 8,
-    "risk": 1056,
+    "risk": 1114,
     "rungs": 7
   },
   "active": {
-    "size": 9706,
+    "size": 10235,
     "stop": 90.25,
     "stopPct": 9.8,
-    "risk": 946,
+    "risk": 998,
     "rungs": 7
   },
   "volatile": {
-    "size": 7500,
+    "size": 7909,
     "stop": 85,
     "stopPct": 15,
-    "risk": 1125,
+    "risk": 1186,
     "rungs": 7
   },
   "wild": {
@@ -42,17 +42,17 @@
     "rungs": 7
   },
   "AAPL-like": {
-    "size": 11924,
+    "size": 12575,
     "stop": 311.13,
     "stopPct": 8,
-    "risk": 954,
+    "risk": 1006,
     "rungs": 7
   },
   "MSFT-like": {
-    "size": 10158,
+    "size": 10712,
     "stop": 454.4,
     "stopPct": 9.1,
-    "risk": 926,
+    "risk": 977,
     "rungs": 7
   },
   "QBTS-like": {
@@ -70,17 +70,17 @@
     "rungs": 7
   },
   "KO-like": {
-    "size": 12146,
+    "size": 12809,
     "stop": 81.95,
     "stopPct": 8,
-    "risk": 972,
+    "risk": 1025,
     "rungs": 7
   },
   "TSLA-like": {
-    "size": 7008,
+    "size": 7412,
     "stop": 246.03,
     "stopPct": 17.5,
-    "risk": 1228,
+    "risk": 1299,
     "rungs": 7
   },
   "penny": {
@@ -91,10 +91,10 @@
     "rungs": 7
   },
   "high-price": {
-    "size": 11538,
+    "size": 12168,
     "stop": 1104,
     "stopPct": 8,
-    "risk": 923,
+    "risk": 973,
     "rungs": 7
   }
 }

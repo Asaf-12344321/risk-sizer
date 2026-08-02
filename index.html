@@ -652,24 +652,36 @@
           <input type="number" inputmode="decimal" step="0.1" id="cfg-betaexpct">
         </div>
         <div class="field">
-          <label for="cfg-gapt1">Crash %, ATR &lt;1.5%</label>
+          <label for="cfg-gapt1">Crash %, ATR ~1%</label>
           <input type="number" inputmode="decimal" step="1" id="cfg-gapt1">
         </div>
         <div class="field">
-          <label for="cfg-gapt2">Crash %, ATR 1.5-2.5%</label>
+          <label for="cfg-gapt2">Crash %, ATR ~2%</label>
           <input type="number" inputmode="decimal" step="1" id="cfg-gapt2">
         </div>
         <div class="field">
-          <label for="cfg-gapt3">Crash %, ATR 2.5-4%</label>
+          <label for="cfg-gapt3">Crash %, ATR ~3.25%</label>
           <input type="number" inputmode="decimal" step="1" id="cfg-gapt3">
         </div>
         <div class="field">
-          <label for="cfg-gapt4">Crash %, ATR 4-6%</label>
+          <label for="cfg-gapt4">Crash %, ATR ~5%</label>
           <input type="number" inputmode="decimal" step="1" id="cfg-gapt4">
         </div>
         <div class="field">
-          <label for="cfg-gapt5">Crash %, ATR &gt;6%</label>
+          <label for="cfg-gapt5">Crash %, ATR ~7%</label>
           <input type="number" inputmode="decimal" step="1" id="cfg-gapt5">
+        </div>
+        <div class="field">
+          <label for="cfg-gapt6">Crash %, ATR ~9%</label>
+          <input type="number" inputmode="decimal" step="1" id="cfg-gapt6">
+        </div>
+        <div class="field">
+          <label for="cfg-gapt7">Crash %, ATR ~11%</label>
+          <input type="number" inputmode="decimal" step="1" id="cfg-gapt7">
+        </div>
+        <div class="field">
+          <label for="cfg-gapt8">Crash %, ATR 13.5%+</label>
+          <input type="number" inputmode="decimal" step="1" id="cfg-gapt8">
         </div>
         <div class="field">
           <label for="cfg-liqpct">Max % of avg volume</label>
@@ -752,8 +764,15 @@
     gapt1: 22,          // ATR < 1.5% of price
     gapt2: 25,          // 1.5 - 2.5%
     gapt3: 34,          // 2.5 - 4%
-    gapt4: 44,          // 4 - 6%
-    gapt5: 55,          // > 6%
+    gapt4: 44,          // ATR ~5%
+    gapt5: 51,          // ATR ~7%
+    // High-volatility anchors added after the curve was found to stop at ATR 8% and run
+    // flat above it, understating risk on the most volatile names. Measured p96 45-day
+    // drawdowns: 8-10% ATR -> 55.5, 10-12% -> 59.6, 12-15% -> 70.8. The >15% bucket
+    // measured 56.7 but breaks monotonicity on n=935, so the curve clamps at 13.5%.
+    gapt6: 56,          // ATR ~9%
+    gapt7: 60,          // ATR ~11%
+    gapt8: 71,          // ATR ~13.5% and above
     liqpct: 5,
     initmult: 3.0,
     trailmult: 2.5,
@@ -810,24 +829,31 @@
   // them as buckets made this a step function, so 2,607 tickers produced only five possible
   // position sizes — MSFT at 3.04% ATR and META at 3.91% got identical caps. Interpolating
   // makes the answer specific to each stock, which is the whole point.
+  // "Speculative" in this book means something like QBTS or OKLO: about 10% ATR.
+  // The crash budget is anchored there, so the size you name in setup is the size such
+  // a stock actually gets. More volatile names then get less, less volatile ones more.
+  var SPEC_REF_ATR = 10;
+
   function crashPctFor(atrPct) {
-    var x = [1.0, 2.0, 3.25, 5.0, 8.0];
-    var y = [cfg.gapt1, cfg.gapt2, cfg.gapt3, cfg.gapt4, cfg.gapt5];
+    var x = [1.0, 2.0, 3.25, 5.0, 7.0, 9.0, 11.0, 13.5];
+    var y = [cfg.gapt1, cfg.gapt2, cfg.gapt3, cfg.gapt4,
+             cfg.gapt5, cfg.gapt6, cfg.gapt7, cfg.gapt8];
     if (!(atrPct > 0)) return y[0];
     if (atrPct <= x[0]) return y[0];
-    if (atrPct >= x[4]) return y[4];
+    if (atrPct >= x[x.length - 1]) return y[y.length - 1];
     for (var i = 1; i < x.length; i++) {
       if (atrPct <= x[i]) {
         var f = (atrPct - x[i - 1]) / (x[i] - x[i - 1]);
         return y[i - 1] + f * (y[i] - y[i - 1]);
       }
     }
-    return y[4];
+    return y[y.length - 1];
   }
 
   function bandFor(atrPct) {
     var name = atrPct < 1.5 ? "very calm" : atrPct < 2.5 ? "calm"
-             : atrPct < 4.0 ? "active" : atrPct < 6.0 ? "volatile" : "wild";
+             : atrPct < 4.0 ? "active" : atrPct < 6.0 ? "volatile"
+             : atrPct < 10.0 ? "wild" : "extreme";
     return { name: name, gap: crashPctFor(atrPct) };
   }
 
@@ -1010,7 +1036,7 @@
     // ---- the reasoning, folded away
     outSizeFormula.innerHTML = Object.keys(cand).map(function (k) {
       var detail = k === "risk-based" ? nis(riskBudget) + " ÷ " + pct(stopPct) + " stop"
-        : k === "crash cap" ? nis(cfg.breakbudget) + " ÷ " + band.gap + "% crash"
+        : k === "crash cap" ? nis(cfg.breakbudget) + " ÷ " + band.gap.toFixed(1) + "% crash"
         : k === "capital cap" ? cfg.maxpct + "% of capital"
         : k === "beta cap" ? cfg.betaexpct + "% ÷ beta " + beta.toFixed(2)
         : cfg.liqpct + "% of daily volume";
@@ -1430,8 +1456,9 @@
     } else {
       msg = "Risk per trade (1R): " + nis(cfg.riskabs > 0 ? cfg.riskabs : cap * cfg.riskpct / 100)
         + (cfg.riskabs > 0 ? " (fixed)" : " (" + cfg.riskpct + "% of capital)") + "."
-        + "\nCrash budget: " + nis(spec * cfg.gapt5 / 100)
-        + " — what a " + cfg.gapt5 + "% crash costs on a " + nis(spec) + " position."
+        + "\nCrash budget: " + nis(spec * crashPctFor(SPEC_REF_ATR) / 100)
+        + " — what a " + crashPctFor(SPEC_REF_ATR).toFixed(0) + "% crash costs on a " + nis(spec)
+        + " position (a speculative name moves about " + SPEC_REF_ATR + "% a day)."
         + "\nAll of it is editable later under Your rules.";
     }
     setupDerived.textContent = msg;
@@ -1446,7 +1473,7 @@
     var spec = numFrom(setupMaxSpec);
     if (!(cap > 0) || !(spec > 0) || spec > cap) return;
     cfg.capital = cap;
-    cfg.breakbudget = spec * (cfg.gapt5 / 100);
+    cfg.breakbudget = spec * (crashPctFor(SPEC_REF_ATR) / 100);
     saveSettings();
     try { localStorage.setItem(SETUP_KEY, "1"); } catch (e) {}
     renderSettingsInputs();
