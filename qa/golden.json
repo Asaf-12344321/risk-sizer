@@ -35,10 +35,10 @@
     "rungs": 7
   },
   "saturated": {
-    "size": 4333,
+    "size": 2889,
     "stop": 70,
     "stopPct": 30,
-    "risk": 1300,
+    "risk": 867,
     "rungs": 7
   },
   "AAPL-like": {
@@ -56,17 +56,17 @@
     "rungs": 7
   },
   "QBTS-like": {
-    "size": 4333,
+    "size": 4100,
     "stop": 11.33,
     "stopPct": 30,
-    "risk": 1300,
+    "risk": 1230,
     "rungs": 7
   },
   "ASTS-like": {
-    "size": 4333,
+    "size": 3546,
     "stop": 37.12,
     "stopPct": 30,
-    "risk": 1300,
+    "risk": 1064,
     "rungs": 7
   },
   "KO-like": {

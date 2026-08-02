@@ -54,4 +54,42 @@ ck('DEF-002 an existing user is not sent back through setup',
    && mig.window.document.getElementById('setupCard').hidden === true);
 ck('DEF-002 the migration writes the v4 flag',
    mig.window.localStorage.getItem('riskSizerSetup_v4') === '1');
+
+
+// ---------- DEF-005: capping the stop must not cap the RISK used for sizing ----------
+// Placing the order at 30% does not stop the price falling 3x ATR. Sizing off the capped
+// figure assumed protection the stop cannot deliver, and made every name above 10% ATR
+// the same size.
+{
+  const t2 = boot();
+  const sizes = {};
+  for (const [label, atrPct] of [['10.6%', 10.6], ['12.2%', 12.2], ['14.2%', 14.2], ['16.5%', 16.5]]) {
+    t2.price(100, atrPct);
+    sizes[label] = t2.size();
+  }
+  const vals = Object.values(sizes);
+  ck('DEF-005 names above the stop ceiling get DIFFERENT sizes',
+     new Set(vals).size === vals.length, JSON.stringify(sizes));
+  ck('DEF-005 more volatile still means smaller',
+     vals.every((v, i) => i === 0 || v < vals[i - 1]), vals.join(' > '));
+
+  t2.price(100, 16.5);
+  const stopShown = t2.stopPctStated();
+  ck('DEF-005 the ORDER is still placed at the 30% ceiling',
+     Math.abs(stopShown - 30) < 0.05, `${stopShown}%`);
+  ck('DEF-005 sizing used the full 3x ATR distance, not 30%',
+     Math.abs(t2.size() - (1300 / 0.495)) / t2.size() < 0.02,
+     `₪${t2.size()} vs expected ~₪${Math.round(1300 / 0.495)}`);
+  ck('DEF-005 the fuller loss is disclosed on screen',
+     /if it runs the full/.test(t2.stopSub()), t2.stopSub());
+  ck('DEF-005 loss at the placed stop is still within 1R',
+     t2.riskStated() <= 1300 + 1, `₪${t2.riskStated()}`);
+
+  // a stock below the ceiling must be untouched by this change
+  t2.price(100, 3);
+  ck('DEF-005 uncapped stocks are unaffected',
+     !/if it runs the full/.test(t2.stopSub()) && Math.abs(t2.stopPctStated() - 9) < 0.05,
+     t2.stopSub());
+}
+
 report('DEFECT REGRESSIONS');

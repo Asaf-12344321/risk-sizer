@@ -1004,15 +1004,23 @@
     var atrPct = atr / price * 100;
     var band = bandFor(atrPct);
 
-    // ---- initial stop: 3x ATR, held inside sane bounds
+    // ---- initial stop: 3x ATR, held inside sane bounds for ORDER PLACEMENT
     var rawStopPct = (cfg.initmult * atr) / price * 100;
     var stopPct = clamp(rawStopPct, cfg.minstop, cfg.maxstop);
     var stopPrice = price * (1 - stopPct / 100);
 
+    // Sizing uses the volatility-implied distance, with the FLOOR applied but NOT the
+    // ceiling. Capping the stop at 30% limits where the order sits; it does nothing to
+    // stop the price falling 3x ATR. Sizing off the capped figure would assume a
+    // protection the stop cannot deliver — on NBIS (49.5% implied) that understated the
+    // real risk by two thirds, and made every name above 10% ATR the same size.
+    var riskStopPct = Math.min(Math.max(rawStopPct, cfg.minstop), 100);
+    var stopWasCapped = riskStopPct > stopPct + 0.01;
+
     // ---- size: 1R / stop%, then the smallest cap wins
     var riskBudget = riskBudgetNis();
     var cand = {};
-    cand["risk-based"] = riskBudget / (stopPct / 100);
+    cand["risk-based"] = riskBudget / (riskStopPct / 100);
     cand["crash cap"] = cfg.breakbudget / (band.gap / 100);
     cand["capital cap"] = cfg.capital * (cfg.maxpct / 100);
     if (beta > 0) cand["beta cap"] = (cfg.capital * (cfg.betaexpct / 100)) / beta;
@@ -1027,12 +1035,20 @@
     // ---- the two answers
     var inCcyAmt = inCcy.value === "USD" ? size / fx : size;
     var shares = inCcyAmt / price;
+    if (!(size >= 1)) {
+      blankOut("too volatile to size — skip this one");
+      el("answerCard").hidden = false;
+      outShares.textContent = "at " + pct(riskStopPct) + " implied risk, no position is small enough";
+      return;
+    }
     outSize.textContent = nis(size);
     outShares.textContent = num(shares, shares < 10 ? 2 : 0) + " shares"
       + (inCcy.value === "USD" ? " · $" + num(inCcyAmt, 0) : "")
       + " · " + pct(size / cfg.capital * 100) + " of capital";
     outStopPrice.textContent = px(stopPrice);
     outStopSub.textContent = pct(stopPct) + " below entry · risking " + nis(riskAmount)
+      + (stopWasCapped ? ", or " + nis(size * riskStopPct / 100) + " if it runs the full "
+          + pct(riskStopPct) : "")
       + (binding === "risk-based" ? "" : " · size held down by the " + binding);
 
     // ---- the reasoning, folded away
@@ -1072,7 +1088,8 @@
     if (rawStopPct > cfg.maxstop + 0.01) {
       flags.push(["bad", "Too volatile to stop cleanly. ATR is " + atrPct.toFixed(1)
         + "% of price, so a proper stop would sit " + pct(rawStopPct)
-        + " away. Capped at " + cfg.maxstop + "% — expect it to be tested."]);
+        + " away. Capped at " + cfg.maxstop + "% for the order, but the position is sized "
+        + "against the full " + pct(rawStopPct) + " — expect the stop to be tested."]);
     } else if (rawStopPct < cfg.minstop) {
       flags.push(["quiet", "Stop widened to the " + cfg.minstop + "% floor; " + cfg.initmult
         + "× ATR would have been only " + pct(rawStopPct) + " away."]);

@@ -34,10 +34,14 @@ const distinct = new Set(live.map(x => Math.round(x.s))).size;
 ck('distinct ATRs yield distinct sizes (below the saturation zone)',
    distinct > live.length * 0.9, `${distinct} distinct sizes from ${live.length} ATR levels < 10%`);
 
-const satSizes = new Set(atrs.map((a, i) => ({ a, s: sizes[i] })).filter(x => x.a >= 11)
-                              .map(x => Math.round(x.s)));
-ck('above 11% ATR sizes coincide BY DESIGN (both ceilings saturated)', satSizes.size === 1,
-   `${satSizes.size} distinct size(s): ${[...satSizes].join(', ')}`);
+// Sizing uses the UNCAPPED 3x ATR distance, so the 30% order ceiling no longer flattens
+// the high-volatility end. Above 11% ATR sizes must still differ and still fall.
+const sat = atrs.map((a, i) => ({ a, s: sizes[i] })).filter(x => x.a >= 11);
+ck('above 11% ATR sizes still differentiate', new Set(sat.map(x => Math.round(x.s))).size > sat.length * 0.9,
+   `${new Set(sat.map(x => Math.round(x.s))).size} distinct across ${sat.length} levels`);
+ck('above 11% ATR size keeps falling as ATR rises',
+   sat.every((x, i) => i === 0 || x.s <= sat[i - 1].s + 1),
+   `${sat[0].s} down to ${sat[sat.length - 1].s}`);
 
 // ---------- 4. HARD BOUNDS that must never be breached
 let bad = [];

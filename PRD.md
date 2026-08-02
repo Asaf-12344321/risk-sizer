@@ -212,12 +212,11 @@ candidates:
 
 → size            12,577 ₪
 → % of capital    12.6 %
-→ ₪ at risk        1,006       ( below 1R, because the crash cap bound, not risk )
+→ ₪ at risk        1,006       ( below 1R, because the crash cap bound )
 ```
 
 **Note for test design:** share count depends on currency and FX, so both are mandatory
-preconditions for any share-count assertion. Drive the suite's own parameters via
-`QA_CAPITAL` / `QA_MAXSPEC` / `QA_RISK` rather than hard-coding them.
+preconditions. Drive the suite via `QA_CAPITAL` / `QA_MAXSPEC` / `QA_RISK`.
 
 ### 5.5 Initial stop — `FR-STOP`
 
@@ -366,13 +365,15 @@ preconditions for any share-count assertion. Drive the suite's own parameters vi
 | **DEF-003** | *Fixed* | `holddays`, `rsiwarn`, `runupwarn` appeared in settings but no logic read them. `rsiwarn`/`runupwarn` removed (the warning they drove was falsified); `holddays` retargeted to a position-age warning, defaulting to **90 days** — the only holding bucket that lost money in the trade history | PRD review |
 | **DEF-004** | *Fixed* | Sub-dollar prices rendered the stop as `0.00`. Price formatting is now adaptive: 4dp below $1, 3dp below $10, 2dp above | QA edge suite |
 
-**No known open defects.** All four are covered by regression tests in `qa/defects.js`.
+| **DEF-005** | *Fixed* | Capping the placed stop at 30% also capped the risk used for **sizing**, so every name above ~10% ATR received an identical position. Placing the order at 30% does not prevent the price falling 3× ATR. Sizing now uses the uncapped volatility-implied distance (floor applied, ceiling not); the order still sits at the ceiling. NBIS went from ₪30,000 to ₪18,170 | User |
+
+**No known open defects.** All five are covered by regression tests in `qa/defects.js`.
 
 ---
 
 ## 10. Verification status
 
-An automated suite exists at `qa/` (**78 assertions, all passing**). It covers invariants (monotonicity,
+An automated suite exists at `qa/` (**98 assertions, all passing**). It covers invariants (monotonicity,
 continuity, bounds, scale invariance, metamorphic relations, ladder ordering), a
 full-universe sweep of ~2,600 tickers, edge and hostile inputs, a golden snapshot, regression tests for every documented defect, and
 **parity between this tool and the `riskml` research simulator**.
