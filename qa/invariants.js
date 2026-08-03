@@ -92,12 +92,16 @@ for (const [p, at] of [[60.45, 6.48], [100, 1], [19, 2.85], [1000, 40], [8, 1.2]
   for (let i = 1; i < L.length; i++)
     if (L[i].stop < L[i - 1].stop - 0.001) lbad.push(`stop moved DOWN at px ${p}: ${L[i-1].stop}→${L[i].stop}`);
   if (Math.abs(L[0].stop - st0) > 0.02) lbad.push(`first rung ${L[0].stop} != initial stop ${st0} at px ${p}`);
+  // arming is volatility-scaled: max(15%, 3 x ATR%), so the expected rung moves with ATR
+  const atrPct = at / p * 100;
+  const expTrig = Math.max(15, 3 * atrPct);
   const armRow = L.find(r => Math.abs(r.stop - p) < 0.02);
   if (!armRow) lbad.push(`no breakeven rung at px ${p}`);
-  else if (Math.abs(armRow.px - p * 1.15) / p > 0.02) lbad.push(`breakeven rung at ${armRow.px}, expected ~${(p*1.15).toFixed(2)}`);
+  else if (Math.abs((armRow.px / p - 1) * 100 - expTrig) > 1.5)
+    lbad.push(`breakeven rung at +${((armRow.px/p-1)*100).toFixed(1)}%, expected +${expTrig.toFixed(1)}% (ATR ${atrPct.toFixed(1)}%)`);
   for (const r of L) if (r.stop > r.px) lbad.push(`stop ${r.stop} above trigger ${r.px} at px ${p}`);
 }
-ck('ladder: only rises, starts at the initial stop, hits breakeven at +15%, never above price',
+ck('ladder: only rises, starts at the initial stop, hits breakeven at max(15%,3xATR), never above price',
    lbad.length === 0, lbad.length ? `${lbad.length} issues, first: ${lbad[0]}` : '5 scenarios');
 
 report('INVARIANTS');

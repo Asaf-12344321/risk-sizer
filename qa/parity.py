@@ -15,11 +15,12 @@ CASES = [(100, 1.0), (100, 2.0), (100, 3.25), (100, 5.0), (100, 8.0), (100, 15.0
 
 out = []
 for price, atr in CASES:
+    atr_pct = atr / price * 100.0
+    arm_trig = max(P.arm_floor_pct, P.arm_atr_mult * atr_pct) if P.arm_atr_mult > 0 else P.arm_pct
     out.append({"price": price, "atr": atr,
                 "py_stop": round(initial_stop(price, atr, P), 6),
-                "py_init_mult": P.init_atr_mult,
-                "py_min": P.min_stop_pct, "py_max": P.max_stop_pct,
-                "py_arm": P.arm_pct, "py_trail_mult": P.trail_atr_mult})
+                "py_arm_trigger_pct": round(arm_trig, 4)})
 print(json.dumps({"params": {"init": P.init_atr_mult, "trail": P.trail_atr_mult,
-                             "arm": P.arm_pct, "min": P.min_stop_pct, "max": P.max_stop_pct},
+                             "arm": P.arm_floor_pct, "armatrmult": P.arm_atr_mult,
+                             "min": P.min_stop_pct, "max": P.max_stop_pct},
                   "cases": out}))

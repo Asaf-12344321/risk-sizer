@@ -692,11 +692,15 @@
           <input type="number" inputmode="decimal" step="0.1" id="cfg-initmult">
         </div>
         <div class="field">
+          <label for="cfg-armatrmult">Arm trail at (x ATR)</label>
+          <input type="number" inputmode="decimal" step="0.1" id="cfg-armatrmult">
+        </div>
+        <div class="field">
           <label for="cfg-trailmult">Trail distance (x ATR)</label>
           <input type="number" inputmode="decimal" step="0.1" id="cfg-trailmult">
         </div>
         <div class="field">
-          <label for="cfg-armpct">Arm trail at (+%)</label>
+          <label for="cfg-armpct">Arm trail at, floor (+%)</label>
           <input type="number" inputmode="decimal" step="1" id="cfg-armpct">
         </div>
         <div class="field">
@@ -758,17 +762,18 @@
     gapt3: 34,          // 2.5 - 4%
     gapt4: 44,          // ATR ~5%
     gapt5: 51,          // ATR ~7%
-    // High-volatility anchors added after the curve was found to stop at ATR 8% and run
-    // flat above it, understating risk on the most volatile names. Measured p96 45-day
-    // drawdowns: 8-10% ATR -> 55.5, 10-12% -> 59.6, 12-15% -> 70.8. The >15% bucket
-    // measured 56.7 but breaks monotonicity on n=935, so the curve clamps at 13.5%.
+    // High-volatility anchors, re-measured on a universe that actually contains
+    // structurally volatile names (quantum / SMR / miners / space), which the original
+    // 118 large-caps did not. Measured p96 45-day drawdowns: 6-8% -> 51.8, 8-10% -> 57.9,
+    // 10-12% -> 61.5, 12-15% -> 62.8. The curve clamps at 13.5%.
     gapt6: 56,          // ATR ~9%
     gapt7: 60,          // ATR ~11%
-    gapt8: 71,          // ATR ~13.5% and above
+    gapt8: 63,          // ATR ~13.5%+ — measured 62.8 on n=4,268 (was 71 on n=1,540)
     liqpct: 5,
     initmult: 3.0,
     trailmult: 2.5,
-    armpct: 15,
+    armpct: 15,          // floor: never arm earlier than this
+    armatrmult: 3.0,     // arm at max(armpct, this x ATR%). 0 disables the scaling
     minstop: 8,
     // 30% not 45%: on a name like QBTS (ATR ~15% of price) 3x ATR is a 45% stop, which is not
     // protection at all. -30% also tested best of every fixed depth on the real trade history.
@@ -838,6 +843,18 @@
       }
     }
     return y[y.length - 1];
+  }
+
+  // Arming trigger, as a % gain from entry. Volatility-scaled, floored at armpct.
+  // Measured: arming earlier than +15% is worse on calm names, but on ATR>9% names a
+  // +15% trigger fires inside the daily noise — 3x ATR gave +48% there.
+  function armTriggerPct(price, atr) {
+    if (!(cfg.armatrmult > 0) || !(price > 0) || !(atr > 0)) return cfg.armpct;
+    return Math.max(cfg.armpct, cfg.armatrmult * (atr / price * 100));
+  }
+
+  function armPriceFor(price, atr) {
+    return price * (1 + armTriggerPct(price, atr) / 100);
   }
 
   function bandFor(atrPct) {
@@ -1065,7 +1082,8 @@
       + nis(size * band.gap / 100) + " at this size.</span>";
 
     // ---- the ladder: price level -> where the stop goes
-    var armPrice = price * (1 + cfg.armpct / 100);
+    var trig = armTriggerPct(price, atr);
+    var armPrice = armPriceFor(price, atr);
     var all = buildLadder(price, atr, stopPrice, armPrice);
     var rungs = [], seen = null;
     for (var ri = 0; ri < all.length && rungs.length < 7; ri++) {
@@ -1076,7 +1094,8 @@
     outLadder.innerHTML = "<tr><th>when it reaches</th><th>move stop to</th><th></th></tr>"
       + rungs.map(function (r) {
         var at = r.px === undefined ? price : r.px;
-        var note = r.cls === "now" ? "set today" : r.cls === "arm" ? "now protected" : "";
+        var note = r.cls === "now" ? "set today"
+          : r.cls === "arm" ? "now protected (+" + trig.toFixed(0) + "%)" : "";
         return '<tr class="' + r.cls + '"><td>' + px(at)
           + (r.px === undefined ? "" : " <small>(" + (at / price - 1 >= 0 ? "+" : "")
              + ((at / price - 1) * 100).toFixed(0) + "%)</small>")
@@ -1289,8 +1308,7 @@
 
   function ladderFor(p) {
     var initialStop = initialStopFor(p.entry, p.atr);
-    var armPrice = p.entry * (1 + cfg.armpct / 100);
-    return buildLadder(p.entry, p.atr, initialStop, armPrice);
+    return buildLadder(p.entry, p.atr, initialStop, armPriceFor(p.entry, p.atr));
   }
 
   function initialStopFor(price, atr) {
@@ -1306,7 +1324,7 @@
     var bars = raw.filter(function (b) { return b[0] >= p.added; });
     if (!bars.length) return null;
     var stop = initialStopFor(p.entry, p.atr);
-    var armPrice = p.entry * (1 + cfg.armpct / 100);
+    var armPrice = armPriceFor(p.entry, p.atr);
     var trailDist = cfg.trailmult * p.atr;
     var armed = false, high = p.entry, hit = null;
     for (var i = 0; i < bars.length; i++) {
@@ -1368,7 +1386,7 @@
         } else if (!live.armed) {
           out += '<div class="pos-next">Keep the stop at <b>' + num(stop, 2)
             + "</b>. It moves up to breakeven (<b>" + px(p.entry) + "</b>) once the price closes at <b>"
-            + px(p.entry * (1 + cfg.armpct / 100)) + "</b> — the move that protects this trade.</div>";
+            + px(armPriceFor(p.entry, p.atr)) + "</b> — the move that protects this trade.</div>";
         } else {
           out += '<div class="pos-next">Trailing on its own. Set the stop to <b>' + num(stop, 2)
             + "</b> at Leumi; it rises whenever the price closes at a new high.</div>";

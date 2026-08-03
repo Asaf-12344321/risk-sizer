@@ -212,11 +212,10 @@ candidates:
 
 → size            12,577 ₪
 → % of capital    12.6 %
-→ ₪ at risk        1,006       ( below 1R, because the crash cap bound )
+→ ₪ at risk        1,006
 ```
 
-**Note for test design:** share count depends on currency and FX, so both are mandatory
-preconditions. Drive the suite via `QA_CAPITAL` / `QA_MAXSPEC` / `QA_RISK`.
+**Note for test design:** share count depends on currency and FX; drive the suite via `QA_CAPITAL` / `QA_MAXSPEC` / `QA_RISK`.
 
 ### 5.5 Initial stop — `FR-STOP`
 
@@ -236,7 +235,7 @@ preconditions. Drive the suite via `QA_CAPITAL` / `QA_MAXSPEC` / `QA_RISK`.
 |---|---|---|
 | FR-LAD-01 | The ladder **shall** show price levels and the stop to move to at each | Must |
 | FR-LAD-02 | Row 1 **shall** be the entry price with the initial stop, marked "set today" | Must |
-| FR-LAD-03 | The arming row **shall** be at `price × (1 + armpct/100)` with stop = entry price, marked as protected | Must |
+| FR-LAD-03 | The arming row **shall** be at `price × (1 + armTrigger/100)` where `armTrigger = max(armpct, armatrmult × ATR%)`, with stop = entry price, marked as protected. A flat threshold arms inside the daily noise on high-ATR names | Must |
 | FR-LAD-04 | Above arming, `stop = max(entry, min(level − trailmult×ATR, level))` | Must |
 | FR-LAD-05 | Stops **shall** be monotonically non-decreasing down the table | Must |
 | FR-LAD-06 | No stop **shall** exceed its own trigger level | Must |
@@ -328,11 +327,12 @@ preconditions. Drive the suite via `QA_CAPITAL` / `QA_MAXSPEC` / `QA_RISK`.
 | `breakbudget` | 0 | Max ₪ lost in a crash | Derived at setup |
 | `maxpct` | 20 | Max position as % of capital | **[CALIBRATION]** |
 | `betaexpct` | 25 | Max beta-weighted exposure % | **[CALIBRATION]** |
-| `gapt1..gapt5` | 22/25/34/44/55 | Crash % anchors | Measured p96 drawdowns |
+| `gapt1..gapt8` | 22/25/34/44/51/56/60/63 | Crash % anchors at ATR 1/2/3.25/5/7/9/11/13.5% | Measured p96 drawdowns |
 | `liqpct` | 5 | Max % of ADV | Never binds in practice |
 | `initmult` | 3.0 | Initial stop in ATR multiples | **[CALIBRATION]** — plateau 1.5–3.5 |
 | `trailmult` | 2.5 | Trail distance in ATR multiples | **[CALIBRATION]** |
-| `armpct` | 15 | Move to breakeven at +N% | **[CALIBRATION]** |
+| `armpct` | 15 | **Floor** for the arming trigger | Earlier tested worse on calm names |
+| `armatrmult` | 3.0 | Arm at `max(armpct, this × ATR%)`. 0 disables scaling | +48% on ATR>9% names |
 | `minstop` | 8 | Min stop % | Validated better than 5 |
 | `maxstop` | 30 | Max stop % | |
 | `drawdown` | 40 | Drawdown note threshold % | |
@@ -373,7 +373,7 @@ preconditions. Drive the suite via `QA_CAPITAL` / `QA_MAXSPEC` / `QA_RISK`.
 
 ## 10. Verification status
 
-An automated suite exists at `qa/` (**98 assertions, all passing**). It covers invariants (monotonicity,
+An automated suite exists at `qa/` (**109 assertions, all passing**). It covers invariants (monotonicity,
 continuity, bounds, scale invariance, metamorphic relations, ladder ordering), a
 full-universe sweep of ~2,600 tickers, edge and hostile inputs, a golden snapshot, regression tests for every documented defect, and
 **parity between this tool and the `riskml` research simulator**.

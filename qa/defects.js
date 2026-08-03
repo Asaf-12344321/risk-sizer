@@ -92,4 +92,40 @@ ck('DEF-002 the migration writes the v4 flag',
      t2.stopSub());
 }
 
+// ---------- Dynamic arming: max(armpct, armatrmult x ATR%) ----------
+{
+  const t3 = boot();
+  const trig = (px, atr) => {
+    t3.price(px, atr);
+    const L = t3.ladder(), arm = L.find(r => Math.abs(r.stop - px) < 0.02);
+    return arm ? (arm.px / px - 1) * 100 : NaN;
+  };
+  ck('ARM floor holds on calm names (ATR 2%)', Math.abs(trig(100, 2) - 15) < 0.6, `+${trig(100,2).toFixed(1)}%`);
+  ck('ARM floor holds at ATR 4%', Math.abs(trig(100, 4) - 15) < 0.6, `+${trig(100,4).toFixed(1)}%`);
+  ck('ARM scales above ATR 5%', trig(100, 7) > 19, `+${trig(100,7).toFixed(1)}%`);
+  ck('ARM = 3x ATR on a wild name (ATR 12%)', Math.abs(trig(100, 12) - 36) < 1, `+${trig(100,12).toFixed(1)}%`);
+  const seq = [1, 2, 4, 6, 8, 10, 14, 18].map(a => trig(100, a));
+  ck('ARM trigger is non-decreasing in ATR', seq.every((v, i) => i === 0 || v >= seq[i - 1] - 0.01), seq.map(v=>v.toFixed(0)).join(' '));
+  ck('ARM never below the floor', seq.every(v => v >= 15 - 0.6), seq.map(v=>v.toFixed(0)).join(' '));
+
+  // disabling the multiplier must reproduce the old flat behaviour exactly
+  const flat = boot(); flat.set('cfg-armatrmult', '0');
+  const ftrig = (px, atr) => { flat.price(px, atr);
+    const L = flat.ladder(), a = L.find(r => Math.abs(r.stop - px) < 0.02);
+    return a ? (a.px / px - 1) * 100 : NaN; };
+  ck('armatrmult=0 reverts to a flat +15% for every ATR',
+     [2, 6, 12, 20].every(a => Math.abs(ftrig(100, a) - 15) < 0.6),
+     [2,6,12,20].map(a=>'+'+ftrig(100,a).toFixed(0)+'%').join(' '));
+
+  // ---------- crash anchor corrected 71 -> 63 ----------
+  const t4 = boot();
+  t4.price(100, 14);
+  const cp = /÷ ([\d.]+)% crash/.exec(t4.formula());
+  ck('top crash anchor is now 63%, not 71%', cp && Math.abs(parseFloat(cp[1]) - 63) < 0.6,
+     cp ? cp[1] + '%' : 'not found');
+  const c10 = (() => { t4.price(100, 10); return parseFloat(/÷ ([\d.]+)% crash/.exec(t4.formula())[1]); })();
+  const c14 = (() => { t4.price(100, 14); return parseFloat(/÷ ([\d.]+)% crash/.exec(t4.formula())[1]); })();
+  ck('crash curve still rises into the corrected anchor', c14 > c10, `${c10}% -> ${c14}%`);
+}
+
 report('DEFECT REGRESSIONS');
