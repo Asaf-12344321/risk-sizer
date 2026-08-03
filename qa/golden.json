@@ -15,30 +15,30 @@
   },
   "active": {
     "size": 10235,
-    "stop": 90.25,
-    "stopPct": 9.8,
-    "risk": 998,
+    "stop": 91.88,
+    "stopPct": 8.1,
+    "risk": 832,
     "rungs": 7
   },
   "volatile": {
     "size": 7909,
-    "stop": 85,
-    "stopPct": 15,
-    "risk": 1186,
+    "stop": 87.5,
+    "stopPct": 12.5,
+    "risk": 989,
     "rungs": 7
   },
   "wild": {
-    "size": 5417,
-    "stop": 76,
-    "stopPct": 24,
+    "size": 6500,
+    "stop": 80,
+    "stopPct": 20,
     "risk": 1300,
     "rungs": 7
   },
   "saturated": {
-    "size": 2889,
+    "size": 3467,
     "stop": 70,
     "stopPct": 30,
-    "risk": 867,
+    "risk": 1040,
     "rungs": 7
   },
   "AAPL-like": {
@@ -50,23 +50,23 @@
   },
   "MSFT-like": {
     "size": 10712,
-    "stop": 454.4,
-    "stopPct": 9.1,
-    "risk": 977,
+    "stop": 460,
+    "stopPct": 8,
+    "risk": 857,
     "rungs": 7
   },
   "QBTS-like": {
-    "size": 4100,
-    "stop": 11.33,
-    "stopPct": 30,
-    "risk": 1230,
+    "size": 4920,
+    "stop": 11.91,
+    "stopPct": 26.4,
+    "risk": 1300,
     "rungs": 7
   },
   "ASTS-like": {
-    "size": 3546,
+    "size": 4255,
     "stop": 37.12,
     "stopPct": 30,
-    "risk": 1064,
+    "risk": 1277,
     "rungs": 7
   },
   "KO-like": {
@@ -78,15 +78,15 @@
   },
   "TSLA-like": {
     "size": 7412,
-    "stop": 246.03,
-    "stopPct": 17.5,
-    "risk": 1299,
+    "stop": 254.74,
+    "stopPct": 14.6,
+    "risk": 1083,
     "rungs": 7
   },
   "penny": {
-    "size": 4875,
-    "stop": 3.3,
-    "stopPct": 26.7,
+    "size": 5850,
+    "stop": 3.5,
+    "stopPct": 22.2,
     "risk": 1300,
     "rungs": 7
   },

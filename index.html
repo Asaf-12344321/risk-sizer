@@ -770,8 +770,8 @@
     gapt7: 60,          // ATR ~11%
     gapt8: 63,          // ATR ~13.5%+ — measured 62.8 on n=4,268 (was 71 on n=1,540)
     liqpct: 5,
-    initmult: 3.0,
-    trailmult: 2.5,
+    initmult: 2.5,     // OOS grid: 2.5x gave +0.341 mean OOS Sharpe vs +0.137 at 3.0x
+    trailmult: 3.5,    // OOS grid: 3.5x gave +0.273 vs +0.206 at 2.5x
     armpct: 15,          // floor: never arm earlier than this
     armatrmult: 3.0,     // arm at max(armpct, this x ATR%). 0 disables the scaling
     minstop: 8,
@@ -799,6 +799,9 @@
         // Migrate the old 45% stop ceiling, which allowed absurd initial stops on high-ATR names.
         if (merged.maxstop === 45) merged.maxstop = DEFAULTS.maxstop;
         if (merged.minstop === 5) merged.minstop = DEFAULTS.minstop;   // revert my unvalidated 5% change
+        // Out-of-sample grid search moved these; migrate the superseded values.
+        if (merged.initmult === 3.0) merged.initmult = DEFAULTS.initmult;
+        if (merged.trailmult === 2.5) merged.trailmult = DEFAULTS.trailmult;
         return merged;
       }
     } catch (e) {}

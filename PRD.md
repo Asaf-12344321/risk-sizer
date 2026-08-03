@@ -329,8 +329,8 @@ candidates:
 | `betaexpct` | 25 | Max beta-weighted exposure % | **[CALIBRATION]** |
 | `gapt1..gapt8` | 22/25/34/44/51/56/60/63 | Crash % anchors at ATR 1/2/3.25/5/7/9/11/13.5% | Measured p96 drawdowns |
 | `liqpct` | 5 | Max % of ADV | Never binds in practice |
-| `initmult` | 3.0 | Initial stop in ATR multiples | **[CALIBRATION]** — plateau 1.5–3.5 |
-| `trailmult` | 2.5 | Trail distance in ATR multiples | **[CALIBRATION]** |
+| `initmult` | 2.5 | Initial stop in ATR multiples | Out-of-sample grid: +0.341 mean OOS Sharpe vs +0.137 at 3.0x |
+| `trailmult` | 3.5 | Trail distance in ATR multiples | Out-of-sample grid: +0.273 vs +0.206 at 2.5x |
 | `armpct` | 15 | **Floor** for the arming trigger | Earlier tested worse on calm names |
 | `armatrmult` | 3.0 | Arm at `max(armpct, this × ATR%)`. 0 disables scaling | +48% on ATR>9% names |
 | `minstop` | 8 | Min stop % | Validated better than 5 |
@@ -373,7 +373,7 @@ candidates:
 
 ## 10. Verification status
 
-An automated suite exists at `qa/` (**109 assertions, all passing**). It covers invariants (monotonicity,
+An automated suite exists at `qa/` (**109 assertions, all passing** — run `qa/run_all.sh`, which treats a crashed suite as a failure rather than a silent zero). It covers invariants (monotonicity,
 continuity, bounds, scale invariance, metamorphic relations, ladder ordering), a
 full-universe sweep of ~2,600 tickers, edge and hostile inputs, a golden snapshot, regression tests for every documented defect, and
 **parity between this tool and the `riskml` research simulator**.
@@ -406,6 +406,27 @@ which is how the setting silently stops capping anything.
 Deliberately **not** modelled: aggregate exposure across open positions (portfolio heat).
 The tool is stateless by requirement. Total exposure is therefore bounded by the operator,
 not the software — see RFC-001, closed.
+
+## 10b. Exit model — trail only, no targets
+
+Settled by a 195-cell parameter grid with a 2015–2022 / 2023–2026 split, on a cohort that
+includes structurally volatile names. Three findings drove it:
+
+1. **No profit target.** Across 31,900 high-ATR trades every metric improves monotonically
+   as the target moves out and finally disappears: R:R 1.03 (+25% target) → 1.98
+   (trail-only); break-even margin +2.1pp → +8.4pp; net after fees and tax +0.9%/yr →
+   +2.9%/yr. A target does **not** reduce the average loss (−₪8,160 vs −₪7,548), so it
+   truncates gains without buying protection. Trail-only is also the only variant that
+   stays positive if capital losses cannot be offset for tax.
+2. **No scale-out.** The worst parameter in the grid: mean OOS Sharpe +0.18 with none,
+   −0.36 at 25%, −0.33 at 50%.
+3. **Continuation favours holding.** Once a high-ATR trade reaches +25%, it touches +50%
+   **56.4%** of the time and round-trips to a loss 19.6%. Expected value of holding from
+   +25% is +36.1% against +25.0% for taking it, for a median 10 extra days.
+
+**[CALIBRATION]** caveat: net +2.9%/yr is modest, measured on a deliberately-selected
+volatile cohort in one regime. Trail-only is the best of the options tested; that is a
+weaker claim than it being good.
 
 ## 11. Calibration caveats
 

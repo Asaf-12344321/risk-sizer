@@ -1,5 +1,6 @@
 // Regression tests for the three documented defects. Each fails on the old build.
 const { boot, ck, report } = require('./lib');
+const CAP = +(process.env.QA_CAPITAL || 100000), RISK = +(process.env.QA_RISK || 1300);
 const { JSDOM } = require('jsdom'); const fs = require('fs');
 const HTML = fs.readFileSync(__dirname + '/../risk-sizer.html', 'utf8');
 
@@ -73,23 +74,30 @@ ck('DEF-002 the migration writes the v4 flag',
   ck('DEF-005 more volatile still means smaller',
      vals.every((v, i) => i === 0 || v < vals[i - 1]), vals.join(' > '));
 
-  t2.price(100, 16.5);
+  // derive from the live multipliers so retuning does not break the assertion
+  const IM = +t2.$('cfg-initmult').value, MAXS = +t2.$('cfg-maxstop').value;
+  const wildATR = 16.5;
+  t2.price(100, wildATR);
   const stopShown = t2.stopPctStated();
-  ck('DEF-005 the ORDER is still placed at the 30% ceiling',
-     Math.abs(stopShown - 30) < 0.05, `${stopShown}%`);
-  ck('DEF-005 sizing used the full 3x ATR distance, not 30%',
-     Math.abs(t2.size() - (1300 / 0.495)) / t2.size() < 0.02,
-     `₪${t2.size()} vs expected ~₪${Math.round(1300 / 0.495)}`);
+  ck('DEF-005 the ORDER is still placed at the max-stop ceiling',
+     Math.abs(stopShown - MAXS) < 0.05, `${stopShown}% vs cap ${MAXS}%`);
+  const impliedRisk = (IM * wildATR) / 100;
+  ck(`DEF-005 sizing used the full ${IM}x ATR distance, not the ${MAXS}% ceiling`,
+     Math.abs(t2.size() - (RISK / impliedRisk)) / t2.size() < 0.02,
+     `₪${t2.size()} vs expected ~₪${Math.round(RISK / impliedRisk)}`);
   ck('DEF-005 the fuller loss is disclosed on screen',
      /if it runs the full/.test(t2.stopSub()), t2.stopSub());
   ck('DEF-005 loss at the placed stop is still within 1R',
      t2.riskStated() <= 1300 + 1, `₪${t2.riskStated()}`);
 
-  // a stock below the ceiling must be untouched by this change
-  t2.price(100, 3);
-  ck('DEF-005 uncapped stocks are unaffected',
-     !/if it runs the full/.test(t2.stopSub()) && Math.abs(t2.stopPctStated() - 9) < 0.05,
-     t2.stopSub());
+  // a stock whose IM x ATR sits inside [minstop, maxstop] must be untouched
+  const MINS = +t2.$('cfg-minstop').value;
+  const calmATR = (MINS / IM) + 2;               // comfortably inside both bounds
+  t2.price(100, calmATR);
+  ck('DEF-005 stocks inside the stop bounds are unaffected',
+     !/if it runs the full/.test(t2.stopSub())
+       && Math.abs(t2.stopPctStated() - IM * calmATR) < 0.1,
+     `ATR ${calmATR}% -> stop ${t2.stopPctStated()}%, expected ${(IM*calmATR).toFixed(1)}%`);
 }
 
 // ---------- Dynamic arming: max(armpct, armatrmult x ATR%) ----------
