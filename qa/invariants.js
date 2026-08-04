@@ -70,9 +70,13 @@ ck('same ATR% gives the same size at any price level', scaleBad.length === 0,
    scaleBad.length ? scaleBad[0] : 'ATR 3% across 5 price levels');
 
 // ---------- 6. METAMORPHIC: known relationships between settings and output
-// pick a case where risk-based actually binds (high ATR), or the assertion is vacuous
-const a = boot({ riskabs: RISK, maxspec: Math.round(CAP * 0.8) }); a.price(100, 9);
-const b = boot({ riskabs: RISK*2, maxspec: Math.round(CAP * 0.8) }); b.price(100, 9);
+// pick a case where risk-based actually binds (high ATR), or the assertion is vacuous.
+// Beta must be supplied explicitly: at ATR 9% an unmeasured beta is estimated at 2.32,
+// whose cap (₪10,762) correctly binds once 1R doubles — which would make the position
+// beta-bound and the assertion untrue for a reason that has nothing to do with 1R.
+// beta 1.0 puts the beta cap at ₪25,000, clear of both sizes.
+const a = boot({ riskabs: RISK, maxspec: Math.round(CAP * 0.8) }); a.price(100, 9, 1.0);
+const b = boot({ riskabs: RISK*2, maxspec: Math.round(CAP * 0.8) }); b.price(100, 9, 1.0);
 ck('doubling 1R doubles a risk-bound position', Math.abs(b.size() - 2 * a.size()) / a.size() < 0.02,
    `${a.size()} → ${b.size()} (expected ~${2 * a.size()})`);
 const c = boot({ maxspec: Math.round(CAP * 0.05) }); c.price(100, 3);

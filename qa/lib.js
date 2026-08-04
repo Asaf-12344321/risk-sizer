@@ -1,6 +1,14 @@
 // Shared harness: boot the real page in jsdom and drive it like a user.
 const { JSDOM } = require('jsdom'); const fs = require('fs');
-const HTML = fs.readFileSync(__dirname + '/../risk-sizer.html', 'utf8');
+// The tool ships as index.html in the deploy repo and risk-sizer.html in trading-tools;
+// the two are kept byte-identical. Resolve either, so run_all.sh works in both places
+// instead of crashing on a missing path — a crash the runner reports as zero tests.
+const HTML_PATH = process.env.QA_HTML || [
+  __dirname + '/../risk-sizer.html',
+  __dirname + '/../index.html',
+].find(p => fs.existsSync(p));
+if (!HTML_PATH) throw new Error('no risk-sizer.html or index.html found next to qa/');
+const HTML = fs.readFileSync(HTML_PATH, 'utf8');
 const QUOTES = process.env.QA_QUOTES || '/tmp/q.json';
 
 // Neutral defaults so this suite carries no personal financial parameters.
@@ -64,4 +72,4 @@ function report(suite) {
   if (fails.length) { console.log('FAILURES:'); fails.forEach(f => console.log('  · ' + f)); }
   process.exit(fails.length ? 1 : 0);
 }
-module.exports = { boot, ck, report };
+module.exports = { boot, ck, report, HTML, HTML_PATH };

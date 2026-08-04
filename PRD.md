@@ -135,6 +135,8 @@ header, so the browser cannot call it directly. `raw.githubusercontent.com` does
 | FR-FEED-08 | The summary **shall** state that the price is a **close, not a live quote** | Must |
 | FR-FEED-09 | `bars/{TICKER}.json` **shall** be fetched only for tracked positions, only when the positions tab is opened, and cached for the session | Must |
 | FR-FEED-10 | Absence of `fetch` **shall** be handled without throwing | Must |
+| FR-FEED-11 | Feed values **shall** reach the form at full published precision. The app **shall not** round ATR or price on the way in — see DEF-006 | Must |
+| FR-FEED-12 | The summary line **shall** distinguish a measured beta from an estimated one, marking the latter `(est)` | Must |
 
 ### 5.3 Manual entry — `FR-IN`
 
@@ -156,7 +158,7 @@ An absolute `riskabs` **shall** take precedence, so risk per trade does not drif
 capital changes.
 
 **FR-SIZE-02** — The crash assumption **shall** be a **continuous, piecewise-linear**
-function of ATR%, interpolated over five anchors:
+function of ATR%, interpolated over eight anchors:
 
 | Anchor | ATR% | Crash % (setting) | Default |
 |---|---|---|---|
@@ -164,7 +166,10 @@ function of ATR%, interpolated over five anchors:
 | 2 | 2.0 | `gapt2` | 25 |
 | 3 | 3.25 | `gapt3` | 34 |
 | 4 | 5.0 | `gapt4` | 44 |
-| 5 | ≥ 8.0 | `gapt5` | 55 |
+| 5 | 7.0 | `gapt5` | 51 |
+| 6 | 9.0 | `gapt6` | 56 |
+| 7 | 11.0 | `gapt7` | 60 |
+| 8 | ≥ 13.5 | `gapt8` | 63 |
 
 Values outside the range clamp to the nearest anchor. **It shall not be a step
 function** — see DEF-001.
@@ -176,7 +181,7 @@ function** — see DEF-001.
 | risk-based | `1R / (stopPct/100)` | always |
 | crash cap | `breakbudget / (crashPct/100)` | always |
 | capital cap | `capital × maxpct/100` | always |
-| beta cap | `(capital × betaexpct/100) / beta` | `beta > 0` |
+| beta cap | `(capital × betaexpct/100) / betaForSizing()` | **always** — see FR-SIZE-12 |
 | liquidity cap | `ADV_nis × liqpct/100` | `avgvol > 0` |
 
 **FR-SIZE-04** — The binding constraint **shall** be named in the UI whenever it is not
@@ -189,6 +194,29 @@ function** — see DEF-001.
 **FR-SIZE-07** — A collapsed disclosure **shall** list every candidate with its value and
 derivation, mark the binding one, and state the crash cost at the chosen size.
 
+**FR-SIZE-12** — The beta cap **shall always be applied**. It **shall not** be skipped
+when beta is absent or non-positive: skipping it *removes* a constraint, which is the
+wrong direction for a missing input. Three cases, which **shall** be distinguished
+because they are not the same fact (see DEF-007):
+
+| Case | Beta used | Reported as |
+|---|---|---|
+| Measured, `> 0` | as measured | plain |
+| Measured, `≤ 0` | floored at `BETA_MIN` (0.10) | *"measured beta X ≤ 0, floored — no market exposure to cap"* |
+| Not measurable | `betaFallback(ATR%)` | *"estimated from ATR — beta not measurable"* |
+
+A measured beta `≤ 0` is normally **real, not noise** — WMT −0.10, JNJ −0.21, XOM −0.48
+against a tech-led SPY. A stock with no positive market co-movement adds no market
+exposure, so a market-exposure cap correctly does not bind on it; the floor exists only
+to keep the arithmetic positive and finite. It **shall not** be labelled "estimated".
+
+**FR-SIZE-13** — `betaFallback(atrPct)` **shall** be
+`clamp(0.235 + 0.232 × atrPct, 1.0, 6.0)`, and **shall** be clamped at both ends. Fitted
+on the 2,579 universe tickers that have a measurable beta (band-median beta regressed on
+ATR%, corr 0.946); the cap of 6.0 is where the fit leaves its support, the highest beta
+measured anywhere being 5.40. Unclamped it reached beta 2.3e8 at ATR 1e9%, driving the
+cap to ~0 and making the tool refuse to size at all. **[CALIBRATION]**
+
 **Worked example** — all preconditions stated explicitly, because the share count depends
 on currency and FX and a partially-specified example is untestable.
 
@@ -200,7 +228,7 @@ on currency and FX and a partially-specified example is untestable.
 ATR%       = 8.02 / 338.19 × 100                    =   2.371 %
 crashPct   = interp(2.371) between anchors 2.0→25, 3.25→34
            = 25 + (0.371/1.25) × 9                  =  27.67 %
-stopPct    = clamp(3 × 2.371, 8, 30)                =   8.0  %   (min floor binds)
+stopPct    = clamp(2.5 × 2.371, 8, 30)              =   8.0  %   (min floor binds)
 stopPrice  = 338.19 × (1 − 0.08)                    = 311.13
 
 candidates:
@@ -289,7 +317,9 @@ candidates:
 | FR-DATA-01 | The job **shall** run every 30 min, 13–21 UTC, Mon–Fri, and support manual dispatch | Must |
 | FR-DATA-02 | It **shall** read the universe from `universe.csv` and held tickers from `tickers.txt` | Must |
 | FR-DATA-03 | It **shall** exclude tickers with price `< $3` or ADV `< $5M` | Must |
-| FR-DATA-04 | ATR(14) **shall** be Wilder-smoothed; beta **shall** be 1y daily returns vs SPY | Must |
+| FR-DATA-04 | ATR(14) **shall** be computed from explicit OHLC True Range with **Wilder smoothing over the full ~1y series** — never from a vendor summary metric, never over a short window, and never as a simple mean of TR. Verified equal to textbook Wilder to 0.000% at ~250 bars; a 30-bar window drifts −4.3% to +4.3% and a simple TR mean differs by up to 15% (QBTS 1.4254 vs 1.6793) | Must |
+| FR-DATA-04a | Beta **shall** be 1y daily returns vs SPY, with the benchmark variance taken over the **same overlapping dates** as the covariance (see DEF-008) | Must |
+| FR-DATA-04b | The feed **shall** publish beta **as measured**, including zero and negative values, and **shall** omit the field only when beta could not be computed. Substitution policy lives solely in the page (FR-SIZE-12), so the two sides cannot half-apply it | Must |
 | FR-DATA-05 | It **shall** publish `quotes.json` for the full universe and `bars/{T}.json` only for `tickers.txt` entries | Must |
 | FR-DATA-06 | It **shall refuse to publish** if fewer than 100 tickers survive | Must |
 | FR-DATA-07 | It **shall** force-push a single-commit `data` branch, keeping snapshots out of `main` history | Must |
@@ -367,16 +397,28 @@ candidates:
 
 | **DEF-005** | *Fixed* | Capping the placed stop at 30% also capped the risk used for **sizing**, so every name above ~10% ATR received an identical position. Placing the order at 30% does not prevent the price falling 3× ATR. Sizing now uses the uncapped volatility-implied distance (floor applied, ceiling not); the order still sits at the ceiling. NBIS went from ₪30,000 to ₪18,170 | User |
 
-**No known open defects.** All five are covered by regression tests in `qa/defects.js`.
+| **DEF-006** | *Fixed* | Feed ATR was copied into the form via `.toFixed(2)`, discarding two of the four decimals the feed carries. 2,585 of 2,604 tickers were affected; 909 (34.9%) sized differently once corrected, 24 by more than 1%, worst ABEV at 3.05%. The extreme *relative* errors (TALK, 12.4%) did not move size because the 8% minimum stop floors them. Undetected by 108 assertions because every suite called `price()` directly and none exercised `fillFromFeed()` | User |
+| **DEF-007** | *Fixed* | The beta-exposure cap was applied only `if (beta > 0)`, so an absent or non-positive beta **removed** the constraint rather than tightening it — 278 of 2,604 tickers (10.7%). Two distinct cases were being conflated; see FR-SIZE-12/13. Latent rather than active: at the configured settings the risk-based or crash cap already bound tighter on every affected ticker, so no size actually changed | QA feed suite |
+| **DEF-008** | *Fixed* | `fetch_data.py` divided the covariance over the overlapping dates by the variance of the **full** SPY series, mixing two samples and skewing beta for any short-history ticker. Also rounded beta to 3dp, which turned a small positive beta into exactly `0.000` (TRI) and so read downstream as "no beta" | Code review |
+
+**No known open defects.** All eight are covered by regression tests in `qa/defects.js` and `qa/feed.js`.
 
 ---
 
 ## 10. Verification status
 
-An automated suite exists at `qa/` (**109 assertions, all passing** — run `qa/run_all.sh`, which treats a crashed suite as a failure rather than a silent zero). It covers invariants (monotonicity,
+An automated suite exists at `qa/` (**124 assertions, all passing** — run `qa/run_all.sh`, which treats a crashed suite as a failure rather than a silent zero). It covers invariants (monotonicity,
 continuity, bounds, scale invariance, metamorphic relations, ladder ordering), a
-full-universe sweep of ~2,600 tickers, edge and hostile inputs, a golden snapshot, regression tests for every documented defect, and
+full-universe sweep of ~2,600 tickers, edge and hostile inputs, a golden snapshot, regression tests for every documented defect, the
+**feed path** (`qa/feed.js`), and
 **parity between this tool and the `riskml` research simulator**.
+
+`qa/feed.js` exists because of DEF-006. Every other suite drives the calculator through
+`price(p, atr, beta)`, so no assertion had ever executed `fillFromFeed()` — the step that
+copies feed values into the form. A rounding bug there was invisible to 108 passing
+assertions. **A path with no test is not a path that works**, and the same reasoning
+should be applied to the gaps listed below. Note also that the feed arrives on a promise:
+an assertion that does not wait for it silently measures 2,604 empty lookups and passes.
 
 Parity is the only guard on the research → production link and has already caught one
 real regression (an unvalidated `minstop` change).

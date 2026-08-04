@@ -2,8 +2,20 @@
 # Runs every suite. A crash is a FAILURE, not a silent zero — an earlier version of this
 # loop reported "0 fail" while a whole file threw before its first assertion.
 set -u
+
+# sweep.js and feed.js need a real quotes.json. Fetch one if it is absent, rather than
+# letting two suites crash — the runner reports a crash as failure, but a developer who
+# has never fetched the feed reads it as a broken test rather than a missing input.
+Q="${QA_QUOTES:-/tmp/q.json}"
+if [ ! -f "$Q" ]; then
+  echo "  fetching quotes feed -> $Q"
+  curl -fsS -o "$Q" \
+    https://raw.githubusercontent.com/Asaf-12344321/risk-sizer/data/quotes.json \
+    || { echo "  COULD NOT FETCH $Q — sweep and feed will fail"; }
+fi
+
 tot=0; fail=0; crashed=""
-for s in invariants sweep edge golden defects ux; do
+for s in invariants sweep edge golden defects ux feed; do
   out=$(node "$s.js" 2>&1); rc=$?
   p=$(printf '%s' "$out" | grep -cE '^PASS'); q=$(printf '%s' "$out" | grep -c '^FAIL  ')
   if [ "$rc" -ne 0 ] && [ "$q" -eq 0 ]; then

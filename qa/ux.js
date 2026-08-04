@@ -1,7 +1,7 @@
 // Regressions for the four problems that only surfaced in real use on Safari.
 const { boot, ck, report } = require('./lib');
 const { JSDOM } = require('jsdom'); const fs = require('fs');
-const HTML = fs.readFileSync(__dirname + '/../risk-sizer.html', 'utf8');
+const HTML = require('./lib').HTML;   // resolves index.html or risk-sizer.html
 
 const t = boot();
 // ---- empty state: no half-rendered result cards before there is a result

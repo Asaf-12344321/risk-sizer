@@ -2,7 +2,7 @@
 const { boot, ck, report } = require('./lib');
 const CAP = +(process.env.QA_CAPITAL || 100000), RISK = +(process.env.QA_RISK || 1300);
 const { JSDOM } = require('jsdom'); const fs = require('fs');
-const HTML = fs.readFileSync(__dirname + '/../risk-sizer.html', 'utf8');
+const HTML = require('./lib').HTML;   // resolves index.html or risk-sizer.html
 
 // ---------- DEF-004: sub-dollar prices must not render a zero stop ----------
 const t = boot();

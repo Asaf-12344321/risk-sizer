@@ -57,9 +57,38 @@ def tracked():
 
 
 def wilder_atr(h, l, c, n=14):
+    """True Range from explicit OHLC, then Wilder's smoothing. Never Yahoo's summary
+    metrics — those are undocumented and were not reproducible.
+
+    `ewm(alpha=1/n, adjust=False)` seeds on TR[0] where textbook Wilder seeds on the
+    mean of the first n TRs. Verified identical to 0.000% on 10 tickers over the ~250-bar
+    series this is always called with: the seed's weight decays as (1-1/14)^k, which is
+    1.4e-8 by bar 250. Do not "fix" this.
+
+    Two things that look like improvements and are not:
+      - Shortening the window to ~30 bars. The seed no longer decays, so the result
+        drifts -4.3% to +4.3% against true Wilder (measured). It also breaks beta.
+      - A simple 14-bar mean of TR instead of Wilder. Differs by up to 15% on volatile
+        names (QBTS 1.4254 vs 1.6793) and no longer matches TradingView's default.
+    Keep the full ~1y window and Wilder smoothing.
+    """
     pc = c.shift(1)
     tr = pd.concat([h - l, (h - pc).abs(), (l - pc).abs()], axis=1).max(axis=1)
     return tr.ewm(alpha=1 / n, adjust=False, min_periods=n).mean().iloc[-1]
+
+
+# This file publishes beta as MEASURED and leaves policy to the page: `b` is present
+# only when a beta could actually be computed, and carries whatever value came out —
+# including zero or negative. Deciding what to divide by lives in one place
+# (betaForSizing in index.html) rather than being half-applied on each side.
+#
+# Betas <= 0 are common and usually real, not noise: ABBV -0.078, ADP -0.025, AEP
+# -0.038, TMUS -0.39 in the current window. Defensive dividend names genuinely
+# decouple from an SPY that a handful of tech names dominate. 253 of 2,604 tickers
+# sit at or below zero, and treating them as broken would misreport a real fact.
+# 4dp because 3 rounds a small positive beta to exactly 0.000 (TRI did), which then
+# reads downstream as "no beta at all".
+BETA_DP = 4
 
 
 def main():
@@ -79,10 +108,10 @@ def main():
     if isinstance(spy, pd.DataFrame):
         spy = spy.iloc[:, 0]
     spy_ret = spy.pct_change().dropna()
-    spy_var = float(spy_ret.var())
     print(f"benchmark SPY: {len(spy)} bars")
 
     quotes, bars_out, fails = {}, {}, 0
+    beta_est = 0
     for i in range(0, len(syms), BATCH):
         chunk = syms[i:i + BATCH]
         try:
@@ -104,17 +133,27 @@ def main():
                 atr = wilder_atr(sub.High, sub.Low, c)
                 if not np.isfinite(atr) or atr <= 0:
                     continue
+                # Beta against SPY from returns. Never ticker.info['beta']: that is one
+                # HTTP request per symbol (hours over 2,600 names) and is itself opaque.
+                # Variance of the benchmark must be taken over the SAME overlapping dates
+                # as the covariance — using the full SPY series as the denominator mixes
+                # two different samples and skews beta for any short-history ticker.
                 r = c.pct_change().dropna()
                 j = r.index.intersection(spy_ret.index)
                 beta = None
-                if len(j) > 120 and spy_var > 0:
-                    beta = float(np.cov(r.loc[j], spy_ret.loc[j])[0][1] / spy_var)
+                if len(j) > 120:
+                    sv = float(spy_ret.loc[j].var())
+                    if sv > 0:
+                        beta = float(np.cov(r.loc[j], spy_ret.loc[j])[0][1] / sv)
+
                 q = {"n": names.get(s, s)[:40], "l": round(last, 4),
                      "a": round(float(atr), 4), "v": int(adv),
                      "h": round(float(c.max()), 4), "o": round(float(c.min()), 4),
                      "d": sub.index[-1].strftime("%Y-%m-%d")}
                 if beta is not None and np.isfinite(beta):
-                    q["b"] = round(beta, 3)
+                    q["b"] = round(beta, BETA_DP)
+                else:
+                    beta_est += 1        # no `b` key: the page estimates from ATR%
                 quotes[s] = q
                 if s in keep:
                     tail = sub.tail(BARS_KEEP)
@@ -148,6 +187,9 @@ def main():
 
     qkb = os.path.getsize("out/quotes.json") / 1024
     print(f"\nquotes.json: {len(quotes):,} tickers, {qkb:.0f} KB")
+    nonpos = sum(1 for v in quotes.values() if v.get("b", 1) <= 0)
+    print(f"beta: {len(quotes)-beta_est:,} measured ({nonpos} of them <= 0, real and kept), "
+          f"{beta_est} not measurable — page estimates those from ATR%")
     print(f"bars/: {len(bars_out)} files")
     print(f"fx {fx} · skipped {fails} · {time.time()-t0:.0f}s total")
 

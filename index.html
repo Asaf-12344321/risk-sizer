@@ -553,11 +553,11 @@
         <div class="row2">
           <div class="field">
             <label for="in-price">Entry price</label>
-            <input type="number" inputmode="decimal" step="0.01" id="in-price" placeholder="0.00">
+            <input type="number" inputmode="decimal" step="any" id="in-price" placeholder="0.00">
           </div>
           <div class="field">
             <label for="in-atr">ATR (14)</label>
-            <input type="number" inputmode="decimal" step="0.01" id="in-atr" placeholder="0.00">
+            <input type="number" inputmode="decimal" step="any" id="in-atr" placeholder="0.00">
           </div>
         </div>
         <div class="row2">
@@ -860,6 +860,55 @@
     return price * (1 + armTriggerPct(price, atr) / 100);
   }
 
+  // ---- beta used for the beta-exposure cap.
+  //
+  // The cap was previously applied only `if (beta > 0)`. That guarded against dividing
+  // by a negative beta, but it did so by DROPPING the constraint — silently, and for
+  // 278 of 2,604 tickers (10.7%). Two quite different situations were being collapsed:
+  //
+  //   1. Beta measured, but <= 0. Usually REAL, not noise — ABBV -0.078, ADP -0.025,
+  //      TMUS -0.39. Defensive names genuinely decouple from a tech-dominated SPY.
+  //      A stock with no positive market co-movement adds no market exposure, so a
+  //      market-exposure cap SHOULD NOT bind on it: capital*pct/beta correctly tends to
+  //      infinity as beta approaches 0 from above. Beta is floored at BETA_MIN purely to
+  //      keep the arithmetic positive and finite; the cap then lands far above every
+  //      other candidate and the capital/crash/risk caps do the work, as they should.
+  //      Never call this "estimated" — the measurement succeeded.
+  //
+  //   2. Beta not measurable at all — under ~6 months of history. THIS is the real
+  //      hole: SHAZ (ATR 18%, ADV $141M) had no beta and therefore no cap, on exactly
+  //      the kind of name where it binds hardest. Estimate from ATR%, and disclose it.
+  //
+  // The estimate is fitted on the 2,579 tickers that do have a beta: regressing
+  // band-median beta on ATR% gives 0.235 + 0.232 x ATR%, corr 0.946. ATR% is the right
+  // predictor — it is measured reliably for every ticker, and Phase 2 found atr_pct
+  // alone outranked all 29 candidate features. Better than a flat 1.5, which would let
+  // SHAZ size to 26.7% of capital rather than 9.1%.
+  //
+  // The fit is clamped at BOTH ends, because it is only meaningful inside its support:
+  // ATR% roughly 1 to 20, and the highest beta measured anywhere in the universe is
+  // 5.40. Unclamped it reached beta 2.3e8 at ATR 1e9%, which drove the cap to ~0 and
+  // made the tool refuse to size anything. BETA_FIT_CAP 6.0 is where the line runs out
+  // of data (it crosses 6.0 near ATR 25%).
+  //
+  // riskml has no beta concept, so this function is the only home for the policy;
+  // fetch_data.py deliberately publishes beta as measured and decides nothing.
+  var BETA_FIT_A = 0.235, BETA_FIT_B = 0.232;
+  var BETA_FIT_FLOOR = 1.0, BETA_FIT_CAP = 6.0, BETA_MIN = 0.10;
+
+  function betaFallback(atrPct) {
+    if (!(atrPct > 0)) return BETA_FIT_FLOOR;
+    return clamp(BETA_FIT_A + BETA_FIT_B * atrPct, BETA_FIT_FLOOR, BETA_FIT_CAP);
+  }
+
+  // `measured` says whether a beta was actually obtained — from the feed, or typed in.
+  // That is what separates case 1 from case 2; the sign alone cannot.
+  function betaForSizing(beta, atrPct, measured) {
+    if (beta > 0) return { beta: beta, mode: "measured", shown: beta };
+    if (measured && isFinite(beta)) return { beta: BETA_MIN, mode: "nonpositive", shown: beta };
+    return { beta: betaFallback(atrPct), mode: "estimated", shown: null };
+  }
+
   function bandFor(atrPct) {
     var name = atrPct < 1.5 ? "very calm" : atrPct < 2.5 ? "calm"
              : atrPct < 4.0 ? "active" : atrPct < 6.0 ? "volatile"
@@ -983,7 +1032,8 @@
   var inPrice = el("in-price"), inCcy = el("in-ccy"), inFx = el("in-fx"), fxField = el("fx-field");
   var inAtr = el("in-atr"), inBeta = el("in-beta");
   // Values that used to be typed in. Filled from the feed, never shown as fields.
-  var extra = { name: null, avgvol: null, h52: null, l52: null, asOf: null, last: null };
+  var extra = { name: null, avgvol: null, h52: null, l52: null, asOf: null, last: null,
+                betaMeasured: false };
 
   var outSize = el("out-size"), outShares = el("out-shares");
   var outSizeFormula = el("out-size-formula");
@@ -1043,7 +1093,9 @@
     cand["risk-based"] = riskBudget / (riskStopPct / 100);
     cand["crash cap"] = cfg.breakbudget / (band.gap / 100);
     cand["capital cap"] = cfg.capital * (cfg.maxpct / 100);
-    if (beta > 0) cand["beta cap"] = (cfg.capital * (cfg.betaexpct / 100)) / beta;
+    // Always applied. An unmeasurable beta is estimated from ATR%, never skipped.
+    var bs = betaForSizing(beta, atrPct, extra.betaMeasured);
+    cand["beta cap"] = (cfg.capital * (cfg.betaexpct / 100)) / bs.beta;
     if (extra.avgvol > 0) {
       var dv = toNis(extra.avgvol * price, inCcy.value, fx);
       if (dv) cand["liquidity cap"] = dv * (cfg.liqpct / 100);
@@ -1076,7 +1128,10 @@
       var detail = k === "risk-based" ? nis(riskBudget) + " ÷ " + pct(stopPct) + " stop"
         : k === "crash cap" ? nis(cfg.breakbudget) + " ÷ " + band.gap.toFixed(1) + "% crash"
         : k === "capital cap" ? cfg.maxpct + "% of capital"
-        : k === "beta cap" ? cfg.betaexpct + "% ÷ beta " + beta.toFixed(2)
+        : k === "beta cap" ? cfg.betaexpct + "% ÷ beta " + bs.beta.toFixed(2)
+            + (bs.mode === "estimated" ? " (estimated from ATR — beta not measurable)"
+             : bs.mode === "nonpositive" ? " (measured beta " + bs.shown.toFixed(2)
+                 + " ≤ 0, floored — no market exposure to cap)" : "")
         : cfg.liqpct + "% of daily volume";
       return '<span class="cand' + (k === binding ? " is-binding" : "") + '">'
         + (k === binding ? "▸ " : "· ") + k + " " + nis(cand[k]) + " (" + detail + ")</span>";
@@ -1125,6 +1180,12 @@
         + "<span>" + f[1] + "</span></div>";
     }).join("");
   }
+
+  // Typing a beta by hand is itself a measurement being asserted; clearing the field
+  // withdraws it and hands the decision back to the ATR-based estimate.
+  inBeta.addEventListener("input", function () {
+    extra.betaMeasured = isFinite(parseFloat(inBeta.value));
+  });
 
   [inPrice, inCcy, inFx, inAtr, inBeta].forEach(function (input) {
     input.addEventListener("input", recalc);
@@ -1226,7 +1287,8 @@
     if (!feed || !feed.tickers) return null;
     var q = feed.tickers[String(sym).trim().toUpperCase()];
     if (!q) return null;
-    return { name: q.n, last: q.l, atr: q.a, beta: q.b, avgvol: q.v,
+    return { name: q.n, last: q.l, atr: q.a, beta: q.b,
+             betaMeasured: typeof q.b === "number" && isFinite(q.b), avgvol: q.v,
              h52: q.h, l52: q.o, asOf: q.d, ccy: "USD" };
   }
 
@@ -1260,8 +1322,15 @@
     inCcy.dispatchEvent(new Event("change"));
     if (feed.fx) inFx.value = feed.fx;
     inPrice.value = t.last;
-    inAtr.value = t.atr ? t.atr.toFixed(2) : "";
-    inBeta.value = t.beta ? t.beta : "";
+    // Do NOT round to 2dp here. The feed carries 4, and on a low-priced name the two
+    // discarded digits are a real error: TALK (ATR 0.0178) became 0.02, a 12.4% ATR
+    // overstatement; 120 of 2,604 tickers were off by more than 1%. That error flows
+    // straight into the stop distance and from there ~1:1 into the position size.
+    inAtr.value = t.atr > 0 ? String(t.atr) : "";
+    // Carry the measured beta through verbatim, negative included — it is the truth and
+    // the reasoning line explains it. Blank only when nothing was measurable.
+    inBeta.value = t.betaMeasured ? String(t.beta) : "";
+    extra.betaMeasured = !!t.betaMeasured;
     extra.name = t.name || null;
     extra.avgvol = t.avgvol || null;
     extra.h52 = t.h52 || null;
@@ -1275,10 +1344,14 @@
 
     var a = parseFloat(inAtr.value), pxx = parseFloat(inPrice.value);
     var bnd = (a > 0 && pxx > 0) ? bandFor(a / pxx * 100) : null;
+    var shownBeta = (a > 0 && pxx > 0)
+      ? betaForSizing(t.beta, a / pxx * 100, t.betaMeasured) : null;
     stockLine.innerHTML = "<b>" + esc(sym) + "</b>" + (t.name ? " " + esc(t.name) : "")
       + " · <b>" + px(t.last) + "</b> close " + (extra.asOf || "")
-      + (a > 0 ? " · ATR <b>" + a.toFixed(2) + "</b> (" + (a / pxx * 100).toFixed(1) + "%)" : "")
-      + (t.beta ? " · beta " + t.beta.toFixed(2) : "")
+      + (a > 0 ? " · ATR <b>" + px(a) + "</b> (" + (a / pxx * 100).toFixed(1) + "%)" : "")
+      + (shownBeta ? " · beta "
+          + (shownBeta.shown !== null ? shownBeta.shown.toFixed(2)
+             : shownBeta.beta.toFixed(2) + " <i>(est)</i>") : "")
       + (bnd ? " · <b>" + bnd.name + "</b>, assuming a " + bnd.gap.toFixed(1) + "% crash" : "");
     el("feedStatus").textContent = "";
   }
