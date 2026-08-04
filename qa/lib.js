@@ -1,8 +1,9 @@
 // Shared harness: boot the real page in jsdom and drive it like a user.
 const { JSDOM } = require('jsdom'); const fs = require('fs');
-// The tool ships as index.html in the deploy repo and risk-sizer.html in trading-tools;
-// the two are kept byte-identical. Resolve either, so run_all.sh works in both places
-// instead of crashing on a missing path — a crash the runner reports as zero tests.
+// The tool ships as index.html. The risk-sizer.html fallback dates from when a second
+// working copy lived in ~/trading-tools; that directory was consolidated away on
+// 2026-08-04, but the fallback stays so a clone under either name still runs rather than
+// crashing on a missing path — a crash the runner would report as zero tests.
 const HTML_PATH = process.env.QA_HTML || [
   __dirname + '/../risk-sizer.html',
   __dirname + '/../index.html',
