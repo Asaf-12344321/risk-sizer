@@ -280,6 +280,9 @@ candidates:
 | FR-FLAG-02 | Flags that change a decision **shall** be coloured; context-only flags **shall** be neutral grey | Should |
 | FR-FLAG-03 | A drawdown greater than `drawdown`% below the 52-week high **shall** produce a neutral note | Should |
 | FR-FLAG-04 | The app **shall not** warn against high-RSI or extended entries — falsified on 271,464 trades (E[R] flat; RSI>70 marginally better) | Must |
+| FR-FLAG-05 | When a ticker has been looked up, an ATR differing from the fetched daily ATR by more than `FEED_ATR_TOLERANCE` (40%) **shall** be flagged as a likely **intraday** value, naming the fetched figure and the approximate factor. The check **shall** be suppressed once entry price departs the quoted close by more than 25%, since the figures then belong to a different stock | Must |
+| FR-FLAG-06 | With no lookup to compare against, an ATR below `ATR_PCT_IMPLAUSIBLE` (0.3% of price) **shall** carry the same warning. The threshold **shall** sit below the lowest daily ATR% measured anywhere in the universe (0.319%, DBRG) so it can never fire on a genuine value — 7 real tickers sit between 0.3% and 0.5% | Must |
+| FR-FLAG-07 | Neither check **shall** fire on a manual override within ±19%, the largest legitimate disagreement between Wilder and simple-mean ATR | Must |
 
 ### 5.8 Position tracking — `FR-POS`
 
@@ -401,13 +404,15 @@ candidates:
 | **DEF-007** | *Fixed* | The beta-exposure cap was applied only `if (beta > 0)`, so an absent or non-positive beta **removed** the constraint rather than tightening it — 278 of 2,604 tickers (10.7%). Two distinct cases were being conflated; see FR-SIZE-12/13. Latent rather than active: at the configured settings the risk-based or crash cap already bound tighter on every affected ticker, so no size actually changed | QA feed suite |
 | **DEF-008** | *Fixed* | `fetch_data.py` divided the covariance over the overlapping dates by the variance of the **full** SPY series, mixing two samples and skewing beta for any short-history ticker. Also rounded beta to 3dp, which turned a small positive beta into exactly `0.000` (TRI) and so read downstream as "no beta" | Code review |
 
-**No known open defects.** All eight are covered by regression tests in `qa/defects.js` and `qa/feed.js`.
+| **DEF-009** | *Fixed* | Nothing detected an **intraday** ATR typed in place of a daily one. Yahoo Finance computes chart indicators on whatever bars it displays, and its **“1D” range shows 1-minute bars**: NVDA read 0.27 there against a true daily 7.47, INTC 0.17 vs 8.62, IREN 0.11 vs 4.58 — verified against 1-minute downloads. The failure was silent and severe: below ~0.5% ATR the min-stop floor and lowest crash anchor both bind, so unlike names collapse to an **identical** size (the DEF-001 signature from bad input). IREN would have been sized ₪15,818 against a correct ₪4,176 — 3.8× too large, with an 8% stop where it needs 30%. See FR-FLAG-05/06/07 | User |
+
+**No known open defects.** All nine are covered by regression tests in `qa/defects.js` and `qa/feed.js`.
 
 ---
 
 ## 10. Verification status
 
-An automated suite exists at `qa/` (**124 assertions, all passing** — run `qa/run_all.sh`, which treats a crashed suite as a failure rather than a silent zero). It covers invariants (monotonicity,
+An automated suite exists at `qa/` (**134 assertions, all passing** — run `qa/run_all.sh`, which treats a crashed suite as a failure rather than a silent zero). It covers invariants (monotonicity,
 continuity, bounds, scale invariance, metamorphic relations, ladder ordering), a
 full-universe sweep of ~2,600 tickers, edge and hostile inputs, a golden snapshot, regression tests for every documented defect, the
 **feed path** (`qa/feed.js`), and

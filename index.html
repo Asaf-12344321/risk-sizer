@@ -893,6 +893,19 @@
   //
   // riskml has no beta concept, so this function is the only home for the policy;
   // fetch_data.py deliberately publishes beta as measured and decides nothing.
+  // Lowest daily ATR% anywhere in the 2,606-ticker universe is 0.319% (DBRG), with 7 real
+  // names between 0.3% and 0.5% (EA, AES, GBTG, OGN, TWO, TALK). The threshold sits at
+  // 0.3% so it can NEVER fire on a genuine daily ATR — a red flag on EA's real volatility
+  // would be exactly the kind of false output that erodes trust in the whole number.
+  // This is only the backstop for hand entry; the precise check is FEED_ATR_TOLERANCE.
+  var ATR_PCT_IMPLAUSIBLE = 0.3;
+
+  // When a ticker was looked up we know its true daily ATR, so we can compare directly
+  // instead of guessing from magnitude. Intraday readings are 28-51x too small (96-98%
+  // below), while legitimate disagreement — TradingView's simple-mean vs Wilder — tops
+  // out near 19%. 40% separates those two by a wide margin in both directions.
+  var FEED_ATR_TOLERANCE = 0.4;
+
   var BETA_FIT_A = 0.235, BETA_FIT_B = 0.232;
   var BETA_FIT_FLOOR = 1.0, BETA_FIT_CAP = 6.0, BETA_MIN = 0.10;
 
@@ -1033,7 +1046,7 @@
   var inAtr = el("in-atr"), inBeta = el("in-beta");
   // Values that used to be typed in. Filled from the feed, never shown as fields.
   var extra = { name: null, avgvol: null, h52: null, l52: null, asOf: null, last: null,
-                betaMeasured: false };
+                betaMeasured: false, feedAtr: null, feedSym: null };
 
   var outSize = el("out-size"), outShares = el("out-shares");
   var outSizeFormula = el("out-size-formula");
@@ -1162,6 +1175,35 @@
 
     // ---- at most two flags, and only when they change a decision
     var flags = [];
+    // An ATR this small cannot be a DAILY ATR. Across 2,606 liquid US tickers the lowest
+    // measured is 0.32% of price (DBRG), and only 7 sit below 0.5%. A value under the
+    // floor almost always means an INTRADAY reading: Yahoo's chart computes ATR on
+    // whatever bars it is showing, and its "1D" range shows 1-MINUTE bars — which gave
+    // NVDA 0.27 against a true daily 7.47, INTC 0.17 against 8.62, IREN 0.11 against 4.58.
+    //
+    // This has to be caught loudly, because the failure is silent and large. Below ~0.5%
+    // every name looks "very calm", so the min-stop floor and the lowest crash anchor
+    // both bind and unlike stocks collapse to an IDENTICAL size — the DEF-001 signature,
+    // from bad input rather than bad code. IREN would have been sized ₪15,818 instead of
+    // ₪4,176, nearly 4x too large, with an 8% stop where it needs 30%.
+    // Only trust the stored reference while the price still looks like the same quote.
+    // Entry price legitimately drifts from the last close when planning a limit order, so
+    // allow 25%; beyond that the numbers on screen belong to a different stock and
+    // comparing their ATR would raise a false alarm.
+    var samePrice = extra.last > 0 && Math.abs(price - extra.last) / extra.last <= 0.25;
+    var feedRef = (extra.feedAtr > 0 && extra.feedSym && samePrice) ? extra.feedAtr : null;
+    if (feedRef && Math.abs(atr - feedRef) / feedRef > FEED_ATR_TOLERANCE) {
+      flags.push(["bad", "ATR " + px(atr) + " does not match the daily ATR fetched for "
+        + extra.feedSym + " (" + px(feedRef) + "). A Yahoo chart set to “1D” measures "
+        + "ATR on 1-minute bars, not days — that reads about "
+        + (feedRef / atr).toFixed(0) + "x too small here. Clear the field to restore "
+        + px(feedRef) + "."]);
+    } else if (!feedRef && atrPct > 0 && atrPct < ATR_PCT_IMPLAUSIBLE) {
+      flags.push(["bad", "ATR is only " + atrPct.toFixed(2) + "% of price. No liquid US "
+        + "stock has a daily ATR that small (the calmest is ~0.3%), so this is probably an "
+        + "intraday reading — a Yahoo chart on “1D” measures 1-minute bars. Use a "
+        + "daily chart, or look the ticker up instead of typing it."]);
+    }
     if (rawStopPct > cfg.maxstop + 0.01) {
       flags.push(["bad", "Too volatile to stop cleanly. ATR is " + atrPct.toFixed(1)
         + "% of price, so a proper stop would sit " + pct(rawStopPct)
@@ -1331,6 +1373,8 @@
     // the reasoning line explains it. Blank only when nothing was measurable.
     inBeta.value = t.betaMeasured ? String(t.beta) : "";
     extra.betaMeasured = !!t.betaMeasured;
+    extra.feedAtr = t.atr > 0 ? t.atr : null;
+    extra.feedSym = sym;
     extra.name = t.name || null;
     extra.avgvol = t.avgvol || null;
     extra.h52 = t.h52 || null;

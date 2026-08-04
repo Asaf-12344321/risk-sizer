@@ -115,5 +115,50 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   ck('a measured beta is used exactly as given',
      /÷ beta 1\.00/.test(h.formula()), (/beta cap[^)]*\)/.exec(h.formula()) || [''])[0]);
 
+  // ---- intraday ATR mistaken for daily ----
+  // Yahoo's chart computes ATR on whatever bars it displays, and its "1D" range shows
+  // 1-MINUTE bars: NVDA read 0.27 there against a true daily 7.47, INTC 0.17 vs 8.62,
+  // IREN 0.11 vs 4.58 (verified against 1m downloads). Typing one in silently oversizes,
+  // and because everything below ~0.5% ATR looks "very calm" the min-stop floor and the
+  // lowest crash anchor both bind, so unlike names collapse to an identical size.
+  // Primary check: after a lookup we know the true daily ATR, so an edited field is
+  // compared against it directly rather than guessed at from magnitude.
+  const CHART = { NVDA: 0.27, INTC: 0.17, IREN: 0.11 };
+  for (const s of Object.keys(CHART)) {
+    if (!quotes[s]) continue;
+    t.lookup(s);
+    ck(`${s}: the fetched daily ATR itself is never flagged`,
+       !/does not match the daily ATR/.test(t.flags()), t.flags().slice(0, 60) || '(clean)');
+    t.set('in-atr', String(CHART[s]));
+    ck(`${s}: chart ATR ${CHART[s]} is caught against fetched ${quotes[s].a}`,
+       /does not match the daily ATR/.test(t.flags()), t.flags().slice(0, 80) || '(no flag)');
+  }
+
+  // It must NOT fire on legitimate disagreement — TradingView's simple-mean vs Wilder
+  // differs by up to 19% on volatile names, which is a real reason to override by hand.
+  t.lookup('IREN');
+  for (const f of [0.85, 1.19]) {
+    t.set('in-atr', (quotes.IREN.a * f).toFixed(4));
+    ck(`IREN: a ${Math.round((f-1)*100)}% manual override is allowed, not flagged`,
+       !/does not match the daily ATR/.test(t.flags()), t.flags().slice(0, 60) || '(clean)');
+  }
+
+  // Backstop, for hand entry with no lookup: must never fire on a real daily ATR.
+  // 7 real tickers sit between 0.3% and 0.5%, so the floor is 0.3%, below the 0.319%
+  // minimum measured anywhere in the universe.
+  const g2 = boot(); await wait(50);
+  let falsePos = [];
+  for (const s of Object.keys(quotes)) {
+    const apct = quotes[s].a / quotes[s].l * 100;
+    if (apct >= 0.6) continue;
+    g2.price(quotes[s].l, quotes[s].a, 1.0);          // hand entry: no lookup, no reference
+    if (/probably an intraday reading/.test(g2.flags())) falsePos.push(`${s} ${apct.toFixed(3)}%`);
+  }
+  ck('hand-entry backstop never fires on a real daily ATR',
+     falsePos.length === 0, falsePos.length ? falsePos.join(', ') : 'checked every ticker under 0.6%');
+  g2.price(200.75, 0.27, 1.0);
+  ck('hand-entry backstop does catch an intraday ATR with no lookup',
+     /probably an intraday reading/.test(g2.flags()), g2.flags().slice(0, 70) || '(no flag)');
+
   report('FEED PATH');
 })();
