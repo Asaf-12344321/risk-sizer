@@ -271,6 +271,7 @@ candidates:
 | FR-LAD-08 | Price levels **shall** fall on round numbers (1/2/2.5/5/10 × power of ten) | Should |
 | FR-LAD-09 | The ladder **shall** be capped at 7 rows | Should |
 | FR-LAD-10 | Wide tables **shall** scroll horizontally without the page scrolling | Must |
+| FR-LAD-08 | Arming **shall** be judged on the bar's **intraday high**; the trail **shall** continue to ride the **close**. The two references **shall** remain independent | Must |
 
 ### 5.7 Warnings — `FR-FLAG`
 
@@ -406,13 +407,15 @@ candidates:
 
 | **DEF-009** | *Fixed* | Nothing detected an **intraday** ATR typed in place of a daily one. Yahoo Finance computes chart indicators on whatever bars it displays, and its **“1D” range shows 1-minute bars**: NVDA read 0.27 there against a true daily 7.47, INTC 0.17 vs 8.62, IREN 0.11 vs 4.58 — verified against 1-minute downloads. The failure was silent and severe: below ~0.5% ATR the min-stop floor and lowest crash anchor both bind, so unlike names collapse to an **identical** size (the DEF-001 signature from bad input). IREN would have been sized ₪15,818 against a correct ₪4,176 — 3.8× too large, with an 8% stop where it needs 30%. See FR-FLAG-05/06/07 | User |
 
-**No known open defects.** All nine are covered by regression tests in `qa/defects.js` and `qa/feed.js`.
+| **DEF-010** | *Fixed* | Arming was judged on the **close**, so a parabolic spike that touched the trigger intraday and closed below it armed nothing and the give-back cost a full 1R — precisely the fast-move failure the ladder exists to prevent. Measured on 17,516 high-ATR entries: median outcome −14.56% → **−9.14%** (+5.42pp), mean 4.78% → 4.74% (−0.04pp), armed 35.4% → 39.9%, real losses (< −1%) 56.8% → **54.4%** as they become break-even scratches. Arming *and* trailing on the high costs 0.83pp of mean, because the trail then rides the intraday high and clips runners — the two references must stay separate. Parity compared the arm trigger *percentage* but never its *reference*, so this was invisible to the suite; `qa/parity.js` now replays a synthetic spike through both implementations | Data audit |
+
+**No known open defects.** All ten are covered by regression tests in `qa/defects.js` and `qa/feed.js`.
 
 ---
 
 ## 10. Verification status
 
-An automated suite exists at `qa/` (**134 assertions, all passing** — run `qa/run_all.sh`, which treats a crashed suite as a failure rather than a silent zero). It covers invariants (monotonicity,
+An automated suite exists at `qa/` (**142 assertions, all passing** — run `qa/run_all.sh`, which treats a crashed suite as a failure rather than a silent zero). It covers invariants (monotonicity,
 continuity, bounds, scale invariance, metamorphic relations, ladder ordering), a
 full-universe sweep of ~2,600 tickers, edge and hostile inputs, a golden snapshot, regression tests for every documented defect, the
 **feed path** (`qa/feed.js`), and

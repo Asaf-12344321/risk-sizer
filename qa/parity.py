@@ -20,7 +20,29 @@ for price, atr in CASES:
     out.append({"price": price, "atr": atr,
                 "py_stop": round(initial_stop(price, atr, P), 6),
                 "py_arm_trigger_pct": round(arm_trig, 4)})
+
+# ---- arming reference: a spike that TOUCHES the trigger but CLOSES below it -----------
+# This is the parabolic give-back case. If the two implementations disagree on whether it
+# arms, the tool protects a real position differently from the rule that was validated.
+from riskml.sim.ladder import simulate
+import numpy as np
+def spike_case(price, atr):
+    trig = max(P.arm_floor_pct, P.arm_atr_mult * (atr / price * 100.0))
+    hi = price * (1 + (trig + 1.0) / 100.0)      # high clears the trigger by 1pp
+    cl = price * (1 + (trig - 5.0) / 100.0)      # close falls 5pp short of it
+    # day 1: the spike. days 2-5: quiet drift, never near the stop.
+    fwd = [[price, hi, price * 0.99, cl]]
+    for _ in range(4):
+        fwd.append([cl, cl * 1.005, cl * 0.99, cl])
+    o = simulate(price, atr, np.array(fwd, dtype=float), P)
+    return {"price": price, "atr": atr, "spike_high": round(hi, 6),
+            "spike_close": round(cl, 6), "arm_trigger_pct": round(trig, 4),
+            "py_armed": bool(o.armed), "py_stop_at_end": round(o.exit_price, 6)
+            if o.exit_idx >= 0 else None}
+SPIKES = [spike_case(p, a) for p, a in CASES[:4]]
+
 print(json.dumps({"params": {"init": P.init_atr_mult, "trail": P.trail_atr_mult,
                              "arm": P.arm_floor_pct, "armatrmult": P.arm_atr_mult,
+                             "arm_on_close": P.arm_on_close,
                              "min": P.min_stop_pct, "max": P.max_stop_pct},
-                  "cases": out}))
+                  "cases": out, "spikes": SPIKES}))

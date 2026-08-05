@@ -19,16 +19,26 @@ const D_MAXSPEC = +(process.env.QA_MAXSPEC || 6000);
 const D_RISK    = +(process.env.QA_RISK    || 1300);
 
 function boot({ capital = D_CAPITAL, maxspec = D_MAXSPEC, riskabs = D_RISK,
-                quotes = QUOTES, positions = null } = {}) {
+                quotes = QUOTES, positions = null, bars = {} } = {}) {
   const feed = fs.existsSync(quotes) ? fs.readFileSync(quotes, 'utf8') : null;
   const store = {};
   if (positions) { store['riskSizerPositions_v4'] = JSON.stringify(positions); }
+  const barsFixture = bars;
   const dom = new JSDOM(HTML, { runScripts: 'dangerously', url: 'https://qa.local/',
     beforeParse(w) {
       for (const k in store) w.localStorage.setItem(k, store[k]);
-      w.fetch = (u) => (feed && /quotes\.json/.test(u))
-        ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(JSON.parse(feed)) })
-        : Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve(null) });
+      // bars/<SYM>.json is served from `barsFixture` when a test sets one. Without this the
+      // position tracker's replay path (liveState) is unreachable, which is how the
+      // close-vs-high arming reference went untested on both sides.
+      w.fetch = (u) => {
+        if (feed && /quotes\.json/.test(u))
+          return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(JSON.parse(feed)) });
+        const m = /bars\/([^./]+)\.json/.exec(String(u));
+        if (m && barsFixture[m[1]])
+          return Promise.resolve({ ok: true, status: 200,
+            json: () => Promise.resolve({ s: m[1], bars: barsFixture[m[1]] }) });
+        return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve(null) });
+      };
     } });
   const w = dom.window, $ = (id) => w.document.getElementById(id);
   const set = (id, v) => { const n = $(id); n.value = v;
