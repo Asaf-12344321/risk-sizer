@@ -863,6 +863,163 @@
     @keyframes result-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
   }
 
+  /* Approved Stitch screen: Risk-Sizer Desktop Terminal. */
+  .result-terminal-empty {
+    min-height: 300px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    background: #1b2021;
+  }
+  .terminal-empty-copy { max-width: 420px; }
+  .terminal-status { color: var(--accent); font: 700 9px/1 var(--font-mono); letter-spacing: .14em; }
+  .terminal-status i { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
+  .terminal-empty-copy strong { display: block; margin: 18px 0 10px; font-size: clamp(26px, 4vw, 48px); letter-spacing: -.045em; }
+  .terminal-empty-copy p { max-width: 38ch; color: #8d999a; font-size: 13px; line-height: 1.6; }
+  .terminal-empty-ring {
+    width: 178px; height: 178px; flex: 0 0 auto; border-radius: 50%; display: grid; place-items: center;
+    background: radial-gradient(circle at center, #1b2021 61%, transparent 62%), conic-gradient(#08e9a0 0 28%, transparent 28% 48%, #10e2ef 48% 92%, transparent 92%);
+    filter: drop-shadow(0 0 18px rgba(10,231,203,.08));
+  }
+  .terminal-empty-ring span { grid-area: 1/1; color: #0de3e9; font: 700 24px/1 var(--font-mono); }
+  .terminal-empty-ring small { grid-area: 1/1; align-self: end; margin-bottom: 54px; color: #a9b5b5; font: 700 8px/1.4 var(--font-mono); letter-spacing: .08em; }
+  .summary-strip { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; }
+  .summary-strip > div { min-height: 74px; padding: 15px; border: 1px solid rgba(255,255,255,.04); border-radius: 10px; background: #1c2021; }
+  .summary-strip span { display: block; margin-bottom: 6px; color: #aab5b6; font-size: 11px; }
+  .summary-strip strong { color: #eef5f5; font: 600 18px/1 var(--font-mono); }
+  .summary-strip .loss { border-color: rgba(255,117,110,.23); background: rgba(42,20,20,.48); }
+  .summary-strip .loss strong { color: #ff9b94; }
+  .summary-strip .good { border-color: rgba(0,235,151,.2); background: rgba(4,39,27,.48); }
+  .summary-strip .good strong { color: #08e99b; }
+
+  @media (min-width: 780px) {
+    html { background: #171b1c; }
+    body {
+      padding: 10px;
+      background-color: #171b1c;
+      background-image: radial-gradient(rgba(162,177,177,.22) .8px, transparent .8px);
+      background-size: 14px 14px;
+    }
+    body::before { display: none; }
+    .shell {
+      max-width: 1360px;
+      min-height: calc(100dvh - 20px);
+      margin: 0 auto;
+      padding: 0 36px 34px;
+      gap: 0;
+      border: 1px solid #839090;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #0e1314;
+      box-shadow: 0 28px 90px rgba(0,0,0,.34);
+    }
+    .app-header {
+      height: 68px;
+      margin: 0 -36px;
+      padding: 0 36px;
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid rgba(255,255,255,.045);
+      background: #151a1b;
+    }
+    .brand-row { width: 100%; align-items: center; }
+    .eyebrow, .tagline, .rules-strip { display: none; }
+    .wordmark { gap: 0; }
+    .wordmark .mark { display: none; }
+    h1 { font-size: 20px; font-weight: 700; letter-spacing: -.04em; color: #d9f6f2; }
+    .privacy-state { color: #aab6b7; }
+    #appBody { position: static; }
+    .tabs {
+      position: absolute;
+      z-index: 5;
+      top: 0;
+      left: 190px;
+      width: 260px;
+      height: 68px;
+      padding: 0;
+      gap: 8px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+    .tab-btn {
+      height: 68px;
+      padding: 0 18px;
+      border: 0 !important;
+      border-bottom: 2px solid transparent !important;
+      border-radius: 0;
+      background: transparent !important;
+      color: #adb8b9;
+      font-size: 13px;
+      box-shadow: none !important;
+    }
+    .tab-btn[aria-selected="true"] { border-bottom-color: #d7ecea !important; color: #f4fafa; }
+    #calcPanel {
+      display: grid;
+      grid-template-columns: 324px minmax(0,1fr);
+      grid-template-rows: auto auto;
+      gap: 20px 28px;
+      margin-top: 0;
+      padding-top: 28px;
+    }
+    .card { border-radius: 10px; background: #1c2021; border-color: rgba(255,255,255,.055); box-shadow: none; }
+    .lookup-card { grid-column: 1; grid-row: 1 / span 2; min-height: 590px; padding: 22px; }
+    .lookup-card .card-heading { display: block; padding-bottom: 14px; border-bottom: 1px solid rgba(255,255,255,.07); }
+    .lookup-card .section-label { font-size: 20px; letter-spacing: -.025em; text-transform: none; }
+    .lookup-card .card-heading p { display: none; }
+    .live-calc { float: right; margin-top: -22px; font-size: 0; }
+    .live-calc::after { content: "↻"; color: #bec9c9; font-size: 19px; }
+    .live-calc i { display: none; }
+    .lookup-row { margin-top: 20px; }
+    .lookup-row input { min-width: 0; }
+    .lookup-row .primary-btn { min-width: 72px; }
+    .stock-line { min-height: 0; padding: 10px 12px; font-size: 11px; }
+    .manual { margin-top: 16px; }
+    .manual summary { color: #aebabb; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+    .manual-body { padding-top: 14px; }
+    .row2 { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .field label { font-size: 10px; color: #aeb9ba; }
+    .field input, .field select { min-height: 40px; border-radius: 7px; background: #171c1d; text-align: right; font-family: var(--font-mono); }
+    .result-terminal-empty, .result-card { grid-column: 2; grid-row: 1; min-height: 340px; padding: 28px; position: static; }
+    .result-card { position: relative; background: #1c2021; }
+    .result-kicker { color: #11e6ef; }
+    .answer-hero { min-height: 190px; align-items: center; }
+    .answer-num { font-size: clamp(44px,6vw,64px); letter-spacing: .08em; text-shadow: 0 0 18px rgba(16,226,236,.13); }
+    .result-card .answer.alt { display: none; }
+    .risk-orbit { width: 176px; height: 176px; border: 13px solid transparent; background: radial-gradient(circle,#1c2021 59%,transparent 60%), conic-gradient(#0be99b 0 29%,transparent 29% 48%,#10e1eb 48% 91%,transparent 91%); }
+    .risk-orbit::before { display: none; }
+    .result-card .why { position: absolute; left: 28px; bottom: 86px; border: 0; }
+    .result-card .add-row {
+      position: absolute;
+      left: 28px;
+      right: 28px;
+      bottom: 20px;
+      display: grid;
+      grid-template-columns: minmax(0,1fr) 190px;
+      align-items: end;
+      gap: 12px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(255,255,255,.055);
+    }
+    .result-card .add-row .field { margin: 0; }
+    .result-card .add-row input { min-height: 40px; }
+    .result-card .add-row .primary-btn { min-height: 40px; }
+    .summary-strip { grid-column: 2; grid-row: 2; }
+    #ladderCard { grid-column: 1 / 3; margin-top: 18px; }
+    .ladder th, .ladder td { padding: 13px 20px; }
+    details.settings { margin-top: 24px; }
+    footer.note { max-width: none; padding: 16px 0 0; font-size: 10px; }
+  }
+
+  @media (max-width: 779px) {
+    .result-terminal-empty { min-height: 260px; padding: 20px; }
+    .terminal-empty-ring { width: 108px; height: 108px; }
+    .terminal-empty-ring small { margin-bottom: 28px; }
+    .summary-strip { grid-template-columns: 1fr 1fr; }
+  }
+
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -872,15 +1029,15 @@
   <header class="app-header">
     <div class="brand-row">
       <div>
-        <div class="eyebrow">Position &amp; exit discipline</div>
+        <div class="eyebrow">Tactical risk terminal</div>
         <div class="wordmark">
           <span class="mark" aria-hidden="true"></span>
-          <h1>Risk Sizer</h1>
+          <h1>RISK-SIZER</h1>
         </div>
       </div>
       <div class="privacy-state"><span aria-hidden="true"></span> Local &amp; private</div>
     </div>
-    <p class="tagline">Know the size. Set the stop. Follow the rule.</p>
+    <p class="tagline">Calculator&nbsp;&nbsp;&nbsp; Portfolio&nbsp;&nbsp;&nbsp; Rules</p>
     <div class="rules-strip" id="rulesStrip"></div>
   </header>
 
@@ -905,8 +1062,8 @@
   <div id="appBody" hidden>
 
   <div class="tabs" role="tablist">
-    <button class="tab-btn" role="tab" id="tab-calc" aria-selected="true">Size a trade</button>
-    <button class="tab-btn" role="tab" id="tab-pos" aria-selected="false">My positions <span id="posCount"></span></button>
+    <button class="tab-btn" role="tab" id="tab-calc" aria-selected="true">Calculator</button>
+    <button class="tab-btn" role="tab" id="tab-pos" aria-selected="false">Portfolio <span id="posCount"></span></button>
   </div>
 
   <div id="posPanel" hidden>
@@ -926,8 +1083,8 @@
   <section class="card lookup-card">
     <div class="card-heading">
       <div>
-        <div class="section-label">Size a trade</div>
-        <p>Load the last daily close and volatility, or enter the numbers yourself.</p>
+        <div class="section-label">Setup Parameters</div>
+        <p>Search a symbol or enter the market data manually.</p>
       </div>
       <span class="live-calc"><i aria-hidden="true"></i> Live calculation</span>
     </div>
@@ -938,7 +1095,7 @@
     <div class="stock-line" id="stockLine">Type a ticker and tap Fill.</div>
     <div class="sub" id="feedStatus"></div>
 
-    <details class="manual" id="manualBox">
+    <details class="manual" id="manualBox" open>
       <summary>Enter or adjust by hand</summary>
       <div class="manual-body">
         <div class="row2">
@@ -972,8 +1129,17 @@
     </details>
   </section>
 
+  <section class="card result-terminal-empty" id="resultTerminalEmpty">
+    <div class="terminal-empty-copy">
+      <span class="terminal-status"><i></i> SYSTEM READY</span>
+      <strong>Awaiting market data</strong>
+      <p>Enter a ticker or set entry price and ATR to generate the position recommendation.</p>
+    </div>
+    <div class="terminal-empty-ring" aria-hidden="true"><span>—</span><small>EQUITY<br>AT RISK</small></div>
+  </section>
+
   <section class="card result-card" id="answerCard" hidden>
-    <div class="result-kicker">Position plan <span>updates as inputs change</span></div>
+    <div class="result-kicker">Recommended position size <span>live calculation</span></div>
     <div class="answer-hero">
       <div class="answer">
         <div class="answer-label">Position size</div>
@@ -1003,8 +1169,15 @@
     </div>
   </section>
 
+  <section class="summary-strip" id="summaryStrip" hidden aria-label="Position summary">
+    <div><span>Position value</span><strong id="summaryPosition">—</strong></div>
+    <div><span>Share quantity</span><strong id="summaryShares">—</strong></div>
+    <div class="loss"><span>Initial stop</span><strong id="summaryStop">—</strong></div>
+    <div class="good"><span>Capital at risk</span><strong id="summaryRisk">—</strong></div>
+  </section>
+
   <section class="card" id="ladderCard" hidden>
-    <div class="section-label">Move the stop up as it rises</div>
+    <div class="section-label">Stop Ladder</div>
     <div class="ladder-wrap">
       <table class="ladder" id="out-ladder"></table>
     </div>
@@ -1452,6 +1625,8 @@
   function blankOut(msg) {
     // nothing to show yet — keep the result cards out of the way entirely
     el("answerCard").hidden = true;
+    el("resultTerminalEmpty").hidden = false;
+    el("summaryStrip").hidden = true;
     el("ladderCard").hidden = true;
     el("addRow").hidden = true;
     outSize.textContent = "₪ —";
@@ -1476,6 +1651,8 @@
     if (!(price > 0) || !(atr > 0)) { blankOut("enter a price and ATR"); return; }
 
     el("answerCard").hidden = false;
+    el("resultTerminalEmpty").hidden = true;
+    el("summaryStrip").hidden = false;
     el("ladderCard").hidden = false;
     el("addRow").hidden = false;
 
@@ -1518,6 +1695,7 @@
     if (!(size >= 1)) {
       blankOut("too volatile to size — skip this one");
       el("answerCard").hidden = false;
+      el("resultTerminalEmpty").hidden = true;
       outShares.textContent = "at " + pct(riskStopPct) + " implied risk, no position is small enough";
       return;
     }
@@ -1530,6 +1708,10 @@
       + (stopWasCapped ? ", or " + nis(size * riskStopPct / 100) + " if it runs the full "
           + pct(riskStopPct) : "")
       + (binding === "risk-based" ? "" : " · size held down by the " + binding);
+    el("summaryPosition").textContent = nis(size);
+    el("summaryShares").textContent = num(shares, shares < 10 ? 2 : 0);
+    el("summaryStop").textContent = px(stopPrice);
+    el("summaryRisk").textContent = nis(riskAmount);
 
     // ---- the reasoning, folded away
     outSizeFormula.innerHTML = Object.keys(cand).map(function (k) {
