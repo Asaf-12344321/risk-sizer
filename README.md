@@ -1,252 +1,302 @@
 # Risk Sizer
 
-**A phone-friendly tool that answers two questions before you buy a stock, and one while you hold it.**
+**A responsive, local-first tool that answers two questions before you buy a stock, and one while you hold it.**
 
-👉 **[Open the tool](https://asaf-12344321.github.io/risk-sizer/)** — then Share → *Add to Home Screen* for an app icon.
+👉 **[Open the tool](https://asaf-12344321.github.io/risk-sizer/)** — on iPhone, use Share → *Add to Home Screen* for an app icon.
 
 - **How much should I buy?**
-- **Where does my stop go?**
-- **When do I move it?**
+- **Where does my initial stop go?**
+- **When do I move the stop up?**
 
-No login, no account, nothing to install. Your settings and positions are stored on your own phone and never leave it.
+No login, no account and no broker connection. Your capital, rules and positions are stored in your own browser and are never sent to the market-data feed.
 
 ---
 
-## Why it exists
+## Purpose and scope
 
-Two mistakes cost most traders more than bad stock picking does:
+Risk Sizer is a discipline and risk-management tool for **long equity positions**. It moves position-size and exit decisions to before entry, when they can be expressed as rules instead of improvised while a trade is open.
 
-1. **Selling winners too early** — taking +5% out of a move that goes +40%, because you're afraid of giving the profit back.
-2. **Holding losers too long** — a −10% loss becomes −50% while you wait for it to "come back".
+It is deliberately **not** a stock picker. It provides no screening, buy signal, short strategy, profit target or order execution. Its current job begins after you have chosen a stock.
 
-Both come from making the exit decision *while you're in the trade*, when you're anxious and invested. This tool moves every decision to **before you buy**, when you're calm, and then gives you a rule to follow instead of a judgement to make.
-
-It is deliberately **not** a stock picker. It has no opinion about what to buy.
+The default rules were calibrated for multi-week swing positions, but they are choices supported by a limited historical sample—not guarantees or universal optima. See [`PRD.md`](PRD.md) for the complete requirements, evidence and calibration caveats.
 
 ---
 
 ## Quick start
 
-### 1. Set up (once)
+### 1. Set up once
 
-The first time you open it, you'll be asked two things:
+The first-use screen requires exactly two values:
 
 | Question | Why |
 |---|---|
-| **Total capital** | Everything is sized as a fraction of this |
-| **Most you'd put in one speculative name** | The tool works backwards from this to a safe loss budget |
+| **Total capital** | The active trading sleeve used to scale risk and exposure limits |
+| **Most you'd put in one speculative name** | Used to derive the crash-loss budget |
 
-That's it. Everything else has a sensible default you can change later under **Your rules**.
+Everything else starts with a documented default and remains editable under **Your rules**.
 
-### 2. Before you buy
+### 2. Size a position
 
-1. Open the **Size a trade** tab
-2. Type the ticker → tap **Fill** — price, volatility, beta, volume, 52-week range and momentum all load automatically
-3. Pick the **risk tier**: Quality / Growth / Speculative
-4. Read the three answers:
-   - **Position size** — and which limit is holding it back
-   - **Initial stop** — the price you put in your broker *today*
-   - **Stop ladder** — where the stop moves as the price rises
+1. Open **Calculator**.
+2. Enter a ticker and select **Fill**. The latest daily close, Wilder ATR(14), beta, average dollar volume and 52-week range come from the published feed.
+3. If necessary, enter or override price, ATR, currency, USD/ILS and beta manually.
+4. Read the outputs:
+   - **Recommended position size** and share quantity.
+   - **Initial stop** to place at the broker.
+   - **Stop ladder** showing when the stop may move upward.
+   - **Why this size?**, which identifies every cap and the binding constraint.
 
-### 3. While you hold it
+Calculations update automatically whenever an input changes. There is no calculate/submit step.
 
-1. Type the ticker in the box at the bottom and tap **Track this position**
-2. Open the **My positions** tab whenever you like
-3. It shows your current stop for every position, updated from real prices — nothing to calculate
+### 3. Track the position
+
+1. Enter the ticker in **Ticker to track** and select **Track this position**.
+2. Open **Portfolio**.
+3. If daily bars are published for that ticker, the app replays them from the entry date and derives the current stop, high since entry and latest daily close.
+4. If bars are unavailable, the position remains usable in manual mode with **Reached**, **Undo** and **Sold** actions.
+
+Risk Sizer does not transmit an order. You remain responsible for entering and updating the stop at your broker.
 
 ---
 
-## The two screens
+## The interface
 
-### Size a trade
+The approved responsive design is the **Risk-Sizer Desktop Terminal** introduced in [PR #1](../../pull/1). It provides desktop and iPhone layouts while preserving the existing calculation, storage, lookup, position and ladder behavior.
 
-**Look up a ticker** fills everything from live market data in one tap. You can also type any field by hand.
+### Calculator
 
-| Input | Where it comes from |
-|---|---|
-| Entry price, ATR, beta, volume, 52-week range | Filled automatically |
-| RSI, 1-month change | Filled automatically — powers the "buying extended" warning |
-| Support / resistance | Optional, read off your chart |
-| Risk tier | Your judgement — the one real decision |
+Ticker lookup fills the measured market inputs while manual entry remains available. A lookup summary reports the ticker, company, as-of date, daily close, ATR and ATR%, beta, volatility band and derived crash assumption.
 
-**Position size** shows every limit that applies and marks the one that binds:
+Position size is the smallest applicable candidate:
 
-```
-· risk-based:        the most you can lose if the stop is hit
-▸ thesis-break cap:  what a bad drawdown costs at this size   ← binding
-· capital cap:       max % of capital in one name
-· beta-exposure cap: stops high-beta names taking a full slot
-· liquidity cap:     never bigger than the stock can absorb
+```text
+· risk-based:       1R divided by the volatility-implied risk distance
+▸ crash cap:        crash budget divided by the ATR-derived crash assumption  ← binding example
+· capital cap:      maximum percentage of active capital in one name
+· beta cap:         maximum beta-weighted exposure
+· liquidity cap:    maximum percentage of average dollar volume
 ```
 
-The **smallest** number wins. Seeing *which* one binds tells you what's actually constraining you.
+The beta cap is always present. A measured non-positive beta is handled explicitly, while an unmeasurable beta is estimated conservatively from ATR% and disclosed as an estimate.
 
-### My positions
+### Portfolio
 
-One line per position, all on one screen:
+Each tracked position stores only ticker, entry price, ATR, ladder state and entry date. No personal price history is uploaded.
 
-```
-ASTS   entry 60.45 · ATR 6.48
-       stop now  60.45   at breakeven — cannot lose
-       live 57.75 (-4.5%) · high since entry 60.45
-       Trailing on its own. Set the stop to 60.45 at your broker.
-       [Sold]
-```
+When bars are available, Risk Sizer:
 
-The stop **advances by itself** as the price makes new highs — it's recalculated from real price history, not from you remembering to update it. If a stop was already breached, it says so plainly.
+- replays each daily high, low and close since entry;
+- detects whether a stop was already breached;
+- arms breakeven protection from the daily intraday high;
+- advances the trailing stop from closing-price highs; and
+- warns when a position has exceeded the configured review age.
+
+When bars are missing, the same ladder remains available as a manual workflow.
 
 ---
 
 ## How the numbers are decided
 
-### The stop comes first, then the size
+### 1R
 
+`1R` is the maximum configured loss on a normal stop-out:
+
+```text
+1R = fixed risk amount, when set
+     otherwise total capital × risk percentage
 ```
-stop distance  =  3 × ATR          (clamped to a sane 8%–30% of price)
-position size  =  risk budget ÷ stop distance %
+
+The default percentage is 2%. A fixed shekel amount, when configured, takes precedence.
+
+### Initial stop and risk distance
+
+With the current defaults:
+
+```text
+raw ATR distance = 2.5 × ATR
+placed stop      = raw distance clamped to 8%–30% below entry
 ```
 
-This is the important idea: **you can't have both a big position and a survivable stop.** A wider stop means a smaller position. The tool derives the size *from* the stop, not the other way round.
+The 8% floor keeps the placed stop outside very small daily noise. The 30% ceiling prevents an operationally meaningless initial order on an extremely volatile name.
 
-Why 3 × ATR? ATR is how much the stock moves on an average day. A stop closer than about 2.5 × ATR sits *inside* normal daily noise and gets triggered by wiggles rather than by anything meaningful — in backtesting, stops that tight were wrong **80–93% of the time** they fired.
+When the raw `2.5 × ATR` distance exceeds 30%, the **order** remains at the 30% ceiling but the **position size** is calculated against the full volatility-implied distance. A stop order cannot guarantee protection from a larger move or overnight gap, so sizing must not pretend that the ceiling eliminates that risk.
 
-### Support can only widen the stop, never tighten it
+### Continuous crash assumption
 
-If you enter a support level *further* than 3 × ATR, the stop goes just below it. If it's *closer*, the tool ignores it and tells you why — a "support level" inside the noise band isn't support, it's a number on a chart you'll be stopped out at.
+Risk Sizer derives a crash assumption continuously from ATR%. It interpolates between eight configurable anchors instead of assigning a manual Quality/Growth/Speculative tier.
 
-### The stop ladder
+The crash cap is:
 
-The ladder is the answer to "when do I move it":
+```text
+crash cap = crash-loss budget ÷ ATR-derived crash percentage
+```
 
-| price reaches | move stop to | if the stop is hit there | why |
-|---|---|---|---|
-| 60.45 (now) | 42.32 | you lose 30.0% | set this at entry |
-| **69.52 (+15%)** | **60.45** | **you break even** | **jumps to breakeven** |
-| 80.00 | 63.80 | you make +5.5% | trail |
-| 90.00 | 73.80 | you make +22.1% | trail |
+This is one candidate among the risk, capital, beta and liquidity caps; the smallest candidate sets the position.
 
-Three rules:
+### Stop ladder
 
-1. **The stop only ever moves up.** Never down.
-2. **Once the price is +15%, the stop sits at your entry** — from that moment the trade cannot lose you money. This is the rung that matters.
-3. **Above that it follows the highest price**, staying a fixed distance behind.
+The ladder follows four rules:
 
-This is what fixes *both* mistakes at once. You stop selling early because the rule holds you in while the price rises. You stop riding losers down because anything that once worked exits at breakeven.
+1. **The stop never moves down.**
+2. The breakeven trigger is volatility-aware:
 
-Rungs land on round numbers, because you type them into your broker by hand.
+   ```text
+   arm trigger = max(+15%, 3.0 × ATR%)
+   ```
 
-**Two trail styles**, switchable:
+3. Arming is judged from the daily **intraday high**, so a fast spike can activate protection even if the stock closes lower.
+4. After arming, the trail follows closing-price highs at the configured distance—currently `3.5 × ATR`—and never falls below entry.
 
-- **ATR distance** — the gap narrows in % terms as the price climbs, protecting more of a bigger gain
-- **Constant %** — the gap stays the same forever
+Ladder trigger levels use round numbers because they are intended for manual alerts and broker updates. The ladder contains at most seven useful, non-repeating rows.
 
-### The "buying extended" warning
+Breakeven protection is not a promise of zero loss: an overnight gap can open below the stop and fill at a worse price.
 
-If RSI is above 60, or the stock is up more than 15% in a month, you get a warning. Buying *after* a sharp run tested materially worse than buying into weakness.
+### Input warnings
+
+The app displays at most two decision-relevant warnings or notes. Current checks include:
+
+- an ATR that appears to be an intraday reading rather than a daily ATR;
+- a volatility-implied stop wider than the 30% placed-stop ceiling;
+- a stop widened to the 8% floor; and
+- a deep drawdown from the 52-week high.
+
+Risk Sizer does **not** warn simply because RSI is high or a stock recently rose sharply; that rule was removed after it failed validation.
 
 ---
 
 ## Settings — *Your rules*
 
-Everything is editable. Defaults in brackets.
+Everything below is editable and applies immediately.
 
-| Setting | Meaning |
-|---|---|
-| Total capital | Your base for everything |
-| Risk budget / trade [2%] | Most you'll lose on a normal stop-out |
-| Thesis-break budget | Most you'll lose when things go badly wrong |
-| Max position [20%] | Cap on any single name |
-| Max beta-weighted exposure [25%] | Keeps high-beta names small |
-| Gap scenario — quality / growth / speculative [20 / 35 / 55%] | How far each tier can realistically fall |
-| Max % of avg volume [5%] | Never bigger than you can exit |
-| Initial stop [3 × ATR] | How far the first stop sits |
-| Trail distance [2.5 × ATR] | How far behind the high the stop follows |
-| Arm trail at [+15%] | When the stop jumps to breakeven |
-| Min / max stop [8% / 30%] | Sanity bounds |
-| Warn if RSI above [60] | Extended-entry warning |
-| Warn if 1-month run-up > [15%] | Extended-entry warning |
-| Drawdown warn [40% off high] | Flags deep drawdowns |
-| Max holding days [90] | Review reminder |
-| Default USD/ILS | Fallback if the live rate is unavailable |
+| Setting | Current default | Meaning |
+|---|---:|---|
+| Total capital | setup required | Active trading capital used by the model |
+| Fixed risk per trade | blank | Fixed 1R in ₪; overrides the percentage when set |
+| Risk per trade | 2% | Percentage-based 1R when no fixed amount is set |
+| Crash-loss budget | setup-derived | Maximum accepted loss in the crash scenario |
+| Maximum position | 20% | Capital cap for one name |
+| Maximum beta-weighted exposure | 25% | Reduces high-beta exposure |
+| Crash anchors | 22/25/34/44/51/56/60/63% | Continuous ATR%-to-crash curve |
+| Maximum share of average volume | 5% | Liquidity cap |
+| Initial stop | 2.5 × ATR | Raw initial risk distance |
+| Arm trail | max(15%, 3.0 × ATR%) | Trigger for breakeven protection |
+| Trail distance | 3.5 × ATR | Distance behind closing-price highs |
+| Minimum / maximum placed stop | 8% / 30% | Operational stop bounds |
+| Drawdown note | 40% off high | Context note for a deep drawdown |
+| Position-age review | 90 days | Reminder to make an explicit holding decision |
+| Default USD/ILS | 3.65 | Fallback when live FX is unavailable |
 
-**Reset & redo setup** clears everything and starts over.
+**Reset & redo setup** resets the rules and returns to the first-use screen. Existing tracked positions remain until individually marked **Sold**.
 
 ---
 
-## Where the data comes from
+## Market-data pipeline
 
-**Yahoo Finance daily bars**, and nothing else.
+Yahoo Finance does not provide the browser CORS headers required for direct client-side access. A scheduled GitHub Action therefore fetches data server-side and force-pushes a single snapshot commit to the `data` branch:
 
-Yahoo doesn't allow web pages to call it directly (no CORS header), so a scheduled GitHub Action fetches it server-side and publishes a small data file the page can read:
-
+```text
+GitHub Action — every 30 minutes during configured US market hours
+   └─ fetch_data.py
+        ├─ reads the committed SEC-derived universe.csv
+        ├─ downloads ~1 year of adjusted daily OHLCV from Yahoo
+        ├─ computes Wilder ATR(14), beta vs SPY, ADV and 52-week range
+        └─ publishes to the data branch
+             ├─ quotes.json          metrics for every eligible liquid US ticker
+             └─ bars/{TICKER}.json   daily bars only for tickers in tickers.txt
 ```
-GitHub Action (every 30 min, market hours)
-   └─ fetch_data.py  → reads tickers.txt, pulls ~1 year of daily bars
-        └─ publishes data.json to the `data` branch
-             └─ the page reads it and computes the rest on your phone
-```
 
-ATR, RSI, the 1-month change and each position's high-since-entry are all calculated **in your browser** from those bars. The feed knows nothing about your positions, your capital, or your trades.
+The default pipeline examines up to 3,000 US tickers and excludes names below `$3` or `$5M` average daily dollar volume. The browser downloads the compact quote snapshot for lookup; position bars are fetched only for tracked symbols and cached for the session.
 
-### Checking the numbers yourself
+The feed receives no capital, rules, positions or other personal state.
 
-Every lookup states its own provenance:
+### Verifying a lookup
 
-> **ASTS · AST SpaceMobile, Inc.** — filled from the close of **2026-07-29** (57.75), **not a live price**.
-> ATR is Wilder/RMA(14) — set your chart's ATR smoothing to RMA to compare. RSI is Wilder(14). 1-month change is calendar.
-> Source: Yahoo Finance daily bars, 252 of them, published 12 min ago.
+Every lookup states that the price is a daily **close**, not a live quote. Common reasons another chart may disagree:
 
-So if a number looks wrong you can check *exactly* what it was derived from. Common reasons a chart disagrees:
-
-| Symptom | Cause |
+| Symptom | Likely cause |
 |---|---|
-| Price differs during the day | The tool uses the last daily **close**, not a live quote |
-| ATR differs by ~10–20% | Your chart's ATR smoothing is SMA; this uses **RMA/Wilder** (TradingView's default) |
-| 1-month change differs | This uses a **calendar** month, some tools use 22 trading days |
+| Price differs during the session | Risk Sizer uses the latest published daily close |
+| ATR differs | Risk Sizer uses Wilder/RMA(14) over the full available daily series; another chart may use a simple mean or intraday bars |
+| Beta differs | Risk Sizer measures approximately one year of daily returns against SPY over matching dates |
+| Feed is old over a weekend | The scheduled job runs on weekdays; the UI allows additional closed-market time before calling it stale |
 
-### Adding a ticker
+### Adding bars for a position
 
-Edit [`tickers.txt`](tickers.txt) on github.com — this works fine from a phone. One symbol per line; the next scheduled run picks it up. Israeli stocks use the `.TA` suffix (e.g. `LUMI.TA`).
+Ticker lookup comes from the full eligible universe; `tickers.txt` is **not** the lookup list. It controls which held US tickers receive a `bars/{TICKER}.json` history file for automatic position replay.
 
-If a tracked ticker isn't in the feed, the tool says so and falls back to manual mode with a **✓ Reached** button, so nothing breaks.
+Add one symbol per line to [`tickers.txt`](tickers.txt). The next successful scheduled run publishes its bars. Until then, the position tracker falls back to manual ladder mode.
+
+---
+
+## Privacy and storage
+
+Settings, setup state and positions are stored in browser `localStorage`. There is no login, server-side profile or cloud synchronization.
+
+Consequences:
+
+- clearing browser/site data removes local settings and positions;
+- private-browsing sessions may not preserve them;
+- different browsers and devices do not synchronize; and
+- if storage is unavailable, the calculator can still function for the current session but cannot persist state.
 
 ---
 
 ## Honest limitations
 
-- **Daily closes, not real-time.** Fine for multi-week holds; useless for day trading.
-- **It cannot tell you what to buy.** No screening, no signals, no opinion.
-- **The parameters are reasonable, not optimal.** They were checked against a real trade history, but that's a limited sample from one market period. The *mechanisms* (an initial stop beats none; a breakeven-floored trail beats discretion) held up consistently. The exact numbers — 3× ATR, +15%, 2.5× ATR — sit on a broad plateau where nearby values work about as well. Don't treat them as precise.
-- **No stop can separate a dip from a disaster.** In testing, a stock that fell 46% and then doubled looked identical, at the moment of the stop, to one that fell 54% and never recovered. This is why position sizing matters more than stop placement: size it so the bad case is survivable, because you won't be able to tell which one you're in.
-- **A stop will be wrong most of the times it fires.** That's the premium you pay for the occasional time it saves you from a disaster. Expect it and don't abandon the rule over it.
-- **Your win rate will fall while you make more money.** Letting winners run means more trades ending at breakeven. It feels worse. That's the hardest part of using this.
+- **Daily data, not real-time.** Appropriate for multi-week planning, not intraday trading.
+- **Long equities only.** No shorts, options, futures, FX trading or crypto strategy.
+- **No stock selection.** Risk Sizer manages a chosen position; it does not decide what to buy.
+- **No take-profit target or scale-out.** The active exit model is trail-only.
+- **No broker integration.** Stops and alerts must be entered manually.
+- **No parameter is universally optimal.** Defaults were selected from limited historical research and should be treated as calibrated policy choices.
+- **Stops can gap.** A stop cannot guarantee its price or distinguish a temporary dip from a permanent collapse.
+- **The research sample is imperfect.** It contains survivorship bias, overlapping observations and a limited set of market regimes; see the PRD and QA dataset disclosure.
+- **Discipline can feel worse before it performs better.** Letting winners run can create more breakeven exits and a lower win rate even when total outcomes improve.
 
 ---
 
-## What's in the repo
+## Repository map
 
-| File | Purpose |
+| Path | Purpose |
 |---|---|
-| `index.html` | The whole tool — one self-contained file, no dependencies |
-| `fetch_data.py` | Fetches quotes and history from Yahoo |
-| `tickers.txt` | Your watchlist — **edit this to add stocks** |
-| `requirements.txt` | Pinned Python dependencies |
-| `.github/workflows/data.yml` | The 30-minute schedule |
+| `index.html` | Complete dependency-free browser application |
+| `PRD.md` | Traceable product requirements, formulas, defects and calibration caveats |
+| `fetch_data.py` | Yahoo/SEC-derived market-data pipeline |
+| `universe.csv` | Committed SEC-derived US ticker universe |
+| `tickers.txt` | Symbols that receive daily bars for position replay |
+| `.github/workflows/data.yml` | Scheduled market-data publication |
+| `qa/` | Invariants, golden cases, universe sweeps, feed tests, parity and regression suites |
+| `requirements.txt` | Pinned Python pipeline dependencies |
 
-The `data` branch holds only the published `data.json` snapshot.
+The `data` branch contains the generated `quotes.json` and per-position bar snapshots. It is intentionally kept out of `main` history.
+
+---
+
+## QA expectations
+
+Risk Sizer has a substantial regression suite under [`qa/`](qa/). Before changing calculations, storage, ticker lookup, position tracking or the stop ladder:
+
+1. Read the related PRD requirements and tests.
+2. Document the intended behavioral change.
+3. Keep product/visual changes separate from calculation changes.
+4. Run the relevant invariants, golden, feed, defect, parity and full regression suites before proposing a merge.
+
+See [`qa/README.md`](qa/README.md) and [`qa/DATASET.md`](qa/DATASET.md) for suite design and research limitations.
 
 ---
 
 ## Troubleshooting
 
-**"Market data unavailable"** — the feed couldn't be reached. Type the numbers by hand; nothing is blocked. Check the [Actions tab](../../actions) for a failed run.
+**Market data unavailable** — enter price, ATR, currency, FX and beta manually. The calculator must remain usable without the feed.
 
-**Feed age shown in amber** — the data is over 24 hours old, so a scheduled run is probably failing.
+**Feed marked stale** — check the repository Actions workflow. Closed-market weekends receive a larger allowance before the UI reports staleness.
 
-**A ticker won't fill** — it's not in `tickers.txt` yet.
+**Ticker will not fill** — it may be below the feed's price/liquidity filters, newly listed or absent from the committed universe. Manual entry remains available.
 
-**Settings disappeared** — they live in your browser's local storage. Clearing site data, or a private-browsing tab, will lose them.
+**Tracked position has no automatic update** — add the symbol to `tickers.txt`; until bars are published, use manual **Reached** mode.
+
+**Settings or positions disappeared** — browser site data was probably cleared, storage was unavailable, or a different browser/device is being used.
 
 ---
 
-*This tool suggests position sizes and stop levels from rules you set yourself. It is not financial advice, and every number it produces is a starting point for your own judgement.*
+*Risk Sizer applies user-configured position-size and stop rules. It is not financial advice, and its outputs are inputs to your own judgement rather than guarantees.*
