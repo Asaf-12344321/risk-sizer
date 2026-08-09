@@ -1298,12 +1298,16 @@
     </div>
   </details>
 
+  <!-- The multipliers here are written from cfg at render time, never typed. This copy
+       said "3× ATR" for months after the default moved to 2.5×, telling the user a rule
+       the tool does not follow — the one kind of stale comment that reaches a person. -->
   <footer class="note">
     Everything is sized from the stop: risk 1R, divide by the stop distance, then take the
-    smallest cap. The stop starts at 3× ATR and only ever moves up — once the price is
-    +15% ahead it sits at your entry, which protects the trade <b>95%</b> of the time. The
-    other 5% is an overnight gap opening below the stop and filling there. Prices are daily
-    closes from Yahoo, not live quotes.
+    smallest cap. The stop starts at <b id="foot-initmult">—</b>× ATR and only ever moves
+    up — once the price is <b id="foot-arm">—</b> ahead it sits at your entry, which
+    protects the trade <b>95%</b> of the time. The other 5% is an overnight gap opening
+    below the stop and filling there, and the tracker prices that fill at the open. Bars
+    are daily OHLC from Yahoo, not live quotes.
   </footer>
 
   </div>
@@ -1343,7 +1347,8 @@
     armpct: 15,          // floor: never arm earlier than this
     armatrmult: 3.0,     // arm at max(armpct, this x ATR%). 0 disables the scaling
     minstop: 8,
-    // 30% not 45%: on a name like QBTS (ATR ~15% of price) 3x ATR is a 45% stop, which is not
+    // 30% not 45%: on a name like QBTS (ATR ~15% of price) the raw initmult distance is a
+    // 37.5% stop at today's 2.5x — it was 45% when this was decided at 3.0x — which is not
     // protection at all. -30% also tested best of every fixed depth on the real trade history.
     maxstop: 30,
     drawdown: 40,
@@ -1609,6 +1614,17 @@
       '<span class="rule-chip">Cap <b>' + cfg.maxpct + "%</b></span>";
   }
 
+  // The footer states the rule in words. Write it from cfg so it cannot drift from the
+  // parameters actually in force, and so a settings change is reflected immediately.
+  // Arming is max(armpct, armatrmult x ATR%), which the old fixed "+15%" copy hid: on a
+  // volatile name the trigger sits well above the floor.
+  function renderFooterRule() {
+    el("foot-initmult").textContent = cfg.initmult;
+    el("foot-arm").textContent = cfg.armatrmult > 0
+      ? "+" + cfg.armpct + "% (or " + cfg.armatrmult + "× ATR on a volatile name, whichever is further)"
+      : "+" + cfg.armpct + "%";
+  }
+
   // ---- inputs ----
   var inPrice = el("in-price"), inCcy = el("in-ccy"), inFx = el("in-fx"), fxField = el("fx-field");
   var inAtr = el("in-atr"), inBeta = el("in-beta");
@@ -1659,14 +1675,14 @@
     var atrPct = atr / price * 100;
     var band = bandFor(atrPct);
 
-    // ---- initial stop: 3x ATR, held inside sane bounds for ORDER PLACEMENT
+    // ---- initial stop: initmult x ATR (2.5x today), held inside sane bounds for ORDER PLACEMENT
     var rawStopPct = (cfg.initmult * atr) / price * 100;
     var stopPct = clamp(rawStopPct, cfg.minstop, cfg.maxstop);
     var stopPrice = price * (1 - stopPct / 100);
 
     // Sizing uses the volatility-implied distance, with the FLOOR applied but NOT the
     // ceiling. Capping the stop at 30% limits where the order sits; it does nothing to
-    // stop the price falling 3x ATR. Sizing off the capped figure would assume a
+    // stop the price falling initmult x ATR. Sizing off the capped figure would assume a
     // protection the stop cannot deliver — on NBIS (49.5% implied) that understated the
     // real risk by two thirds, and made every name above 10% ATR the same size.
     var riskStopPct = Math.min(Math.max(rawStopPct, cfg.minstop), 100);
@@ -1830,6 +1846,7 @@
 
   function refreshAll() {
     renderRulesStrip();
+    renderFooterRule();
     recalc();
     renderPositions();
   }
@@ -2025,8 +2042,18 @@
     var trailDist = cfg.trailmult * p.atr;
     var armed = false, high = p.entry, hit = null;
     for (var i = 0; i < bars.length; i++) {
-      var hi = bars[i][1], lo = bars[i][2], cl = bars[i][3];
-      if (!hit && lo <= stop) hit = { date: bars[i][0], price: stop };
+      var hi = bars[i][1], lo = bars[i][2], cl = bars[i][3], op = bars[i][4];
+      // Stop-first, open-first. A bar that OPENED below the stop never offered the stop
+      // price — you were filled at the open, lower. Reporting that exit at the stop price
+      // flatters the worst days, which are the only days this number matters on.
+      // `op` is undefined against a feed published before opens were added; fall back to
+      // the old stop-price fill rather than dropping the breach entirely.
+      if (!hit) {
+        if (typeof op === "number" && isFinite(op) && op <= stop)
+          hit = { date: bars[i][0], price: op, gap: true };
+        else if (lo <= stop)
+          hit = { date: bars[i][0], price: stop, gap: false };
+      }
       // The TRAIL rides the close; ARMING is judged on the intraday high. A parabolic
       // spike that touches the arm trigger and closes back below it used to arm nothing,
       // so the give-back cost a full 1R — the exact failure a fast +30% move produces.
@@ -2087,8 +2114,10 @@
           + pnl.toFixed(1) + "%) · high since entry " + px(live.high) + " · " + live.asOf + "</div>";
         if (live.hit) {
           out += '<div class="pos-next"><span class="pos-hit">This should already be closed.</span> The stop was breached on <b>'
-            + live.hit.date + "</b> at <b>" + px(live.hit.price)
-            + "</b>. If you still hold it, you are past your own rule.</div>";
+            + live.hit.date + "</b> at <b>" + px(live.hit.price) + "</b>"
+            + (live.hit.gap ? " — it <b>gapped through</b> the stop and opened there, so the stop price was never available"
+                            : "")
+            + ". If you still hold it, you are past your own rule.</div>";
         } else if (!live.armed) {
           out += '<div class="pos-next">Keep the stop at <b>' + num(stop, 2)
             + "</b>. It moves up to breakeven (<b>" + px(p.entry) + "</b>) once the price closes at <b>"

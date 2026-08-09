@@ -9,3 +9,6 @@ RFC-*.md
 # but not needed by anyone cloning this repo. NOTE: untracked means unbacked-up — if these
 # should survive a lost laptop, track them instead; `git add -f docs/` is all it takes.
 docs/
+
+# macOS Finder metadata. Was tracked at repo root until 2026-08-09.
+.DS_Store

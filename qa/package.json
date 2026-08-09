@@ -3,7 +3,7 @@
   "private": true,
   "description": "QA suite for risk-sizer.html — invariants, universe sweep, golden snapshot, edge cases",
   "scripts": {
-    "test": "node invariants.js && node sweep.js && node edge.js && node golden.js"
+    "test": "sh run_all.sh"
   },
   "dependencies": { "jsdom": "^24" }
 }
