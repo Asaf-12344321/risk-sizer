@@ -157,8 +157,17 @@ def main():
                 quotes[s] = q
                 if s in keep:
                     tail = sub.tail(BARS_KEEP)
+                    # [date, high, low, close, open]. Open is APPENDED, never inserted:
+                    # a deployed page reads bars positionally at 1/2/3, so a new field at
+                    # the end reaches old clients without breaking them.
+                    #
+                    # Open is what makes a gap fill priceable. Without it the tracker can
+                    # only test `low <= stop` and then claim the fill happened AT the stop
+                    # — which is false on any bar that opened below it, and overstates the
+                    # exit on exactly the days the stop matters most.
                     bars_out[s] = [[d.strftime("%Y-%m-%d"), round(float(r_.High), 4),
-                                    round(float(r_.Low), 4), round(float(r_.Close), 4)]
+                                    round(float(r_.Low), 4), round(float(r_.Close), 4),
+                                    round(float(r_.Open), 4)]
                                    for d, r_ in tail.iterrows()]
             except Exception:
                 fails += 1

@@ -2025,8 +2025,18 @@
     var trailDist = cfg.trailmult * p.atr;
     var armed = false, high = p.entry, hit = null;
     for (var i = 0; i < bars.length; i++) {
-      var hi = bars[i][1], lo = bars[i][2], cl = bars[i][3];
-      if (!hit && lo <= stop) hit = { date: bars[i][0], price: stop };
+      var hi = bars[i][1], lo = bars[i][2], cl = bars[i][3], op = bars[i][4];
+      // Stop-first, open-first. A bar that OPENED below the stop never offered the stop
+      // price — you were filled at the open, lower. Reporting that exit at the stop price
+      // flatters the worst days, which are the only days this number matters on.
+      // `op` is undefined against a feed published before opens were added; fall back to
+      // the old stop-price fill rather than dropping the breach entirely.
+      if (!hit) {
+        if (typeof op === "number" && isFinite(op) && op <= stop)
+          hit = { date: bars[i][0], price: op, gap: true };
+        else if (lo <= stop)
+          hit = { date: bars[i][0], price: stop, gap: false };
+      }
       // The TRAIL rides the close; ARMING is judged on the intraday high. A parabolic
       // spike that touches the arm trigger and closes back below it used to arm nothing,
       // so the give-back cost a full 1R — the exact failure a fast +30% move produces.
@@ -2087,8 +2097,10 @@
           + pnl.toFixed(1) + "%) · high since entry " + px(live.high) + " · " + live.asOf + "</div>";
         if (live.hit) {
           out += '<div class="pos-next"><span class="pos-hit">This should already be closed.</span> The stop was breached on <b>'
-            + live.hit.date + "</b> at <b>" + px(live.hit.price)
-            + "</b>. If you still hold it, you are past your own rule.</div>";
+            + live.hit.date + "</b> at <b>" + px(live.hit.price) + "</b>"
+            + (live.hit.gap ? " — it <b>gapped through</b> the stop and opened there, so the stop price was never available"
+                            : "")
+            + ". If you still hold it, you are past your own rule.</div>";
         } else if (!live.armed) {
           out += '<div class="pos-next">Keep the stop at <b>' + num(stop, 2)
             + "</b>. It moves up to breakeven (<b>" + px(p.entry) + "</b>) once the price closes at <b>"
