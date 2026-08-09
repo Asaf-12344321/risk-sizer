@@ -1,0 +1,50 @@
+name: QA
+
+# The suite existed long before this workflow did, and only ever ran when someone
+# remembered to run it. A test that depends on memory is not a gate. This runs the whole
+# thing on every push and pull request touching the tool.
+#
+# One suite is skipped here: `parity`, which imports the riskml research simulator from a
+# separate private checkout CI has no access to. run_all.sh reports it as SKIPPED rather
+# than failing the run. Parity is the only guard on the research -> production link, so
+# run it locally with QA_REQUIRE_PARITY=1 before shipping a rule change.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install QA dependencies
+        working-directory: qa
+        run: npm install --no-audit --no-fund
+
+      - name: Fetch the published quotes feed
+        # sweep and feed need a real quotes.json. run_all.sh falls back to curling
+        # raw.githubusercontent.com, which cannot work while the repo is private — take it
+        # from the data branch over the authenticated checkout instead.
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin data
+          git show FETCH_HEAD:quotes.json > /tmp/q.json
+          test -s /tmp/q.json
+          echo "quotes: $(wc -c < /tmp/q.json) bytes"
+
+      - name: Run the QA suite
+        working-directory: qa
+        env:
+          QA_QUOTES: /tmp/q.json
+        run: sh run_all.sh
