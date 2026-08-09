@@ -108,4 +108,29 @@ for (const [p, at] of [[60.45, 6.48], [100, 1], [19, 2.85], [1000, 40], [8, 1.2]
 ck('ladder: only rises, starts at the initial stop, hits breakeven at max(15%,3xATR), never above price',
    lbad.length === 0, lbad.length ? `${lbad.length} issues, first: ${lbad[0]}` : '5 scenarios');
 
+// ---------- 9. THE COPY MUST STATE THE RULE THE TOOL ACTUALLY FOLLOWS
+// The footer told the user "the stop starts at 3x ATR" for months after the default moved
+// to 2.5x. Every other stale multiplier in this repo sat in a comment; this one reached a
+// person and described a rule the tool does not follow. It is now written from cfg, and
+// this asserts that it is — a hardcoded number would fail here the moment cfg changes.
+{
+  const t9 = boot();
+  const initmult = +t9.$('cfg-initmult').value;
+  const armpct = +t9.$('cfg-armpct').value;
+  const armatr = +t9.$('cfg-armatrmult').value;
+  ck('the footer states the initial-stop multiplier actually in force',
+     +t9.$('foot-initmult').textContent === initmult,
+     `footer says ${t9.$('foot-initmult').textContent}x, cfg says ${initmult}x`);
+  const armTxt = t9.$('foot-arm').textContent;
+  ck('the footer states the arming floor actually in force',
+     armTxt.indexOf('+' + armpct + '%') === 0, armTxt);
+  ck('the footer does not present the arming floor as the whole trigger',
+     armatr <= 0 || armTxt.indexOf(armatr + '× ATR') !== -1,
+     `arming is max(${armpct}%, ${armatr} x ATR%) — ${armTxt}`);
+  // And it must follow a settings change, or it is only correct at the defaults.
+  t9.set('cfg-initmult', '4');
+  ck('the footer follows a settings change rather than being correct only at defaults',
+     +t9.$('foot-initmult').textContent === 4, t9.$('foot-initmult').textContent);
+}
+
 report('INVARIANTS');

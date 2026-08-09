@@ -13,7 +13,7 @@ hand-written chain that used to live here drifted: it named four suites out of t
 
 CI runs the same script on every push and pull request (`.github/workflows/qa.yml`), with
 one exception: `parity` needs the `riskml` checkout, which CI has no access to, so it is
-reported SKIPPED there — 143 of 153 assertions. Before shipping a change to any **rule**,
+reported SKIPPED there — 147 of 157 assertions. Before shipping a change to any **rule**,
 run it locally with parity demanded:
 
 ```bash
@@ -35,7 +35,8 @@ between** answers, which example-based tests cannot see.
 - **hard bounds** — size ≤ 20% capital, stop ∈ [8%,30%], risk ≤ 1R, stop < price
 - **scale invariance** — the same ATR% gives the same size at ₪7 or ₪4,000
 - **metamorphic** — doubling 1R doubles a risk-bound position; more capital never shrinks one
-- **ladder** — only rises, starts at the initial stop, reaches breakeven at +15%, never above price
+- **ladder** — only rises, starts at the initial stop, reaches breakeven at `max(15%, 3×ATR%)`, never above price
+- **the copy states the rule in force** — the footer's multipliers are read back and compared with `cfg`, including after a settings change. It said "3× ATR" long after the default moved to 2.5× (DEF-014). Every other stale multiplier here sat in a comment; that one reached a person
 
 ## sweep.js — the whole universe at once
 Runs all ~2,600 real tickers and checks the **distribution**, not individual answers.

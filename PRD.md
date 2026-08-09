@@ -429,7 +429,7 @@ candidates:
 | **DEF-003** | *Fixed* | `holddays`, `rsiwarn`, `runupwarn` appeared in settings but no logic read them. `rsiwarn`/`runupwarn` removed (the warning they drove was falsified); `holddays` retargeted to a position-age warning, defaulting to **90 days** — the only holding bucket that lost money in the trade history | PRD review |
 | **DEF-004** | *Fixed* | Sub-dollar prices rendered the stop as `0.00`. Price formatting is now adaptive: 4dp below $1, 3dp below $10, 2dp above | QA edge suite |
 
-| **DEF-005** | *Fixed* | Capping the placed stop at 30% also capped the risk used for **sizing**, so every name above ~10% ATR received an identical position. Placing the order at 30% does not prevent the price falling 3× ATR. Sizing now uses the uncapped volatility-implied distance (floor applied, ceiling not); the order still sits at the ceiling. NBIS went from ₪30,000 to ₪18,170 | User |
+| **DEF-005** | *Fixed* | Capping the placed stop at 30% also capped the risk used for **sizing**, so every name above ~10% ATR received an identical position. Placing the order at 30% does not prevent the price falling `initmult` × ATR (3× when this was found, 2.5× today). Sizing now uses the uncapped volatility-implied distance (floor applied, ceiling not); the order still sits at the ceiling. NBIS went from ₪30,000 to ₪18,170 | User |
 
 | **DEF-006** | *Fixed* | Feed ATR was copied into the form via `.toFixed(2)`, discarding two of the four decimals the feed carries. 2,585 of 2,604 tickers were affected; 909 (34.9%) sized differently once corrected, 24 by more than 1%, worst ABEV at 3.05%. The extreme *relative* errors (TALK, 12.4%) did not move size because the 8% minimum stop floors them. Undetected by 108 assertions because every suite called `price()` directly and none exercised `fillFromFeed()` | User |
 | **DEF-007** | *Fixed* | The beta-exposure cap was applied only `if (beta > 0)`, so an absent or non-positive beta **removed** the constraint rather than tightening it — 278 of 2,604 tickers (10.7%). Two distinct cases were being conflated; see FR-SIZE-12/13. Latent rather than active: at the configured settings the risk-based or crash cap already bound tighter on every affected ticker, so no size actually changed | QA feed suite |
@@ -443,14 +443,16 @@ candidates:
 | **DEF-012** | *Fixed* | `qa/sweep.js` asserted "within each binding constraint, size falls as ATR rises" across **every** cap, including the beta cap — whose formula is `capital × betaexpct / beta` and contains no ATR term. Beta tracks ATR only as a band-median fit (corr 0.946), never per ticker, so the assertion demanded something the formula never promised and failed on BMNR ATR 6.35% ₪6,172 → QUBT ATR 6.55% ₪6,750, two names whose measured betas run the other way. **The tool was right and the test was wrong**; the failure had been standing and disclosed rather than fixed. ATR-ordering is now asserted only where ATR is the driving input, and the beta cap is checked against the invariant it does promise: `size × beta == exposure budget`, plus size falling as beta rises. The companion check "any raw ATR-ordering inversion is attributable to a different binding cap" was also removed — sorting all 2,620 tickers by ATR and then requiring adjacent rows to share a binding constraint made it near-vacuous, and it passed by interleaving rather than by being true | Code review |
 | **DEF-013** | *Fixed* | The QA suite had **no CI**. `.github/workflows/` ran only the data publisher, so 142 assertions executed when someone remembered to run them. Added `.github/workflows/qa.yml` on push, PR and manual dispatch. `parity` is reported SKIPPED there because it imports the `riskml` simulator from a separate private checkout; a missing riskml previously CRASHED the whole run, masking every other suite's result. `QA_REQUIRE_PARITY=1` turns the skip back into a failure for a release run | Code review |
 
-**No known open defects.** All thirteen are covered by regression tests in `qa/defects.js`,
-`qa/feed.js`, `qa/tracker.js` and `qa/sweep.js`.
+| **DEF-014** | *Fixed* | The footer told the user "**the stop starts at 3× ATR**" for months after `initmult` moved to 2.5×, and gave the arming trigger as a flat "+15%" when it is `max(armpct, armatrmult × ATR%)` — so on a volatile name the stated trigger was well below the real one. Every other stale multiplier in this repo sat in a code comment; this one was **user-facing copy describing a rule the tool does not follow**. The footer is now written from `cfg` at render time and `qa/invariants.js` asserts it matches, including after a settings change, so a hardcoded number fails immediately. Three further stale `3x ATR` comments in `index.html` and one in DEF-005 were rewritten to name `initmult` rather than a frozen value | Code review |
+
+**No known open defects.** All fourteen are covered by regression tests in `qa/defects.js`,
+`qa/feed.js`, `qa/tracker.js`, `qa/sweep.js` and `qa/invariants.js`.
 
 ---
 
 ## 10. Verification status
 
-An automated suite exists at `qa/` (**153 assertions, all passing** — run `qa/run_all.sh`, which treats a crashed suite as a failure rather than a silent zero). It covers invariants (monotonicity,
+An automated suite exists at `qa/` (**157 assertions, all passing** — run `qa/run_all.sh`, which treats a crashed suite as a failure rather than a silent zero). It covers invariants (monotonicity,
 continuity, bounds, scale invariance, metamorphic relations, ladder ordering), a
 full-universe sweep of ~2,600 tickers, edge and hostile inputs, a golden snapshot, regression tests for every documented defect, the
 **feed path** (`qa/feed.js`), the
@@ -458,7 +460,7 @@ full-universe sweep of ~2,600 tickers, edge and hostile inputs, a golden snapsho
 **parity between this tool and the `riskml` research simulator**.
 
 It runs in CI on every push and pull request (`.github/workflows/qa.yml`) — see DEF-013.
-CI reports **143** of those assertions: `parity` needs the `riskml` checkout, which CI has
+CI reports **147** of those assertions: `parity` needs the `riskml` checkout, which CI has
 no access to, so it is reported SKIPPED there. Run `QA_REQUIRE_PARITY=1 sh qa/run_all.sh`
 locally before shipping any change to a rule; parity is the only guard on the
 research → production link.
@@ -538,3 +540,41 @@ These bound what may legitimately be asserted as "correct":
    truncated tail permits.
 4. "Once armed the trade cannot lose" is **95.1% true**, not absolute — 4.93% of armed
    trades still ended negative via overnight gaps through the breakeven stop.
+5. **ATR is dividend-adjusted.** `fetch_data.py` downloads with `auto_adjust=True`, so
+   published ATR, price, 52-week high and low are all on the adjusted series. A broker or
+   TradingView chart shows **unadjusted** prices, so a manually typed ATR is on a slightly
+   different basis than a looked-up one. On a non-payer they are identical; on a dividend
+   payer the gap scales with the yield over the ~1y window and is small but real. It is
+   documented rather than corrected because the adjusted series is the right basis for
+   volatility. Any ATR arriving from outside this tool — a future Risk Scout handoff
+   included — **shall** declare which basis it is on. `ATR_PCT_IMPLAUSIBLE` catches a typed
+   intraday reading (DEF-009); nothing catches a piped value on the wrong basis.
+
+## 11a. Open calibration decisions
+
+Recorded so they are choices rather than defaults nobody revisited. Neither is a defect;
+both materially change sizing and are the user's call.
+
+| Decision | Current | Alternative | Effect |
+|---|---|---|---|
+| Crash-scenario percentile | ~**p96** 45-day drawdown by ATR tier | p90 | permits ~**23% larger** positions across the board |
+| Crash tier source | subjective quality/growth/speculative call, mapped onto ATR anchors | take the tier from **measured ATR** directly | removes a judgement call the data already answers |
+
+Measured 45-day drawdowns behind the current anchors (from the 271,464-trade study):
+
+| ATR tier | median | p90 | p95 | p99 |
+|---|---|---|---|---|
+| <1.5% | −3.8% | −12.3% | −16.0% | −38.5% |
+| 1.5–2.5% | −5.8% | −16.7% | −21.1% | −37.3% |
+| 2.5–4% | −8.7% | −24.1% | −30.1% | −46.5% |
+| 4–6% | −12.5% | −32.8% | −39.7% | −55.5% |
+| >6% | −19.6% | −44.7% | −51.6% | −66.3% |
+
+**Unexploited research result.** The same study measured ladder alpha as monotone and
+interpretable in volatility — +0.013 below 1.5% ATR, −0.066, −0.154, −0.175 (4–6%),
+−0.116 above 6%. The ladder generates alpha on quiet stocks and destroys it on volatile
+ones, the opposite of the intuition it was built on; on volatile names it still wins on
+tail-matched sizing (2.43×), so it stays correct for a trader who will not accept a −50%
+single-name loss. **It costs ~0.15R of alpha, and that is the premium on the insurance.**
+That is usable as a lookup table today with no model, and the tool does not surface it.
+Displaying it is a product decision, not a fix, so it is recorded here rather than shipped.
