@@ -178,11 +178,37 @@ function** — see DEF-001.
 
 | Candidate | Formula | Applicable when |
 |---|---|---|
-| risk-based | `1R / (stopPct/100)` | always |
+| risk-based | `1R / (riskStopPct/100)` — **not** `stopPct`, see FR-SIZE-03a | always |
 | crash cap | `breakbudget / (crashPct/100)` | always |
 | capital cap | `capital × maxpct/100` | always |
 | beta cap | `(capital × betaexpct/100) / betaForSizing()` | **always** — see FR-SIZE-12 |
 | liquidity cap | `ADV_nis × liqpct/100` | `avgvol > 0` |
+
+**FR-SIZE-03a** — The tool **shall** carry **two distinct stop percentages**, and they
+**shall not** be conflated:
+
+| Name | Formula | Used for |
+|---|---|---|
+| `stopPct` | `clamp(stopPct_raw, minstop, maxstop)` | **where the order sits** — the stop price, the ladder, ₪ at risk |
+| `riskStopPct` | `clamp(stopPct_raw, minstop, 100)` — floor applied, **ceiling not** | **how big the position is** — the risk-based size candidate |
+
+They are equal whenever `stopPct_raw ≤ maxstop`, i.e. for ATR% up to 12% at the default
+`initmult`. Above that they diverge, and the divergence is deliberate: capping the placed
+order at 30% limits where the order sits, it does nothing to stop the price falling 2.5×
+ATR. Sizing off the capped figure would assume protection the stop cannot deliver — that
+was DEF-005, which made every name above ~10% ATR the same size.
+
+Consequences that **shall** hold:
+
+- `riskStopPct ≥ stopPct` always, so realised ₪ at risk (FR-STOP-05) never exceeds 1R.
+- When they diverge, the position is **smaller** than `1R / stopPct` would give, and
+  FR-STOP-06 **shall** warn that the stop will be tested.
+- **1R is not a single number in this tool.** `1R` as a *budget* divides by
+  `riskStopPct`; `1R` as a *distance to the placed stop* is `entry − stopPrice`. Any
+  consumer that converts outcomes to R — including the `riskml` label simulator and any
+  future Risk Scout handoff — **shall** state which of the two it used. Reconciling a
+  capital-scaled result against an R-scaled one without that statement is invalid for
+  every name above 12% ATR.
 
 **FR-SIZE-04** — The binding constraint **shall** be named in the UI whenever it is not
 `risk-based`.
@@ -250,7 +276,8 @@ candidates:
 | ID | Requirement | Priority |
 |---|---|---|
 | FR-STOP-01 | `stopPct_raw = initmult × ATR / price × 100` | Must |
-| FR-STOP-02 | `stopPct = clamp(stopPct_raw, minstop, maxstop)` | Must |
+| FR-STOP-02 | `stopPct = clamp(stopPct_raw, minstop, maxstop)` — this is the **placed order** only | Must |
+| FR-STOP-02a | `riskStopPct = clamp(stopPct_raw, minstop, 100)` — floor applied, ceiling **not**. This is the sizing denominator and **shall not** be substituted with `stopPct` (FR-SIZE-03a, DEF-005) | Must |
 | FR-STOP-03 | `stopPrice = price × (1 − stopPct/100)`, and **shall** satisfy `0 < stopPrice < price` | Must |
 | FR-STOP-04 | The stop line **shall** state price, distance %, and ₪ at risk | Must |
 | FR-STOP-05 | ₪ at risk **shall not** exceed 1R (except by display rounding) | Must |
@@ -295,6 +322,8 @@ candidates:
 | FR-POS-04 | The tab label **shall** show the open position count | Should |
 | FR-POS-05 | With bars available, the current stop **shall** be derived by replaying the ladder over real bars since the entry date | Must |
 | FR-POS-06 | A stop already breached **shall** be reported explicitly, with the date and price | Must |
+| FR-POS-06a | The reported fill **shall** be **stop-first and open-first**: if the bar opened at or below the active stop, the fill is the **open** and **shall** be labelled a gap; otherwise if the low reached the stop, the fill is the stop price. A bar that both breaches the stop and clears the arm trigger **shall** exit at the old stop — daily OHLC cannot order the high against the low, so the already-active stop wins (see DEF-011) | Must |
+| FR-POS-06b | Against a bar with no open field (a feed published before FR-DATA-05a), the tracker **shall** fall back to the stop-price fill rather than dropping the breach | Must |
 | FR-POS-07 | With bars available, live price, P&L% and high-since-entry **shall** be shown | Must |
 | FR-POS-08 | Without bars, the app **shall** fall back to manual rungs with a "Reached" advance button and explain why | Must |
 | FR-POS-09 | Rung index **shall** be advanceable and reversible, clamped to the ladder bounds | Must |
@@ -325,6 +354,7 @@ candidates:
 | FR-DATA-04a | Beta **shall** be 1y daily returns vs SPY, with the benchmark variance taken over the **same overlapping dates** as the covariance (see DEF-008) | Must |
 | FR-DATA-04b | The feed **shall** publish beta **as measured**, including zero and negative values, and **shall** omit the field only when beta could not be computed. Substitution policy lives solely in the page (FR-SIZE-12), so the two sides cannot half-apply it | Must |
 | FR-DATA-05 | It **shall** publish `quotes.json` for the full universe and `bars/{T}.json` only for `tickers.txt` entries | Must |
+| FR-DATA-05a | Each bar **shall** be `[date, high, low, close, open]`, in that order. Open is **appended, never inserted**: the deployed page indexes bars positionally, so a new field at the end reaches old clients without breaking them. Open is what makes a gap fill priceable (FR-POS-06a) | Must |
 | FR-DATA-06 | It **shall refuse to publish** if fewer than 100 tickers survive | Must |
 | FR-DATA-07 | It **shall** force-push a single-commit `data` branch, keeping snapshots out of `main` history | Must |
 | FR-DATA-08 | It **shall** complete within the job timeout (25 min; observed ~163 s for 3,000 tickers) | Must |
@@ -409,17 +439,33 @@ candidates:
 
 | **DEF-010** | *Fixed* | Arming was judged on the **close**, so a parabolic spike that touched the trigger intraday and closed below it armed nothing and the give-back cost a full 1R — precisely the fast-move failure the ladder exists to prevent. Measured on 17,516 high-ATR entries: median outcome −14.56% → **−9.14%** (+5.42pp), mean 4.78% → 4.74% (−0.04pp), armed 35.4% → 39.9%, real losses (< −1%) 56.8% → **54.4%** as they become break-even scratches. Arming *and* trailing on the high costs 0.83pp of mean, because the trail then rides the intraday high and clips runners — the two references must stay separate. Parity compared the arm trigger *percentage* but never its *reference*, so this was invisible to the suite; `qa/parity.js` now replays a synthetic spike through both implementations | Data audit |
 
-**No known open defects.** All ten are covered by regression tests in `qa/defects.js` and `qa/feed.js`.
+| **DEF-011** | *Fixed* | The feed published `[date, high, low, close]` with **no open**, so the position tracker could only test `low <= stop` and then reported the fill **at the stop price**. That is false on any bar that opened below the stop — the stop price never traded and the real fill was the open, lower. It overstated the exit on exactly the days the stop exists for, and armed positions that lost through a gap read as break-even scratches. 4.93% of armed trades end negative through gaps (mean −0.075R, worst −2.44R), so this was not a rare path. Open is now appended as a fifth field (FR-DATA-05a) and the tracker fills open-first (FR-POS-06a); bars without it fall back to the old answer. Regression suite `qa/tracker.js` | Code review |
+| **DEF-012** | *Fixed* | `qa/sweep.js` asserted "within each binding constraint, size falls as ATR rises" across **every** cap, including the beta cap — whose formula is `capital × betaexpct / beta` and contains no ATR term. Beta tracks ATR only as a band-median fit (corr 0.946), never per ticker, so the assertion demanded something the formula never promised and failed on BMNR ATR 6.35% ₪6,172 → QUBT ATR 6.55% ₪6,750, two names whose measured betas run the other way. **The tool was right and the test was wrong**; the failure had been standing and disclosed rather than fixed. ATR-ordering is now asserted only where ATR is the driving input, and the beta cap is checked against the invariant it does promise: `size × beta == exposure budget`, plus size falling as beta rises. The companion check "any raw ATR-ordering inversion is attributable to a different binding cap" was also removed — sorting all 2,620 tickers by ATR and then requiring adjacent rows to share a binding constraint made it near-vacuous, and it passed by interleaving rather than by being true | Code review |
+| **DEF-013** | *Fixed* | The QA suite had **no CI**. `.github/workflows/` ran only the data publisher, so 142 assertions executed when someone remembered to run them. Added `.github/workflows/qa.yml` on push, PR and manual dispatch. `parity` is reported SKIPPED there because it imports the `riskml` simulator from a separate private checkout; a missing riskml previously CRASHED the whole run, masking every other suite's result. `QA_REQUIRE_PARITY=1` turns the skip back into a failure for a release run | Code review |
+
+**No known open defects.** All thirteen are covered by regression tests in `qa/defects.js`,
+`qa/feed.js`, `qa/tracker.js` and `qa/sweep.js`.
 
 ---
 
 ## 10. Verification status
 
-An automated suite exists at `qa/` (**142 assertions, all passing** — run `qa/run_all.sh`, which treats a crashed suite as a failure rather than a silent zero). It covers invariants (monotonicity,
+An automated suite exists at `qa/` (**153 assertions, all passing** — run `qa/run_all.sh`, which treats a crashed suite as a failure rather than a silent zero). It covers invariants (monotonicity,
 continuity, bounds, scale invariance, metamorphic relations, ladder ordering), a
 full-universe sweep of ~2,600 tickers, edge and hostile inputs, a golden snapshot, regression tests for every documented defect, the
-**feed path** (`qa/feed.js`), and
+**feed path** (`qa/feed.js`), the
+**position-tracker replay path** (`qa/tracker.js`), and
 **parity between this tool and the `riskml` research simulator**.
+
+It runs in CI on every push and pull request (`.github/workflows/qa.yml`) — see DEF-013.
+CI reports **143** of those assertions: `parity` needs the `riskml` checkout, which CI has
+no access to, so it is reported SKIPPED there. Run `QA_REQUIRE_PARITY=1 sh qa/run_all.sh`
+locally before shipping any change to a rule; parity is the only guard on the
+research → production link.
+
+`qa/tracker.js` exists because of DEF-011. `qa/parity.js` already drove the replay path,
+but only ever asserted on arming, so the fill *price* — the number a breached stop is
+reported at — had never been checked at all.
 
 `qa/feed.js` exists because of DEF-006. Every other suite drives the calculator through
 `price(p, atr, beta)`, so no assertion had ever executed `fillFromFeed()` — the step that

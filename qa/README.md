@@ -3,8 +3,21 @@
 Run everything:
 
 ```bash
-cd qa && npm install && node invariants.js && node sweep.js && node edge.js \
-  && node golden.js && python3 parity.py > /tmp/parity.json && node parity.js
+cd qa && npm install && sh run_all.sh
+```
+
+`run_all.sh` is the only complete list — it runs every suite, fetches the quotes feed if
+it is missing, and reports a crashed suite as a **failure** rather than a silent zero. The
+hand-written chain that used to live here drifted: it named four suites out of ten, so
+`defects`, `ux`, `feed`, `custom_edge` and `tracker` never ran for anyone who copied it.
+
+CI runs the same script on every push and pull request (`.github/workflows/qa.yml`), with
+one exception: `parity` needs the `riskml` checkout, which CI has no access to, so it is
+reported SKIPPED there — 143 of 153 assertions. Before shipping a change to any **rule**,
+run it locally with parity demanded:
+
+```bash
+QA_REQUIRE_PARITY=1 sh run_all.sh
 ```
 
 Each suite exists because a **different class of bug** got past the previous ones.
@@ -26,8 +39,21 @@ between** answers, which example-based tests cannot see.
 
 ## sweep.js — the whole universe at once
 Runs all ~2,600 real tickers and checks the **distribution**, not individual answers.
-Asserts no single size claims >15% of the universe, and that sorting by ATR yields a
-non-increasing size curve.
+Asserts no single size claims >15% of the universe, and that every cap holds against the
+variable **its own formula uses**.
+
+That last part was wrong for a long time and is the lesson of this suite. It used to sort
+each binding-constraint group by ATR and demand size fall — including the **beta cap**,
+whose formula is `capital × betaexpct / beta` and contains no ATR term at all. Beta tracks
+ATR only as a band-median fit (corr 0.946), never per ticker, so the assertion demanded
+something that was never promised. It failed on BMNR ATR 6.35% ₪6,172 → QUBT ATR 6.55%
+₪6,750 — two names whose betas run the other way — and the failure stood as a disclosed
+"known" for months. **The tool was right and the test was wrong** (DEF-012). ATR-ordering
+is now asserted only where ATR drives the answer, and the beta cap is checked against the
+invariant it does promise: `size × beta == exposure budget`, and size falling as beta rises.
+
+A test that fails against correct behaviour is worse than no test: it teaches you to read
+red as normal.
 
 ## edge.js — degenerate and hostile inputs
 Zero/negative/absurd prices and ATRs, junk strings (`abc`, `1e999`, `--5`, `NaN`), every
@@ -37,6 +63,23 @@ silently wrongly.** Nothing may render `NaN`, `Infinity` or `undefined`.
 ## golden.json — frozen answers
 14 representative cases. Any logic change that moves them fails here, so a shift is
 always a decision. Regenerate deliberately: `node golden.js --update`.
+
+## tracker.js — the position-replay path
+Drives `liveState()` through real bar fixtures and asserts the **fill price** of a
+breached stop, which nothing had ever checked. `parity.js` reaches this same code but only
+ever asserts on *arming*.
+
+The bug it was written for: the feed published `[date, high, low, close]` with no **open**,
+so the tracker could only ask `low <= stop` and then reported the fill *at the stop price*.
+On any bar that opened below the stop that is false — the stop price never traded and you
+were filled lower, at the open. It flattered the exit on exactly the days a stop exists
+for, and 4.93% of armed trades end negative through gaps. Open is now the fifth bar field
+and the tracker fills open-first (DEF-011).
+
+Covers: ordinary fill at the stop, gap fill at the open, gap wording, stop-first ordering
+when a bar both breaches and arms, opening below the stop beating arming, no breach when
+the low holds, correct breach date, and a **legacy 4-field bar** still reporting the breach
+at the old price so an old cached feed degrades rather than going silent.
 
 ## parity.py + parity.js — tool vs research code
 The browser tool and `~/riskml` implement the same ladder. If they disagree, one is
@@ -57,8 +100,15 @@ precision, and the tool's own reported figures are treated as authoritative.
 **Write the intent down, including where clustering is deliberate.** The saturation zone
 above 11% ATR looked like a failure until it was asserted as intended.
 
-## Known open finding
+**A test that fails against correct behaviour must be fixed, not disclosed.** See sweep.js
+above and DEF-012. Standing red teaches you to stop reading the output.
 
-At sub-dollar prices the stop renders as `0.00`, because prices are formatted to two
-decimals. Only reachable via manual entry — the feed filters below $3 — but a displayed
-stop of zero is wrong. Fix is adaptive precision (4dp under $1, 3dp under $10).
+## Known open findings
+
+None. The sub-dollar `0.00` stop that used to be listed here was fixed as DEF-004
+(adaptive precision: 4dp under $1, 3dp under $10) and is covered by the edge suite.
+
+The gaps that remain are *uncovered areas*, not known-wrong behaviour — real-browser and
+iOS Safari testing, theming and accessibility, `localStorage` disabled/full/corrupted,
+concurrent tabs, data-pipeline failure injection, and `FR-*`-to-test traceability. See
+PRD §10.

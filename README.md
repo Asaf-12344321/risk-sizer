@@ -279,7 +279,7 @@ Risk Sizer has a substantial regression suite under [`qa/`](qa/). Before changin
 1. Read the related PRD requirements and tests.
 2. Document the intended behavioral change.
 3. Keep product/visual changes separate from calculation changes.
-4. Run the relevant invariants, golden, feed, defect, parity and full regression suites before proposing a merge.
+4. Run the full suite: `cd qa && npm install && sh run_all.sh`. CI runs it on every push and pull request, minus `parity` — that one needs the private `riskml` checkout, so run `QA_REQUIRE_PARITY=1 sh run_all.sh` locally before merging any change to a **rule**.
 
 See [`qa/README.md`](qa/README.md) and [`qa/DATASET.md`](qa/DATASET.md) for suite design and research limitations.
 
