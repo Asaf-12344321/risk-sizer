@@ -1479,7 +1479,19 @@
   var cfg = {};
   Object.keys(DEFAULTS).forEach(function (k) { cfg[k] = DEFAULTS[k]; });
   var setupComplete = false;
-  var apiKey = null; // Memory only: never persisted in the browser.
+  // Remembered per device in localStorage so the key is typed once, not every load.
+  // Wrapped because Safari private mode throws on access rather than returning null.
+  var API_KEY_STORE = "riskSizerApiKey";
+  function loadApiKey() {
+    try { return window.localStorage.getItem(API_KEY_STORE) || null; } catch (e) { return null; }
+  }
+  function storeApiKey(value) {
+    try {
+      if (value) window.localStorage.setItem(API_KEY_STORE, value);
+      else window.localStorage.removeItem(API_KEY_STORE);
+    } catch (e) { /* private mode: fall back to memory for this session */ }
+  }
+  var apiKey = loadApiKey();
   var settingsSaveTimer = null;
 
   function apiFetch(path, options, retried) {
@@ -1488,9 +1500,17 @@
     if (apiKey) headers["X-API-Key"] = apiKey;
     options.headers = headers;
     return fetch(path, options).then(function (response) {
-      if (response.status === 401 && !retried) {
-        apiKey = window.prompt("Enter the Risk Sizer API key") || null;
-        if (apiKey) return apiFetch(path, options, true);
+      if (response.status === 401) {
+        // Whatever key we just sent was rejected, so drop it now. Otherwise a
+        // stale key survives in storage and every later load fails silently.
+        if (apiKey) { apiKey = null; storeApiKey(null); }
+        if (!retried) {
+          apiKey = window.prompt("Enter the Risk Sizer API key") || null;
+          if (apiKey) {
+            storeApiKey(apiKey);
+            return apiFetch(path, options, true);
+          }
+        }
       }
       if (response.status === 204) return null;
       return response.json().catch(function () { return {}; }).then(function (body) {
