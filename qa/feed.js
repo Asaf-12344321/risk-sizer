@@ -144,8 +144,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   }
 
   // Backstop, for hand entry with no lookup: must never fire on a real daily ATR.
-  // 7 real tickers sit between 0.3% and 0.5%, so the floor is 0.3%, below the 0.319%
-  // minimum measured anywhere in the universe.
+  // The live universe currently reaches 0.267%, so the 0.20% floor remains below every
+  // genuine daily ATR while still catching the 0.134% intraday regression case below.
   const g2 = boot(); await wait(50);
   let falsePos = [];
   for (const s of Object.keys(quotes)) {

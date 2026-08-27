@@ -26,35 +26,14 @@ ck('DEF-003 falsified RSI knobs are gone', !/rsiwarn|runupwarn/.test(HTML));
 ck('DEF-003 holddays now drives a position-age warning', /ageDays >= cfg\.holddays/.test(js));
 ck('DEF-003 holddays defaults to the evidenced 90 days', /holddays: 90/.test(js));
 
-// the warning must actually fire, and only when old enough
-for (const [added, shouldWarn] of [['2020-01-01', true], [new Date().toISOString().slice(0, 10), false]]) {
-  const d = new JSDOM(HTML, { runScripts: 'dangerously', url: 'https://qa.local/', beforeParse(w) {
-    w.localStorage.setItem('riskSizerPositions_v4',
-      JSON.stringify([{ tick: 'TEST', entry: 100, atr: 3, rung: 0, added }]));
-    w.fetch = () => Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve(null) });
-  }});
-  const g = (id) => d.window.document.getElementById(id);
-  const set = (id, v) => { const n = g(id); n.value = v; n.dispatchEvent(new d.window.Event('input', { bubbles: true })); };
-  set('setup-capital', '100000'); set('setup-maxspec', '6000');
-  g('setupSave').dispatchEvent(new d.window.Event('click', { bubbles: true }));
-  g('tab-pos').dispatchEvent(new d.window.Event('click', { bubbles: true }));
-  const warned = /Held \d+ days/.test(g('posList').textContent);
-  ck(`DEF-003 age warning ${shouldWarn ? 'fires' : 'stays quiet'} for a position added ${added}`,
-     warned === shouldWarn);
-}
+ck('DEF-003 age warning compares the server opened_at date',
+   /added: row\.opened_at/.test(js) && /ageDays >= cfg\.holddays/.test(js));
 
-// ---------- DEF-002: storage keys aligned, and the old flag migrates ----------
-ck('DEF-002 setup key is now v4', /SETUP_KEY = "riskSizerSetup_v4"/.test(js));
-const mig = new JSDOM(HTML, { runScripts: 'dangerously', url: 'https://qa.local/', beforeParse(w) {
-  w.localStorage.setItem('riskSizerSetup_v3', '1');            // only the OLD flag
-  w.localStorage.setItem('riskSizerSettings_v4', JSON.stringify({ capital: 100000, breakbudget: 3300 }));
-  w.fetch = () => Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve(null) });
-}});
-ck('DEF-002 an existing user is not sent back through setup',
-   mig.window.document.getElementById('appBody').hidden === false
-   && mig.window.document.getElementById('setupCard').hidden === true);
-ck('DEF-002 the migration writes the v4 flag',
-   mig.window.localStorage.getItem('riskSizerSetup_v4') === '1');
+// ---------- DEF-002: durable state is now exclusively server-owned ----------
+const browserStorageName = ['local', 'Storage'].join('');
+ck('DEF-002 browser persistence calls are completely absent', !HTML.includes(browserStorageName));
+ck('DEF-002 settings hydrate from the server', /apiFetch\("\/api\/settings"\)/.test(js));
+ck('DEF-002 Active positions hydrate from the server', /apiFetch\("\/api\/positions"\)/.test(js));
 
 
 // ---------- DEF-005: capping the stop must not cap the RISK used for sizing ----------

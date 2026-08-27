@@ -1,9 +1,18 @@
 data.json
 out/
 __pycache__/
+.venv/
 qa/node_modules/
 qa/package-lock.json
+qa/pnpm-lock.yaml
 RFC-*.md
+
+# Durable VM state and local backups are never source-controlled.
+data/*.db
+data/*.db-shm
+data/*.db-wal
+backups/
+portfolio_snapshot*.json
 
 # Design reference and handoff bundles. Not sensitive (verified free of account figures)
 # but not needed by anyone cloning this repo. NOTE: untracked means unbacked-up — if these

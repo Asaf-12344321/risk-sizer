@@ -26,6 +26,8 @@
     --bad-bg: #f8e4e0;
     --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --font-mono: ui-monospace, "SF Mono", Menlo, "Cascadia Mono", monospace;
+    --radius-control: 9px;
+    --radius-card: 14px;
   }
 
   @media (prefers-color-scheme: dark) {
@@ -131,7 +133,7 @@
   .card {
     background: var(--ink-raised);
     border: 1px solid var(--ink-border);
-    border-radius: 14px;
+    border-radius: var(--radius-card);
     padding: 16px;
     display: flex;
     flex-direction: column;
@@ -276,7 +278,7 @@
   details.settings {
     background: var(--ink-raised);
     border: 1px solid var(--ink-border);
-    border-radius: 14px;
+    border-radius: var(--radius-card);
     padding: 4px 16px;
   }
   details.settings summary {
@@ -293,6 +295,7 @@
   details.settings summary::-webkit-details-marker { display: none; }
   details.settings summary::after { content: "⋯"; font-weight: 700; }
   details.settings[open] summary::after { content: "×"; font-size: 16px; }
+  details.settings:not([open]) { display: none; }
   .settings-body { display: flex; flex-direction: column; gap: 12px; padding-bottom: 14px; }
   .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .settings-note { font-size: 11.5px; color: var(--text-dim); line-height: 1.5; }
@@ -335,6 +338,30 @@
   .tab-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   .add-row { display: flex; flex-direction: column; gap: 10px; border-top: 1px dashed var(--ink-border); padding-top: 14px; }
+  .add-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .risk-gate {
+    border: 1px solid var(--ink-border); border-radius: 12px; padding: 12px;
+    background: var(--ink-raised); display: flex; flex-direction: column; gap: 10px;
+  }
+  .risk-gate-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+  .risk-gate-head span { font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-dim); }
+  .risk-gate-head strong { font-family: var(--font-mono); font-size: 12px; }
+  .risk-gate[data-state="approved"] { border-color: var(--good); }
+  .risk-gate[data-state="approved"] .risk-gate-head strong { color: var(--good); }
+  .risk-gate[data-state="rejected"], .risk-gate[data-state="error"] { border-color: var(--bad); }
+  .risk-gate[data-state="rejected"] .risk-gate-head strong,
+  .risk-gate[data-state="error"] .risk-gate-head strong { color: var(--bad); }
+  .risk-gate[data-state="loading"] .risk-gate-head strong { color: var(--warn); }
+  .risk-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 7px; }
+  .risk-metrics div { padding: 8px; border-radius: 8px; background: var(--ink); }
+  .risk-metrics span { display: block; font-size: 8px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-dim); }
+  .risk-metrics strong { display: block; margin-top: 3px; font-family: var(--font-mono); font-size: 12px; }
+  .risk-reasons { font-size: 11px; line-height: 1.45; color: var(--text-dim); }
+  .risk-reasons div + div { margin-top: 5px; }
+  .risk-reasons .blocker { color: var(--bad); }
+  .risk-check-btn { align-self: flex-start; border: 0; padding: 0; background: transparent; color: var(--accent); font: 600 11px var(--font-ui); cursor: pointer; }
+  .pos-value-fix { display: flex; gap: 8px; align-items: stretch; }
+  .pos-value-fix input { min-width: 0; flex: 1; }
 
   .lookup-row { display: flex; gap: 8px; align-items: stretch; }
   .lookup-row input {
@@ -368,7 +395,8 @@
     gap: 10px;
   }
   .pos + .pos { margin-top: 10px; }
-  .pos-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .pos-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .pos-heading-copy { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
   .pos-tick { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
   .pos-meta { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
   .pos-now {
@@ -392,6 +420,22 @@
   .btn-reached:disabled { background: var(--ink-raised); color: var(--text-dim); border-color: var(--ink-border); cursor: not-allowed; }
   .btn-undo, .btn-close { background: transparent; color: var(--text-dim); }
   .btn-close:hover { color: var(--bad); border-color: var(--bad); }
+  .row-actions { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 6px; }
+  .row-actions button, .ghost-btn, .danger-ghost {
+    width: auto; min-height: 34px; padding: 7px 10px; border-radius: var(--radius-control);
+    border: 1px solid var(--ink-border); background: transparent; color: var(--text-dim);
+    font: 600 12px/1 var(--font-ui); cursor: pointer;
+  }
+  .row-actions button:hover, .ghost-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .row-actions .danger-ghost:hover, .danger-ghost:hover { color: var(--bad); border-color: var(--bad); }
+  .position-name, .holding-name { display: block; color: var(--text); font-weight: 700; }
+  .position-ticker, .holding-ticker { color: var(--text-dim); font: 11px/1.4 var(--font-mono); }
+  .legacy-badge {
+    display: inline-flex; width: fit-content; margin-top: 2px; padding: 3px 7px;
+    border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+    border-radius: 999px; color: var(--warn); background: var(--warn-bg);
+    font: 700 9px/1 var(--font-ui); letter-spacing: .05em; text-transform: uppercase;
+  }
   .pos-empty { font-size: 13px; color: var(--text-dim); line-height: 1.5; }
   .pos-safe { color: var(--good); }
 
@@ -757,6 +801,17 @@
   .pos-now .stop { color: var(--accent); font-size: 25px; }
   .pos-next { background: rgba(15, 24, 33, 0.72); border-color: var(--ink-border-soft); }
   .pos-actions button { min-height: 44px; }
+  .portfolio-stack { display: grid; gap: 18px; }
+  .core-form { display: grid; grid-template-columns: 1fr 1.2fr 1fr .75fr auto; gap: 10px; align-items: end; }
+  .core-list { display: grid; gap: 8px; }
+  .core-row {
+    display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 12px; align-items: center;
+    padding: 11px 12px; border: 1px solid var(--ink-border-soft); border-radius: 10px;
+    background: rgba(4, 9, 14, 0.6);
+  }
+  .core-row strong { font-family: var(--font-mono); }
+  .core-row span { color: var(--text-dim); font-size: 12px; }
+  .core-row button { min-height: 34px; }
 
   #ladderCard { overflow: hidden; }
   .ladder-wrap { margin-inline: -5px; padding-inline: 5px; }
@@ -852,6 +907,7 @@
     .row2, .settings-grid { grid-template-columns: 1fr; }
     .answer.alt { grid-template-columns: 1fr; }
     .answer.alt .answer-sub { grid-column: 1; grid-row: auto; text-align: left; }
+    .core-form { grid-template-columns: 1fr 1fr; }
     .result-kicker span { display: none; }
   }
 
@@ -935,7 +991,7 @@
       z-index: 5;
       top: 0;
       left: 190px;
-      width: 260px;
+      width: 390px;
       height: 68px;
       padding: 0;
       gap: 8px;
@@ -983,19 +1039,16 @@
     .field label { font-size: 10px; color: #aeb9ba; }
     .field input, .field select { min-height: 40px; border-radius: 7px; background: #171c1d; text-align: right; font-family: var(--font-mono); }
     .result-terminal-empty, .result-card { grid-column: 2; grid-row: 1; min-height: 340px; padding: 28px; position: static; }
-    .result-card { position: relative; background: #1c2021; }
+    .result-card { display: flex; position: static; background: #1c2021; gap: 18px; }
     .result-kicker { color: #11e6ef; }
     .answer-hero { min-height: 190px; align-items: center; }
     .answer-num { font-size: clamp(44px,6vw,64px); letter-spacing: .08em; text-shadow: 0 0 18px rgba(16,226,236,.13); }
     .result-card .answer.alt { display: none; }
     .risk-orbit { width: 176px; height: 176px; border: 13px solid transparent; background: radial-gradient(circle,#1c2021 59%,transparent 60%), conic-gradient(#0be99b 0 29%,transparent 29% 48%,#10e1eb 48% 91%,transparent 91%); }
     .risk-orbit::before { display: none; }
-    .result-card .why { position: absolute; left: 28px; bottom: 86px; border: 0; }
+    .result-card .why { position: static; border: 0; margin-top: 0; }
     .result-card .add-row {
-      position: absolute;
-      left: 28px;
-      right: 28px;
-      bottom: 20px;
+      position: static;
       display: grid;
       grid-template-columns: minmax(0,1fr) 190px;
       align-items: end;
@@ -1009,7 +1062,14 @@
     .summary-strip { grid-column: 2; grid-row: 2; }
     #ladderCard { grid-column: 1 / 3; margin-top: 18px; }
     .ladder th, .ladder td { padding: 13px 20px; }
-    details.settings { margin-top: 24px; }
+    details.settings[open] {
+      position: fixed; z-index: 50; overflow: auto; margin: 0;
+      top: 50%; left: 50%; right: auto; bottom: auto;
+      width: min(900px, calc(100vw - 48px)); max-height: min(88dvh, 820px);
+      transform: translate(-50%, -50%); border-radius: 20px;
+      padding: 12px 24px 24px;
+      box-shadow: 0 28px 110px rgba(0,0,0,.78), 0 0 0 100vmax rgba(0,0,0,.55);
+    }
     footer.note { max-width: none; padding: 16px 0 0; font-size: 10px; }
   }
 
@@ -1018,7 +1078,21 @@
     .terminal-empty-ring { width: 108px; height: 108px; }
     .terminal-empty-ring small { margin-bottom: 28px; }
     .summary-strip { grid-template-columns: 1fr 1fr; }
+    .add-fields, .settings-grid, .row2 { grid-template-columns: 1fr; }
+    .core-form { grid-template-columns: 1fr 1fr; }
+    .core-form .field:nth-child(2), .core-form .primary-btn { grid-column: 1 / -1; }
+    .core-row { grid-template-columns: minmax(0,1fr) auto; }
+    .core-row .row-actions { grid-column: 1 / -1; justify-content: flex-end; }
+    .pos-actions { flex-wrap: wrap; }
+    .pos-actions button { flex: 1 1 135px; }
+    .row-actions button { flex: 0 0 auto; }
+    .result-card { gap: 16px; }
+    .result-card .add-row { gap: 12px; }
   }
+
+  .card, .pos, .risk-gate, .result { border-radius: var(--radius-card); }
+  .primary-btn, .reset-btn, .pos-actions button, .row-actions button,
+  .field input, .field select, .lookup-row input { border-radius: var(--radius-control); }
 
   [hidden] { display: none !important; }
 </style>
@@ -1035,7 +1109,7 @@
           <h1>RISK-SIZER</h1>
         </div>
       </div>
-      <div class="privacy-state"><span aria-hidden="true"></span> Local &amp; private</div>
+      <div class="privacy-state"><span aria-hidden="true"></span> Server-synced &amp; private</div>
     </div>
     <p class="tagline">Calculator&nbsp;&nbsp;&nbsp; Portfolio&nbsp;&nbsp;&nbsp; Rules</p>
     <div class="rules-strip" id="rulesStrip"></div>
@@ -1064,9 +1138,23 @@
   <div class="tabs" role="tablist">
     <button class="tab-btn" role="tab" id="tab-calc" aria-selected="true">Calculator</button>
     <button class="tab-btn" role="tab" id="tab-pos" aria-selected="false">Portfolio <span id="posCount"></span></button>
+    <button class="tab-btn" role="tab" id="tab-settings" aria-selected="false">Settings</button>
   </div>
 
   <div id="posPanel" hidden>
+    <div class="portfolio-stack">
+    <section class="card">
+      <div class="section-label">Core portfolio <span class="hint">— long-term holdings in SQLite</span></div>
+      <p class="setup-intro">Values are current market values in ILS. These holdings are included automatically in every risk check.</p>
+      <form class="core-form" id="coreForm">
+        <div class="field"><label for="coreTicker">Ticker</label><input id="coreTicker" autocomplete="off" autocapitalize="characters" placeholder="QQQ" required></div>
+        <div class="field"><label for="coreDisplayName">Display name <span class="opt">optional</span></label><input id="coreDisplayName" autocomplete="off" placeholder="Leumi / לאומי"></div>
+        <div class="field"><label for="coreValue">Value (₪)</label><input id="coreValue" type="number" inputmode="decimal" min="1" step="1" required></div>
+        <div class="field"><label for="coreCurrency">Currency</label><select id="coreCurrency"><option value="USD">USD</option><option value="ILS">ILS</option><option value="AUTO">Auto</option></select></div>
+        <button class="primary-btn" type="submit">Add Core</button>
+      </form>
+      <div class="core-list" id="coreList"></div>
+    </section>
     <section class="card">
       <div class="section-label">Set one alert per position <span class="hint">— then wait</span></div>
       <p class="setup-intro">
@@ -1076,6 +1164,7 @@
       </p>
       <div id="posList"></div>
     </section>
+    </div>
   </div>
 
   <div id="calcPanel">
@@ -1155,17 +1244,38 @@
     </div>
     <div class="flag-row" id="out-flags"></div>
 
+    <section class="risk-gate" id="riskGate" data-state="idle" aria-live="polite">
+      <div class="risk-gate-head">
+        <span>Holistic quantitative risk gate</span>
+        <strong id="riskVerdict">WAITING</strong>
+      </div>
+      <div class="risk-metrics" id="riskMetrics" hidden>
+        <div><span>Weighted correlation</span><strong id="riskCorrelation">—</strong></div>
+        <div><span>Variance change</span><strong id="riskVariance">—</strong></div>
+        <div><span>Incremental 99% VaR</span><strong id="riskIncrementalVar">—</strong></div>
+        <div><span>Portfolio heat</span><strong id="riskPortfolioHeat">—</strong></div>
+      </div>
+      <div class="risk-reasons" id="riskReasons">Enter a ticker and position value.</div>
+      <button class="risk-check-btn" type="button" id="riskCheckBtn">Run risk check</button>
+    </section>
+
     <details class="why">
       <summary>Why this size?</summary>
       <div class="formula" id="out-size-formula"></div>
     </details>
 
     <div class="add-row" id="addRow" hidden>
-      <div class="field">
-        <label for="in-ticker">Ticker to track</label>
-        <input type="text" autocomplete="off" id="in-ticker" placeholder="ASTS">
+      <div class="add-fields">
+        <div class="field">
+          <label for="in-ticker">Ticker to track</label>
+          <input type="text" autocomplete="off" id="in-ticker" placeholder="ASTS">
+        </div>
+        <div class="field">
+          <label for="in-position-value">Actual position value (₪)</label>
+          <input type="number" inputmode="decimal" min="1" step="1" id="in-position-value" placeholder="0">
+        </div>
       </div>
-      <button class="primary-btn" type="button" id="addPosBtn" disabled>Track this position</button>
+      <button class="primary-btn" type="button" id="addPosBtn" disabled>Track approved position</button>
     </div>
   </section>
 
@@ -1187,7 +1297,7 @@
   </div>
 
   <details class="settings" id="settingsPanel">
-    <summary>Your rules</summary>
+    <summary>Risk settings</summary>
     <div class="settings-body">
       <p class="settings-note">
         Size = 1R ÷ stop%, then held down by the smallest cap that applies. The crash
@@ -1206,6 +1316,14 @@
         <div class="field">
           <label for="cfg-riskpct">…or as % of capital</label>
           <input type="number" inputmode="decimal" step="0.1" id="cfg-riskpct">
+        </div>
+        <div class="field">
+          <label for="cfg-maxdailyvar">Maximum 99% daily VaR (₪)</label>
+          <input type="text" inputmode="numeric" autocomplete="off" id="cfg-maxdailyvar">
+        </div>
+        <div class="field">
+          <label for="cfg-maxriskonr">Max Portfolio Risk-On budget (R)</label>
+          <input type="number" inputmode="decimal" min="1" step="1" id="cfg-maxriskonr">
         </div>
         <div class="field">
           <label for="cfg-breakbudget">Most you'd lose in a crash (₪)</label>
@@ -1323,6 +1441,8 @@
     capital: 0,
     riskpct: 2,
     riskabs: 0,          // ₪ per trade (1R). 0 = derive from riskpct instead
+    maxdailyvar: 25000,  // hard 99% historical one-day VaR budget across Core + Active
+    maxriskonr: 5,       // forward-looking Risk-On slots; legacy positions are excluded
     breakbudget: 0,
     maxpct: 20,
     betaexpct: 25,
@@ -1356,35 +1476,42 @@
     fx: 3.65
   };
 
-  var KEY = "riskSizerSettings_v4";
-  var cfg = loadSettings();
+  var cfg = {};
+  Object.keys(DEFAULTS).forEach(function (k) { cfg[k] = DEFAULTS[k]; });
+  var setupComplete = false;
+  var apiKey = null; // Memory only: never persisted in the browser.
+  var settingsSaveTimer = null;
 
-
-  function loadSettings() {
-    try {
-      var raw = localStorage.getItem(KEY);
-      if (raw) {
-        var parsed = JSON.parse(raw);
-        var merged = {};
-        Object.keys(DEFAULTS).forEach(function (k) {
-          merged[k] = (typeof parsed[k] === "number" && !isNaN(parsed[k])) ? parsed[k] : DEFAULTS[k];
-        });
-        // Migrate the old 45% stop ceiling, which allowed absurd initial stops on high-ATR names.
-        if (merged.maxstop === 45) merged.maxstop = DEFAULTS.maxstop;
-        if (merged.minstop === 5) merged.minstop = DEFAULTS.minstop;   // revert my unvalidated 5% change
-        // Out-of-sample grid search moved these; migrate the superseded values.
-        if (merged.initmult === 3.0) merged.initmult = DEFAULTS.initmult;
-        if (merged.trailmult === 2.5) merged.trailmult = DEFAULTS.trailmult;
-        return merged;
+  function apiFetch(path, options, retried) {
+    options = options || {};
+    var headers = Object.assign({}, options.headers || {});
+    if (apiKey) headers["X-API-Key"] = apiKey;
+    options.headers = headers;
+    return fetch(path, options).then(function (response) {
+      if (response.status === 401 && !retried) {
+        apiKey = window.prompt("Enter the Risk Sizer API key") || null;
+        if (apiKey) return apiFetch(path, options, true);
       }
-    } catch (e) {}
-    var copy = {};
-    Object.keys(DEFAULTS).forEach(function (k) { copy[k] = DEFAULTS[k]; });
-    return copy;
+      if (response.status === 204) return null;
+      return response.json().catch(function () { return {}; }).then(function (body) {
+        if (!response.ok) throw new Error(body.detail || ("API HTTP " + response.status));
+        return body;
+      });
+    });
   }
 
-  function saveSettings() {
-    try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {}
+  function saveSettings(options) {
+    options = options || {};
+    clearTimeout(settingsSaveTimer);
+    var persist = function () {
+      apiFetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings: cfg, setup_complete: setupComplete })
+      }).catch(function (error) { console.error("Settings save failed", error); });
+    };
+    if (options.immediate) persist();
+    else settingsSaveTimer = setTimeout(persist, 250);
   }
 
   // 1R in shekels. An absolute figure takes precedence over the percentage, so the
@@ -1466,12 +1593,12 @@
   //
   // riskml has no beta concept, so this function is the only home for the policy;
   // fetch_data.py deliberately publishes beta as measured and decides nothing.
-  // Lowest daily ATR% anywhere in the 2,606-ticker universe is 0.319% (DBRG), with 7 real
-  // names between 0.3% and 0.5% (EA, AES, GBTG, OGN, TWO, TALK). The threshold sits at
-  // 0.3% so it can NEVER fire on a genuine daily ATR — a red flag on EA's real volatility
+  // The current liquid universe reaches 0.267% (GBTG) and 0.272% (DBRG). The threshold
+  // sits at 0.20%, below those real observations but above the 0.134% hand-entered
+  // intraday regression case, so it remains a backstop without flagging genuine data.
   // would be exactly the kind of false output that erodes trust in the whole number.
   // This is only the backstop for hand entry; the precise check is FEED_ATR_TOLERANCE.
-  var ATR_PCT_IMPLAUSIBLE = 0.3;
+  var ATR_PCT_IMPLAUSIBLE = 0.20;
 
   // When a ticker was looked up we know its true daily ATR, so we can compare directly
   // instead of guessing from magnitude. Intraday readings are 28-51x too small (96-98%
@@ -1503,7 +1630,7 @@
   }
 
   // Settings whose inputs are text-with-thousands-separators rather than type=number.
-  var FORMATTED_CFG = ["capital", "breakbudget", "riskabs"];
+  var FORMATTED_CFG = ["capital", "breakbudget", "riskabs", "maxdailyvar"];
 
   function numFrom(node) {
     return parseFloat(String(node.value).replace(/,/g, ""));
@@ -1610,6 +1737,8 @@
       '<span class="rule-chip">Capital <b>' + nis(cfg.capital) + "</b></span>" +
       '<span class="rule-chip">1R <b>' + nis(riskBudgetNis()) + "</b>"
         + (cfg.riskabs > 0 ? " fixed" : " = " + cfg.riskpct + "%") + "</span>" +
+      '<span class="rule-chip">99% VaR budget <b>' + nis(cfg.maxdailyvar) + "</b></span>" +
+      '<span class="rule-chip">Risk-On cap <b>' + cfg.maxriskonr + "R</b></span>" +
       '<span class="rule-chip">Break budget <b>' + nis(cfg.breakbudget) + "</b></span>" +
       '<span class="rule-chip">Cap <b>' + cfg.maxpct + "%</b></span>";
   }
@@ -1628,6 +1757,10 @@
   // ---- inputs ----
   var inPrice = el("in-price"), inCcy = el("in-ccy"), inFx = el("in-fx"), fxField = el("fx-field");
   var inAtr = el("in-atr"), inBeta = el("in-beta");
+  var inPositionValue = el("in-position-value");
+  var positionValueOverridden = false, currentSizing = null;
+  var riskGateState = { status: "idle", approved: false, signature: null };
+  var riskTimer = null, riskRequestSequence = 0;
   // Values that used to be typed in. Filled from the feed, never shown as fields.
   var extra = { name: null, avgvol: null, h52: null, l52: null, asOf: null, last: null,
                 betaMeasured: false, feedAtr: null, feedSym: null };
@@ -1639,6 +1772,9 @@
   var outFlags = el("out-flags"), stockLine = el("stockLine");
 
   function blankOut(msg) {
+    currentSizing = null;
+    if (!positionValueOverridden) inPositionValue.value = "";
+    resetRiskGate("Enter a ticker and position value.");
     // nothing to show yet — keep the result cards out of the way entirely
     el("answerCard").hidden = true;
     el("resultTerminalEmpty").hidden = false;
@@ -1715,6 +1851,8 @@
       outShares.textContent = "at " + pct(riskStopPct) + " implied risk, no position is small enough";
       return;
     }
+    currentSizing = { size: size, shares: shares, price: price, atr: atr, fx: fx };
+    if (!positionValueOverridden) inPositionValue.value = String(Math.round(size));
     outSize.textContent = nis(size);
     outShares.textContent = num(shares, shares < 10 ? 2 : 0) + " shares"
       + (inCcy.value === "USD" ? " · $" + num(inCcyAmt, 0) : "")
@@ -1728,6 +1866,7 @@
     el("summaryShares").textContent = num(shares, shares < 10 ? 2 : 0);
     el("summaryStop").textContent = px(stopPrice);
     el("summaryRisk").textContent = nis(riskAmount);
+    scheduleRiskEvaluation();
 
     // ---- the reasoning, folded away
     outSizeFormula.innerHTML = Object.keys(cand).map(function (k) {
@@ -1769,7 +1908,7 @@
     // ---- at most two flags, and only when they change a decision
     var flags = [];
     // An ATR this small cannot be a DAILY ATR. Across 2,606 liquid US tickers the lowest
-    // measured is 0.32% of price (DBRG), and only 7 sit below 0.5%. A value under the
+    // measured is about 0.27% of price (GBTG/DBRG). A value under the
     // floor almost always means an INTRADAY reading: Yahoo's chart computes ATR on
     // whatever bars it is showing, and its "1D" range shows 1-MINUTE bars — which gave
     // NVDA 0.27 against a true daily 7.47, INTC 0.17 against 8.62, IREN 0.11 against 4.58.
@@ -1793,7 +1932,7 @@
         + px(feedRef) + "."]);
     } else if (!feedRef && atrPct > 0 && atrPct < ATR_PCT_IMPLAUSIBLE) {
       flags.push(["bad", "ATR is only " + atrPct.toFixed(2) + "% of price. No liquid US "
-        + "stock has a daily ATR that small (the calmest is ~0.3%), so this is probably an "
+        + "stock has a daily ATR that small (the calmest is ~0.27%), so this is probably an "
         + "intraday reading — a Yahoo chart on “1D” measures 1-minute bars. Use a "
         + "daily chart, or look the ticker up instead of typing it."]);
     }
@@ -1856,6 +1995,7 @@
       var v = numFrom(cfgInputs[k]);
       if (!isNaN(v)) {
         cfg[k] = v;
+        riskGateState.signature = null;
         saveSettings();
         refreshAll();
       }
@@ -1976,6 +2116,8 @@
     extra.last = t.last;
     extra.asOf = t.asOf || null;
     inTicker.value = sym;
+    positionValueOverridden = false;
+    riskGateState.signature = null;
     renderFeedStatus();
     syncAddBtn();
     recalc();
@@ -2000,25 +2142,220 @@
     if (e.key === "Enter") { e.preventDefault(); fillFromFeed(); }
   });
 
-  // ---- positions tracker ----------------------------------------------------
-  // A position stores only what never changes (entry, ATR) plus how many rungs have been
-  // crossed. So advancing the ladder is one tap: no prices to re-enter, nothing to monitor.
-  var POS_KEY = "riskSizerPositions_v4";
-  var positions = loadPositions();
+  // ---- holistic quantitative risk gate ------------------------------------
+  // The server reads Core and Active holdings from SQLite. The browser submits only the
+  // proposed trade, so it cannot accidentally omit an existing position.
+  function resetRiskGate(message) {
+    clearTimeout(riskTimer);
+    riskGateState = { status: "idle", approved: false, signature: null };
+    el("riskGate").dataset.state = "idle";
+    el("riskVerdict").textContent = "WAITING";
+    el("riskMetrics").hidden = true;
+    el("riskReasons").textContent = message || "Run the risk check before tracking this position.";
+    if (typeof syncAddBtn === "function") syncAddBtn();
+  }
 
-  function loadPositions() {
-    try {
-      var raw = localStorage.getItem(POS_KEY);
-      if (!raw) return [];
-      var a = JSON.parse(raw);
-      return Array.isArray(a) ? a.filter(function (p) {
-        return p && typeof p.entry === "number" && typeof p.atr === "number";
-      }) : [];
-    } catch (e) { return []; }
+  function currentRiskPayload() {
+    var ticker = (el("in-ticker").value || "").trim().toUpperCase();
+    var valueIls = parseFloat(inPositionValue.value);
+    if (!currentSizing || !ticker || !(valueIls > 0)) return null;
+    return {
+      new_ticker: ticker,
+      proposed_entry_size_ils: valueIls,
+      new_ticker_currency: inCcy.value === "USD" ? "USD" : "ILS"
+    };
   }
-  function savePositions() {
-    try { localStorage.setItem(POS_KEY, JSON.stringify(positions)); } catch (e) {}
+
+  function riskSignature(payload) {
+    return JSON.stringify(payload);
   }
+
+  function scheduleRiskEvaluation(immediate) {
+    clearTimeout(riskTimer);
+    var payload = currentRiskPayload();
+    if (!payload) {
+      resetRiskGate("Enter a ticker and actual position value.");
+      return;
+    }
+    if (payload.error) {
+      riskGateState = { status: "error", approved: false, signature: null };
+      el("riskGate").dataset.state = "error";
+      el("riskVerdict").textContent = "BLOCKED";
+      el("riskMetrics").hidden = true;
+      el("riskReasons").textContent = payload.error;
+      syncAddBtn();
+      return;
+    }
+    var signature = riskSignature(payload);
+    if (riskGateState.signature === signature &&
+        (riskGateState.status === "approved" || riskGateState.status === "rejected")) return;
+    riskGateState = { status: "loading", approved: false, signature: signature };
+    el("riskGate").dataset.state = "loading";
+    el("riskVerdict").textContent = "CALCULATING…";
+    el("riskMetrics").hidden = true;
+    el("riskReasons").textContent = "Fetching aligned returns and simulating the combined portfolio.";
+    syncAddBtn();
+    riskTimer = setTimeout(function () { runRiskEvaluation(payload, signature); }, immediate ? 0 : 700);
+  }
+
+  function runRiskEvaluation(payload, signature) {
+    var sequence = ++riskRequestSequence;
+    apiFetch("/api/risk/evaluate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }).then(function (result) {
+      if (sequence !== riskRequestSequence || signature !== riskSignature(currentRiskPayload())) return;
+      renderRiskResult(result, signature);
+    }).catch(function (error) {
+      if (sequence !== riskRequestSequence) return;
+      riskGateState = { status: "error", approved: false, signature: signature };
+      el("riskGate").dataset.state = "error";
+      el("riskVerdict").textContent = "UNAVAILABLE";
+      el("riskMetrics").hidden = true;
+      el("riskReasons").textContent = error.message + " Start the app with: uvicorn app:app";
+      syncAddBtn();
+    });
+  }
+
+  function renderRiskResult(result, signature) {
+    var metrics = result.risk_metrics || {};
+    var correlation = metrics.correlation || {};
+    var variance = metrics.variance || {};
+    var valueAtRisk = metrics.historical_var_99 || {};
+    var portfolioHeat = metrics.portfolio_heat || {};
+    var approved = result.is_trade_approved === true;
+    riskGateState = {
+      status: approved ? "approved" : "rejected",
+      approved: approved,
+      signature: signature
+    };
+    el("riskGate").dataset.state = riskGateState.status;
+    el("riskVerdict").textContent = approved ? "APPROVED" : "REJECTED";
+    el("riskMetrics").hidden = false;
+    var rho = Number(correlation.new_ticker_to_weighted_portfolio);
+    var varianceChange = Number(variance.relative_increase_pct);
+    var incrementalVar = Number(valueAtRisk.incremental_var_ils);
+    el("riskCorrelation").textContent = isFinite(rho) ? rho.toFixed(3) : "—";
+    el("riskVariance").textContent = isFinite(varianceChange)
+      ? (varianceChange >= 0 ? "+" : "") + (varianceChange * 100).toFixed(1) + "%" : "—";
+    el("riskIncrementalVar").textContent = isFinite(incrementalVar) ? nis(incrementalVar) : "—";
+    var currentHeat = Number(portfolioHeat.current_r), maxHeat = Number(portfolioHeat.max_r);
+    el("riskPortfolioHeat").textContent = isFinite(currentHeat) && isFinite(maxHeat)
+      ? currentHeat.toFixed(0) + " / " + maxHeat.toFixed(0) + "R" : "—";
+    var warnings = Array.isArray(metrics.warnings) ? metrics.warnings : [];
+    el("riskReasons").innerHTML = warnings.length
+      ? warnings.map(function (warning) { return '<div class="blocker">' + esc(warning) + "</div>"; }).join("")
+      : "No correlation, variance, or VaR limit was breached.";
+    syncAddBtn();
+  }
+
+  el("riskCheckBtn").addEventListener("click", function () {
+    riskGateState.signature = null;
+    scheduleRiskEvaluation(true);
+  });
+  inPositionValue.addEventListener("input", function () {
+    positionValueOverridden = true;
+    riskGateState.signature = null;
+    scheduleRiskEvaluation();
+  });
+
+  // ---- server-backed Core and Active portfolios ----------------------------
+  var positions = [];
+  var coreHoldings = [];
+
+  function normalisePosition(row) {
+    return {
+      id: row.id, tick: row.ticker, entry: Number(row.entry_price), atr: Number(row.atr),
+      quantity: Number(row.quantity), value_ils: Number(row.value_ils),
+      currency: row.currency, fx_to_ils: Number(row.fx_to_ils), fx_ticker: row.fx_ticker,
+      risk_status: row.risk_status, rung: Number(row.rung || 0), opened_at: row.opened_at,
+      display_name: row.display_name || "", legacy: row.legacy === true || row.legacy === 1,
+      added: row.opened_at
+    };
+  }
+
+  function loadServerPositions() {
+    return apiFetch("/api/positions").then(function (rows) {
+      positions = (rows || []).map(normalisePosition);
+      renderPositions();
+      return positions;
+    }).catch(function (error) {
+      el("posList").innerHTML = '<p class="pos-empty">Could not load positions: ' + esc(error.message) + "</p>";
+      throw error;
+    });
+  }
+
+  function renderCore() {
+    var host = el("coreList");
+    if (!coreHoldings.length) {
+      host.innerHTML = '<p class="pos-empty">No Core holdings yet. Add one before running a holistic risk check.</p>';
+      return;
+    }
+    host.innerHTML = coreHoldings.map(function (holding) {
+      var displayName = holding.display_name || holding.ticker;
+      return '<div class="core-row"><div><span class="holding-name">' + esc(displayName) + '</span>'
+        + '<span class="holding-ticker">' + esc(holding.ticker) + ' · ' + esc(holding.currency) + '</span></div>'
+        + '<strong>' + nis(holding.value_ils) + '</strong><div class="row-actions">'
+        + '<button class="ghost-btn" type="button" data-core-edit="' + holding.id + '">Edit</button>'
+        + '<button class="danger-ghost" type="button" data-core-delete="' + holding.id + '">Delete</button></div></div>';
+    }).join("");
+  }
+
+  function loadCore() {
+    return apiFetch("/api/core").then(function (rows) {
+      coreHoldings = rows || [];
+      renderCore();
+      return coreHoldings;
+    }).catch(function (error) {
+      el("coreList").innerHTML = '<p class="pos-empty">Could not load Core holdings: ' + esc(error.message) + "</p>";
+      throw error;
+    });
+  }
+
+  el("coreForm").addEventListener("submit", function (event) {
+    event.preventDefault();
+    var ticker = el("coreTicker").value.trim().toUpperCase();
+    var displayName = el("coreDisplayName").value.trim();
+    var valueIls = parseFloat(el("coreValue").value);
+    if (!ticker || !(valueIls > 0)) return;
+    apiFetch("/api/core", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ticker: ticker, display_name: displayName || null,
+        value_ils: valueIls, currency: el("coreCurrency").value
+      })
+    }).then(function () {
+      el("coreTicker").value = "";
+      el("coreDisplayName").value = "";
+      el("coreValue").value = "";
+      riskGateState.signature = null;
+      return loadCore();
+    }).catch(function (error) { window.alert(error.message); });
+  });
+
+  el("coreList").addEventListener("click", function (event) {
+    var edit = event.target.closest("button[data-core-edit]");
+    if (edit) {
+      var holding = coreHoldings.find(function (item) { return String(item.id) === edit.dataset.coreEdit; });
+      if (!holding) return;
+      var nextName = window.prompt("Friendly display name for " + holding.ticker, holding.display_name || holding.ticker);
+      if (nextName === null) return;
+      var nextValue = parseFloat(window.prompt("Current ILS value for " + holding.ticker, holding.value_ils));
+      if (!(nextValue > 0)) return;
+      apiFetch("/api/core/" + holding.id, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ display_name: nextName.trim() || null, value_ils: nextValue })
+      }).then(function () { riskGateState.signature = null; return loadCore(); })
+        .catch(function (error) { window.alert(error.message); });
+      return;
+    }
+    var button = event.target.closest("button[data-core-delete]");
+    if (!button || !window.confirm("Delete this Core holding?")) return;
+    apiFetch("/api/core/" + button.dataset.coreDelete, { method: "DELETE" })
+      .then(function () { riskGateState.signature = null; return loadCore(); })
+      .catch(function (error) { window.alert(error.message); });
+  });
 
   function ladderFor(p) {
     var initialStop = initialStopFor(p.entry, p.atr);
@@ -2089,14 +2426,31 @@
       var stop = live ? live.stop : rungs[idx].stop;
       var atBreakeven = stop >= p.entry - 1e-9;
       var lockedPct = (stop - p.entry) / p.entry * 100;
+      var displayName = p.display_name || p.tick || "—";
       var out = '<div class="pos">'
-        + '<div class="pos-head"><span class="pos-tick">' + esc(p.tick || "—") + "</span>"
+        + '<div class="pos-head"><div class="pos-heading-copy"><span class="position-name">' + esc(displayName) + "</span>"
+        + '<span class="position-ticker">' + esc(p.tick || "—") + '</span>'
         + '<span class="pos-meta">entry ' + px(p.entry) + " · ATR " + px(p.atr)
-        + (p.added ? " · " + p.added : "") + "</span></div>"
+        + (p.value_ils > 0 ? " · " + nis(p.value_ils) : " · value missing")
+        + " · " + esc(p.risk_status || "RISK_ON")
+        + (p.added ? " · " + p.added : "") + "</span>"
+        + (p.legacy ? '<span class="legacy-badge">Legacy · excluded from R-slot budget</span>' : '')
+        + '</div><div class="row-actions">'
+        + '<button class="ghost-btn" type="button" data-act="edit" data-i="' + i + '">Edit</button>'
+        + '<button class="danger-ghost" type="button" data-act="close" data-i="' + i + '">Delete</button>'
+        + "</div></div>"
         + '<div class="pos-now"><span class="lbl">stop now</span><span class="stop">' + px(stop) + "</span>"
         + '<span class="lbl">' + (atBreakeven
             ? '<span class="pos-safe">' + (lockedPct > 0.05 ? "locked in +" + lockedPct.toFixed(1) + "%" : "at breakeven — protected") + "</span>"
             : "risking " + pct((p.entry - stop) / p.entry * 100)) + "</span></div>";
+
+      if (!(p.value_ils > 0)) {
+        out += '<div class="pos-next"><span class="pos-hit">ILS value required for holistic risk.</span> '
+          + 'Enter the current market value of this position.</div>'
+          + '<div class="pos-value-fix"><input type="number" inputmode="decimal" min="1" step="1" '
+          + 'data-role="position-value" data-i="' + i + '" placeholder="Current value ₪">'
+          + '<button class="primary-btn" type="button" data-act="save-value" data-i="' + i + '">Save value</button></div>';
+      }
 
       // DEF-003: holddays was a dead setting. Wired to the one time-based finding the
       // history actually supports — the 90+ day bucket was the only losing one.
@@ -2127,7 +2481,8 @@
             + "</b> at Leumi; it rises whenever the price closes at a new high.</div>";
         }
         out += '<div class="pos-actions">'
-          + '<button class="btn-close" type="button" data-act="close" data-i="' + i + '">Sold</button>'
+          + '<button class="btn-reached" type="button" data-act="toggle-risk" data-i="' + i + '">'
+          + (p.risk_status === "ARMED_ZERO_RISK" ? "Mark Risk On" : "Mark Armed") + '</button>'
           + "</div></div>";
         return out;
       }
@@ -2141,7 +2496,8 @@
         + '<button class="btn-reached" type="button" data-act="reached" data-i="' + i + '"'
         + (next ? "" : " disabled") + ">✓ Reached " + (next ? px(next.px) : "—") + "</button>"
         + (idx > 0 ? '<button class="btn-undo" type="button" data-act="undo" data-i="' + i + '">Undo</button>' : "")
-        + '<button class="btn-close" type="button" data-act="close" data-i="' + i + '">Sold</button>'
+        + '<button class="btn-reached" type="button" data-act="toggle-risk" data-i="' + i + '">'
+        + (p.risk_status === "ARMED_ZERO_RISK" ? "Mark Risk On" : "Mark Armed") + '</button>'
         + "</div></div>";
       return out;
     }).join("");
@@ -2158,36 +2514,90 @@
     if (!b) return;
     var i = parseInt(b.dataset.i, 10);
     if (!positions[i]) return;
-    if (b.dataset.act === "reached") {
+    var change = {};
+    if (b.dataset.act === "edit") {
+      var nextName = window.prompt(
+        "Friendly display name for " + positions[i].tick,
+        positions[i].display_name || positions[i].tick
+      );
+      if (nextName === null) return;
+      var editedValue = parseFloat(window.prompt(
+        "Current ILS value for " + positions[i].tick,
+        positions[i].value_ils
+      ));
+      if (!(editedValue > 0)) return;
+      change.display_name = nextName.trim() || null;
+      change.value_ils = editedValue;
+    } else if (b.dataset.act === "save-value") {
+      var valueInput = el("posList").querySelector('input[data-role="position-value"][data-i="' + i + '"]');
+      var valueIls = valueInput ? parseFloat(valueInput.value) : NaN;
+      if (!(valueIls > 0)) return;
+      change.value_ils = valueIls;
+    } else if (b.dataset.act === "reached") {
       var max = ladderFor(positions[i]).length - 1;
-      positions[i].rung = Math.min((positions[i].rung || 0) + 1, max);
+      change.rung = Math.min((positions[i].rung || 0) + 1, max);
     } else if (b.dataset.act === "undo") {
-      positions[i].rung = Math.max((positions[i].rung || 0) - 1, 0);
+      change.rung = Math.max((positions[i].rung || 0) - 1, 0);
+    } else if (b.dataset.act === "toggle-risk") {
+      change.risk_status = positions[i].risk_status === "ARMED_ZERO_RISK"
+        ? "RISK_ON" : "ARMED_ZERO_RISK";
     } else if (b.dataset.act === "close") {
-      positions.splice(i, 1);
+      if (!window.confirm("Delete " + positions[i].tick + " from the Active sleeve?")) return;
+      apiFetch("/api/positions/" + positions[i].id, { method: "DELETE" })
+        .then(afterPortfolioMutation).catch(function (error) { window.alert(error.message); });
+      return;
     }
-    savePositions();
-    renderPositions();
+    apiFetch("/api/positions/" + positions[i].id, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(change)
+    }).then(afterPortfolioMutation).catch(function (error) { window.alert(error.message); });
   });
+
+  function afterPortfolioMutation() {
+    riskGateState.signature = null;
+    return loadServerPositions().then(function () { scheduleRiskEvaluation(); });
+  }
 
   var inTicker = el("in-ticker"), addPosBtn = el("addPosBtn");
   function syncAddBtn() {
     var price = parseFloat(inPrice.value), atr = parseFloat(inAtr.value);
-    addPosBtn.disabled = !(price > 0 && atr > 0 && inTicker.value.trim().length > 0);
+    var valueIls = parseFloat(inPositionValue.value);
+    var payload = currentRiskPayload();
+    var signatureMatches = payload && !payload.error &&
+      riskGateState.signature === riskSignature(payload);
+    addPosBtn.disabled = !(price > 0 && atr > 0 && valueIls > 0 &&
+      inTicker.value.trim().length > 0 && riskGateState.approved && signatureMatches);
   }
-  inTicker.addEventListener("input", syncAddBtn);
+  inTicker.addEventListener("input", function () {
+    riskGateState.signature = null;
+    syncAddBtn();
+    scheduleRiskEvaluation();
+  });
   inPrice.addEventListener("input", syncAddBtn);
   inAtr.addEventListener("input", syncAddBtn);
   addPosBtn.addEventListener("click", function () {
     var price = parseFloat(inPrice.value), atr = parseFloat(inAtr.value);
-    if (!(price > 0 && atr > 0)) return;
-    positions.push({ tick: inTicker.value.trim().toUpperCase(), entry: price, atr: atr,
-                     rung: 0, added: todayStr() });
-    savePositions();
-    inTicker.value = "";
-    syncAddBtn();
-    renderPositions();
-    selectTab("pos");
+    var valueIls = parseFloat(inPositionValue.value);
+    var fx = inCcy.value === "USD" ? (parseFloat(inFx.value) || cfg.fx) : 1;
+    if (!(price > 0 && atr > 0 && valueIls > 0) || !riskGateState.approved) return;
+    apiFetch("/api/positions", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ticker: inTicker.value.trim().toUpperCase(), entry_price: price, atr: atr,
+        display_name: extra.name || null,
+        quantity: valueIls / (price * fx), value_ils: valueIls,
+        currency: inCcy.value === "USD" ? "USD" : "ILS", fx_to_ils: fx,
+        risk_status: "RISK_ON", legacy: false, rung: 0, opened_at: todayStr()
+      })
+    }).then(function () {
+      inTicker.value = "";
+      inPositionValue.value = "";
+      positionValueOverridden = false;
+      resetRiskGate("Position saved on the server. Enter the next ticker to run a new risk check.");
+      syncAddBtn();
+      return loadServerPositions();
+    }).then(function () { selectTab("pos"); })
+      .catch(function (error) { window.alert(error.message); });
   });
 
   // ---- tabs ----
@@ -2195,6 +2605,7 @@
     var pos = which === "pos";
     el("tab-pos").setAttribute("aria-selected", pos ? "true" : "false");
     el("tab-calc").setAttribute("aria-selected", pos ? "false" : "true");
+    el("tab-settings").setAttribute("aria-selected", "false");
     el("posPanel").hidden = !pos;
     el("calcPanel").hidden = pos;
     if (pos) {
@@ -2204,21 +2615,23 @@
   }
   el("tab-calc").addEventListener("click", function () { selectTab("calc"); });
   el("tab-pos").addEventListener("click", function () { selectTab("pos"); });
+  el("tab-settings").addEventListener("click", function () {
+    el("settingsPanel").open = true;
+    el("tab-settings").setAttribute("aria-selected", "true");
+  });
+  el("settingsPanel").addEventListener("toggle", function () {
+    if (!el("settingsPanel").open) el("tab-settings").setAttribute("aria-selected", "false");
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && el("settingsPanel").open) el("settingsPanel").open = false;
+  });
 
-  // ---- first-run setup gate ----
-  var SETUP_KEY = "riskSizerSetup_v4";
-  var SETUP_KEY_OLD = "riskSizerSetup_v3";   // DEF-002: was left on v3 while the rest moved to v4
-  try {
-    if (!localStorage.getItem(SETUP_KEY) && localStorage.getItem(SETUP_KEY_OLD) === "1") {
-      localStorage.setItem(SETUP_KEY, "1");   // migrate, so nobody is sent back through setup
-    }
-  } catch (e) {}
+  // ---- first-run setup gate (server-owned) ---------------------------------
   var setupCapital = el("setup-capital"), setupMaxSpec = el("setup-maxspec");
   var setupDerived = el("setupDerived"), setupSave = el("setupSave");
 
   function isSetUp() {
-    if (!(cfg.capital > 0) || !(cfg.breakbudget > 0)) return false;
-    try { return localStorage.getItem(SETUP_KEY) === "1"; } catch (e) { return true; }
+    return setupComplete && cfg.capital > 0 && cfg.breakbudget > 0;
   }
 
   function showSetup() {
@@ -2266,8 +2679,8 @@
     if (!(cap > 0) || !(spec > 0) || spec > cap) return;
     cfg.capital = cap;
     cfg.breakbudget = spec * (crashPctFor(SPEC_REF_ATR) / 100);
-    saveSettings();
-    try { localStorage.setItem(SETUP_KEY, "1"); } catch (e) {}
+    setupComplete = true;
+    saveSettings({ immediate: true });
     renderSettingsInputs();
     showApp();
     refreshAll();
@@ -2276,8 +2689,8 @@
   el("resetBtn").addEventListener("click", function () {
     cfg = {};
     Object.keys(DEFAULTS).forEach(function (k) { cfg[k] = DEFAULTS[k]; });
-    saveSettings();
-    try { localStorage.removeItem(SETUP_KEY); } catch (e) {}
+    setupComplete = false;
+    saveSettings({ immediate: true });
     renderSettingsInputs();
     setupCapital.value = "";
     setupMaxSpec.value = "";
@@ -2285,11 +2698,22 @@
     showSetup();
   });
 
-  // ---- init ----
-  renderSettingsInputs();
-  inFx.value = cfg.fx;
-  if (isSetUp()) showApp(); else showSetup();
-  refreshAll();
+  // ---- init: hydrate every durable value from the FastAPI server -----------
+  showSetup();
+  apiFetch("/api/settings").then(function (state) {
+    Object.keys(DEFAULTS).forEach(function (key) {
+      cfg[key] = state.settings && typeof state.settings[key] === "number"
+        ? state.settings[key] : DEFAULTS[key];
+    });
+    setupComplete = state.setup_complete === true;
+    renderSettingsInputs();
+    inFx.value = cfg.fx;
+    if (isSetUp()) showApp(); else showSetup();
+    refreshAll();
+  }).catch(function (error) {
+    el("setupDerived").textContent = "Cannot connect to the server: " + error.message;
+  });
+  Promise.all([loadServerPositions(), loadCore()]).catch(function () {});
   fetchFeed();
 })();
 </script>

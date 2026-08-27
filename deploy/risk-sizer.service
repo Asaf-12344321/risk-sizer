@@ -1,0 +1,21 @@
+[Unit]
+Description=Risk Sizer FastAPI application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=risk-sizer
+Group=risk-sizer
+WorkingDirectory=/opt/risk-sizer
+EnvironmentFile=/etc/risk-sizer.env
+ExecStart=/opt/risk-sizer/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/risk-sizer
+
+[Install]
+WantedBy=multi-user.target

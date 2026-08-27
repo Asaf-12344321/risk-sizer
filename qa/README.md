@@ -11,9 +11,19 @@ it is missing, and reports a crashed suite as a **failure** rather than a silent
 hand-written chain that used to live here drifted: it named four suites out of ten, so
 `defects`, `ux`, `feed`, `custom_edge` and `tracker` never ran for anyone who copied it.
 
+The holistic-risk addition also has Python suites, run by CI before `run_all.sh`:
+
+```bash
+python -m unittest qa.test_quant_risk_engine qa.test_database qa.test_seed_portfolio qa.test_api -v
+```
+
+`quant_integration.js` verifies the browser contract with a stubbed same-origin API:
+proposal-only risk requests, verdict/metric rendering, incremental VaR copy, and Active
+position POST persistence with value, quantity, currency, and risk status.
+
 CI runs the same script on every push and pull request (`.github/workflows/qa.yml`), with
 one exception: `parity` needs the `riskml` checkout, which CI has no access to, so it is
-reported SKIPPED there — 147 of 157 assertions. Before shipping a change to any **rule**,
+reported SKIPPED there. Before shipping a change to any **rule**,
 run it locally with parity demanded:
 
 ```bash
@@ -110,6 +120,6 @@ None. The sub-dollar `0.00` stop that used to be listed here was fixed as DEF-00
 (adaptive precision: 4dp under $1, 3dp under $10) and is covered by the edge suite.
 
 The gaps that remain are *uncovered areas*, not known-wrong behaviour — real-browser and
-iOS Safari testing, theming and accessibility, `localStorage` disabled/full/corrupted,
-concurrent tabs, data-pipeline failure injection, and `FR-*`-to-test traceability. See
+iOS Safari testing, theming and accessibility, concurrent API mutations, database lock
+failure injection, data-pipeline failure injection, and `FR-*`-to-test traceability. See
 PRD §10.

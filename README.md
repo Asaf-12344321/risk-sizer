@@ -1,14 +1,14 @@
 # Risk Sizer
 
-**A responsive, local-first tool that answers two questions before you buy a stock, and one while you hold it.**
-
-👉 **[Open the tool](https://asaf-12344321.github.io/risk-sizer/)** — on iPhone, use Share → *Add to Home Screen* for an app icon.
+**A server-backed position-sizing and holistic portfolio-risk terminal.**
 
 - **How much should I buy?**
 - **Where does my initial stop go?**
 - **When do I move the stop up?**
 
-No login, no account and no broker connection. Your capital, rules and positions are stored in your own browser and are never sent to the market-data feed.
+There is no broker connection or automatic execution. Core holdings, Active positions,
+and rules live in a private SQLite database on the FastAPI server; the phone is a stateless
+client. Personal values are never sent to the public market-data feed.
 
 ---
 
@@ -24,6 +24,21 @@ The default rules were calibrated for multi-week swing positions, but they are c
 
 ## Quick start
 
+### 0. Start the private risk server
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python scripts/init_db.py --db data/risk_sizer.db
+uvicorn app:app --reload
+```
+
+Open `http://127.0.0.1:8000`. For phone access, deploy the app behind HTTPS using
+[`DEPLOYMENT.md`](DEPLOYMENT.md). In production, the REST API requires the
+`RISK_SIZER_API_KEY` header; the page prompts once per browser session and does not persist
+that secret.
+
 ### 1. Set up once
 
 The first-use screen requires exactly two values:
@@ -33,7 +48,7 @@ The first-use screen requires exactly two values:
 | **Total capital** | The active trading sleeve used to scale risk and exposure limits |
 | **Most you'd put in one speculative name** | Used to derive the crash-loss budget |
 
-Everything else starts with a documented default and remains editable under **Your rules**.
+Everything else starts with a documented default and remains editable under **Settings**.
 
 ### 2. Size a position
 
@@ -45,15 +60,20 @@ Everything else starts with a documented default and remains editable under **Yo
    - **Initial stop** to place at the broker.
    - **Stop ladder** showing when the stop may move upward.
    - **Why this size?**, which identifies every cap and the binding constraint.
+   - **Holistic quantitative risk gate**, showing weighted correlation, variance change,
+     incremental 99% one-day VaR in ILS, and the final approval verdict.
 
-Calculations update automatically whenever an input changes. There is no calculate/submit step.
+Position sizing updates immediately. The quantitative gate runs asynchronously and fails
+closed: **Track approved position** remains disabled until the verdict for the current
+ticker and position value is approved. Existing holdings are read directly from SQLite,
+not trusted from the browser request.
 
 ### 3. Track the position
 
 1. Enter the ticker in **Ticker to track** and select **Track this position**.
 2. Open **Portfolio**.
 3. If daily bars are published for that ticker, the app replays them from the entry date and derives the current stop, high since entry and latest daily close.
-4. If bars are unavailable, the position remains usable in manual mode with **Reached**, **Undo** and **Sold** actions.
+4. If bars are unavailable, the position remains usable in manual mode with **Reached**, **Undo**, **Edit**, and **Delete** actions.
 
 Risk Sizer does not transmit an order. You remain responsible for entering and updating the stop at your broker.
 
@@ -81,7 +101,34 @@ The beta cap is always present. A measured non-positive beta is handled explicit
 
 ### Portfolio
 
-Each tracked position stores only ticker, entry price, ATR, ladder state and entry date. No personal price history is uploaded.
+Each tracked Active position stores ticker, entry price, ATR, ladder state, entry date,
+quantity, currency, FX at entry, risk status, and actual ILS position value in SQLite.
+Core holdings are maintained in the Portfolio screen and are also server-persisted.
+Both sleeves support optional friendly display names alongside the Yahoo ticker, including
+bilingual names such as `Leumi / לאומי`.
+
+Existing Active holdings can be grandfathered with `legacy=true`. They remain fully
+represented in combined correlation, covariance, variance, and historical VaR, while
+only non-legacy `RISK_ON` positions consume the configurable forward-looking R-slot
+budget. New positions created by the calculator always start with `legacy=false`.
+
+The Settings modal persists total capital, fixed or percentage-based 1R, the 99% daily
+VaR ceiling, maximum Risk-On R slots, and crash/volatility sizing parameters through
+`GET/PUT /api/settings`. The trade-evaluation request contains only the proposed trade;
+server-side SQLite settings are authoritative for approval.
+
+### Holistic risk gate
+
+Before a new Active position can be tracked, the backend reads and merges Core and Active
+positions from SQLite and evaluates the combined book:
+
+- Pearson correlation against the current value-weighted portfolio over 90 aligned days;
+- current and proposed MPT variance using `wᵀΣw`; and
+- conservative 99% historical one-day VaR over 500 aligned ILS P&L observations.
+
+Correlation above 0.75, a variance increase above 20%, or proposed VaR above the configured
+daily ILS budget blocks the trade. USD holdings include USD/ILS return effects through
+`ILS=X`; cross-exchange missing dates are never forward-filled.
 
 When bars are available, Risk Sizer:
 
@@ -230,14 +277,13 @@ Add one symbol per line to [`tickers.txt`](tickers.txt). The next successful sch
 
 ## Privacy and storage
 
-Settings, setup state and positions are stored in browser `localStorage`. There is no login, server-side profile or cloud synchronization.
+All durable state is in `data/risk_sizer.db` by default (or `RISK_SIZER_DB_PATH`). The
+browser contains no persistent storage code, so clearing phone site data does not erase a
+portfolio and multiple devices see the same server state. Production endpoints are
+protected by `RISK_SIZER_API_KEY`; use HTTPS because CORS does not protect credentials.
 
-Consequences:
-
-- clearing browser/site data removes local settings and positions;
-- private-browsing sessions may not preserve them;
-- different browsers and devices do not synchronize; and
-- if storage is unavailable, the calculator can still function for the current session but cannot persist state.
+The database and its WAL files are gitignored. Use `scripts/backup_sqlite.py` for a
+consistent online backup and copy backups off the VM. See [`DEPLOYMENT.md`](DEPLOYMENT.md).
 
 ---
 
@@ -260,6 +306,13 @@ Consequences:
 | Path | Purpose |
 |---|---|
 | `index.html` | Complete dependency-free browser application |
+| `app.py` | FastAPI web server, authenticated CRUD API, CORS, and risk endpoint |
+| `database.py` | SQLite schema, CRUD repository, portfolio aggregation, and backup API |
+| `quant_risk_engine.py` | Pearson correlation, MPT variance, and historical VaR gate |
+| `scripts/init_db.py` | Idempotent database initialization |
+| `scripts/seed_portfolio.py` | Idempotent private JSON portfolio import with live ATR calculation |
+| `scripts/backup_sqlite.py` | WAL-safe timestamped backups with retention |
+| `DEPLOYMENT.md` | VM, systemd, HTTPS, CORS, and cron instructions |
 | `PRD.md` | Traceable product requirements, formulas, defects and calibration caveats |
 | `fetch_data.py` | Yahoo/SEC-derived market-data pipeline |
 | `universe.csv` | Committed SEC-derived US ticker universe |

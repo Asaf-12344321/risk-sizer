@@ -15,7 +15,7 @@ if [ ! -f "$Q" ]; then
 fi
 
 tot=0; fail=0; crashed=""; skipped=""
-for s in invariants sweep edge golden defects ux feed custom_edge tracker; do
+for s in invariants sweep edge golden defects ux feed custom_edge tracker quant_integration; do
   out=$(node "$s.js" 2>&1); rc=$?
   p=$(printf '%s' "$out" | grep -cE '^PASS'); q=$(printf '%s' "$out" | grep -c '^FAIL  ')
   if [ "$rc" -ne 0 ] && [ "$q" -eq 0 ]; then

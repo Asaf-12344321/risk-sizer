@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Version** | 1.0 |
-| **Date** | 2026-07-30 |
-| **Component** | `risk-sizer.html` (single-file web app) + `fetch_data.py` (data pipeline) |
+| **Version** | 2.0 |
+| **Date** | 2026-08-21 |
+| **Component** | `index.html` + local `app.py` API + `quant_risk_engine.py` + `fetch_data.py` |
 | **Live** | https://asaf-12344321.github.io/risk-sizer/ |
 | **Repo** | https://github.com/Asaf-12344321/risk-sizer |
 
@@ -28,10 +28,11 @@ losses on positions still held — approximately flat.
 Moves every exit decision to **before entry**, when the user is not emotionally
 committed, and expresses it as numbers to be executed rather than judgements to be made.
 
-It answers exactly three questions:
+It answers four questions:
 1. **How much do I buy?** (₪ and share count)
 2. **Where does the initial stop go?**
 3. **When do I move the stop, and to what?**
+4. **Does this trade improve or over-concentrate my combined Core + Active portfolio?**
 
 ### 1.3 Explicit non-goals
 | ID | Not in scope |
@@ -40,9 +41,9 @@ It answers exactly three questions:
 | NG-2 | Beating a market benchmark. Measured alpha vs passive holding is **negative** (−0.104R at 45 days); the product is a variance-reduction and discipline tool |
 | NG-3 | Real-time or intraday data. Daily closes only |
 | NG-4 | Order execution or broker integration |
-| NG-5 | Multi-user accounts, sync, or any server-side state |
+| NG-5 | Multi-user accounts, cloud sync, or remote server-side state |
 | NG-6 | Short positions, options, futures, FX, crypto |
-| NG-7 | Non-US equities (Israeli/TASE explicitly deferred) |
+| NG-7 | Automatic sizing feeds for non-US equities. TASE holdings may participate in the Core risk model through Yahoo `.TA` symbols |
 
 ---
 
@@ -76,6 +77,10 @@ common usage.
 | **Crash budget** | The maximum shekel loss accepted in a crash scenario. `breakbudget` |
 | **Binding constraint** | Whichever size cap produced the smallest number, and therefore set the position size |
 | **Band** | A human label for volatility (`very calm`…`wild`). Display only; the maths uses continuous ATR% |
+| **Core portfolio** | Static, long-term holdings stored in the server's SQLite `core_portfolio` table with current ILS values |
+| **Active sleeve** | Dynamic momentum positions stored in SQLite `active_positions`, including quantity, currency, value and risk status |
+| **Weighted portfolio correlation** | Pearson correlation between the proposed ticker's ILS-adjusted return and the current value-weighted Core + Active return |
+| **Historical VaR** | Conservative observed 1st-percentile one-day loss from 500 aligned ILS return observations; reported as a positive ILS risk amount |
 
 ---
 
@@ -91,15 +96,33 @@ GitHub Actions (cron */30, 13–21 UTC, Mon–Fri)
               quotes.json          — all liquid tickers, metrics only  (~300 KB)
               bars/{TICKER}.json   — 1y bars, only for held tickers    (~8 KB each)
 
-risk-sizer.html  (GitHub Pages, static)
+app.py  (FastAPI process on the private VM)
+   ├─ serves index.html at the same HTTPS origin
+   ├─ authenticates state/risk APIs with X-API-Key
+   ├─ provides CRUD for core_portfolio, active_positions and app_settings
+   └─ POST /api/risk/evaluate
+        ├─ reads and merges Core + Active holdings directly from SQLite
+        ├─ QuantitativeRiskEngine fetches adjusted prices/FX in one yfinance batch
+        └─ returns approval + correlation, MPT variance and 99% historical VaR
+
+index.html
    ├─ reads quotes.json cross-origin  → sizing calculator
    ├─ reads bars/{T}.json on demand   → position tracker
-   └─ all user state in localStorage
+   ├─ loads and mutates all durable state through the REST API
+   └─ fails closed until the server-side quantitative risk gate approves the trade
+
+data/risk_sizer.db (configurable with RISK_SIZER_DB_PATH)
+   ├─ core_portfolio
+   ├─ active_positions
+   └─ app_settings (singleton settings/setup state)
 ```
 
 **Rationale (do not "simplify" away):** Yahoo sends no `access-control-allow-origin`
 header, so the browser cannot call it directly. `raw.githubusercontent.com` does send
 `*`. Bars are split per-ticker because whole-market bars would be ~50 MB.
+The SQLite file is gitignored and remains on the private VM, so personal holdings never
+enter the public repository or the scheduled market-data feed. HTTPS and an API key are
+required remotely; CORS is only a browser-origin policy, not authentication.
 
 ---
 
@@ -309,7 +332,7 @@ candidates:
 | FR-FLAG-03 | A drawdown greater than `drawdown`% below the 52-week high **shall** produce a neutral note | Should |
 | FR-FLAG-04 | The app **shall not** warn against high-RSI or extended entries — falsified on 271,464 trades (E[R] flat; RSI>70 marginally better) | Must |
 | FR-FLAG-05 | When a ticker has been looked up, an ATR differing from the fetched daily ATR by more than `FEED_ATR_TOLERANCE` (40%) **shall** be flagged as a likely **intraday** value, naming the fetched figure and the approximate factor. The check **shall** be suppressed once entry price departs the quoted close by more than 25%, since the figures then belong to a different stock | Must |
-| FR-FLAG-06 | With no lookup to compare against, an ATR below `ATR_PCT_IMPLAUSIBLE` (0.3% of price) **shall** carry the same warning. The threshold **shall** sit below the lowest daily ATR% measured anywhere in the universe (0.319%, DBRG) so it can never fire on a genuine value — 7 real tickers sit between 0.3% and 0.5% | Must |
+| FR-FLAG-06 | With no lookup to compare against, an ATR below `ATR_PCT_IMPLAUSIBLE` (0.20% of price) **shall** carry the same warning. The threshold **shall** sit below the lowest current daily ATR% in the live universe (0.267%, GBTG) while remaining above the 0.134% hand-entered intraday regression case | Must |
 | FR-FLAG-07 | Neither check **shall** fire on a manual override within ±19%, the largest legitimate disagreement between Wilder and simple-mean ATR | Must |
 
 ### 5.8 Position tracking — `FR-POS`
@@ -341,7 +364,9 @@ candidates:
 | FR-CFG-04 | Non-numeric settings input **shall** be ignored, leaving the prior value | Must |
 | FR-CFG-05 | Persisted settings **shall** merge over defaults, so a new parameter gains its default without wiping the rest | Must |
 | FR-CFG-06 | Legacy values **shall** migrate (currently `maxstop 45→30`, `minstop 5→8`) | Must |
-| FR-CFG-07 | State **shall** live in `localStorage` under: `riskSizerSettings_v4`, `riskSizerPositions_v4`, `riskSizerSetup_v3` (see DEF-002) | Must |
+| FR-CFG-07 | Settings and setup state **shall** persist in the SQLite `app_settings` singleton; the browser **shall not** use persistent client storage | Must |
+| FR-CFG-08 | The Settings modal **shall** expose total capital, absolute/percentage 1R, 99% daily VaR, forward-looking Risk-On R budget, crash caps, and volatility/stop parameters | Must |
+| FR-CFG-09 | Trade evaluation **shall** read VaR and Risk-On limits from SQLite; the client shall not be permitted to override those gate parameters in an evaluation request | Must |
 
 ### 5.10 Data pipeline — `FR-DATA`
 
@@ -360,6 +385,26 @@ candidates:
 | FR-DATA-08 | It **shall** complete within the job timeout (25 min; observed ~163 s for 3,000 tickers) | Must |
 | FR-DATA-09 | It **shall not** transmit personal contact details or financial parameters | Must |
 
+### 5.11 Holistic quantitative risk — `FR-QUANT`
+
+| ID | Requirement | Priority |
+|---|---|---|
+| FR-QUANT-01 | The SQLite `core_portfolio` table **shall** store ticker, current `value_ils`, currency, and optional FX ticker for every Core holding | Must |
+| FR-QUANT-02 | The SQLite `active_positions` table **shall** persist entry, ATR, quantity, currency, FX, `value_ils`, ladder state, opened date, and `RISK_ON`/`ARMED_ZERO_RISK` status | Must |
+| FR-QUANT-03 | The backend **shall** read Core and Active holdings directly from SQLite, merge them, and aggregate duplicate ticker/currency pairs before evaluation; clients shall not supply existing holdings | Must |
+| FR-QUANT-04 | Correlation and covariance **shall** use the most recent 90 aligned daily ILS-adjusted returns and shall not forward-fill exchange holidays | Must |
+| FR-QUANT-05 | Weighted correlation **shall** be `corr(r_new, Σ w_i r_i)`; `ρ > 0.75` shall raise a Correlation Warning | Must |
+| FR-QUANT-06 | Current and proposed daily portfolio variance **shall** be calculated as `wᵀΣw`; a relative increase above 20% shall raise a Variance Warning | Must |
+| FR-QUANT-07 | Historical 99% one-day VaR **shall** use 500 aligned ILS P&L observations and NumPy's conservative observed `lower` quantile | Must |
+| FR-QUANT-08 | Proposed VaR above `maxdailyvar` (default ₪25,000) **shall reject** the trade | Must |
+| FR-QUANT-09 | Correlation and variance warnings **shall block** approval by default; the Track action shall remain disabled unless the verdict matches the current ticker and size | Must |
+| FR-QUANT-10 | The dashboard **shall** display verdict, weighted correlation, variance change, incremental 99% VaR in ILS, and every blocking reason | Must |
+| FR-QUANT-11 | Market-data failure or an empty combined portfolio **shall fail closed** | Must |
+| FR-QUANT-12 | Authenticated GET/POST/PUT/DELETE endpoints shall manage both portfolio tables; authenticated GET/PUT shall manage settings | Must |
+| FR-QUANT-13 | Active positions may be marked `legacy`; legacy capital remains in Pearson, covariance, variance, and historical VaR calculations but does not consume a forward-looking 1R slot | Must |
+| FR-QUANT-14 | When the existing portfolio already breaches the VaR ceiling, a proposed trade is rejected for VaR only if it remains above the ceiling **and increases** VaR; a risk-reducing proposal may proceed to the other gates | Must |
+| FR-QUANT-15 | Core and Active records may store a friendly `display_name` independently of the Yahoo ticker | Should |
+
 ---
 
 ## 6. Non-functional requirements
@@ -368,9 +413,12 @@ candidates:
 |---|---|
 | NFR-PERF-01 | Calculator **shall** respond to input within 100 ms |
 | NFR-PERF-02 | `quotes.json` **shall not** exceed 1 MB |
-| NFR-PERF-03 | Initial page load (excluding feed) **shall** require no network calls — single self-contained file |
-| NFR-PRIV-01 | Capital, 1R, crash budget and positions **shall** remain in `localStorage` and **shall never** be transmitted |
+| NFR-PERF-03 | The calculator shall remain responsive while quantitative evaluation runs asynchronously; identical historical-data requests shall be cached for 15 minutes |
+| NFR-PRIV-01 | Core, Active, and settings state shall remain in server-side SQLite; no durable portfolio or settings state shall be written to browser storage |
 | NFR-PRIV-02 | The public repo **shall not** contain personal financial figures or contact details |
+| NFR-PRIV-03 | SQLite database, WAL, SHM, backup files, and API secrets **shall not** be committed |
+| NFR-SEC-01 | Production state and risk APIs shall require `X-API-Key` and shall be served only through HTTPS |
+| NFR-OPS-01 | The SQLite database shall support consistent online backup and documented daily retention via cron |
 | NFR-COMPAT-01 | **Shall** work in iOS Safari, Chrome, Firefox on current versions |
 | NFR-COMPAT-02 | **Shall** install as a PWA via Add to Home Screen with a standalone icon |
 | NFR-A11Y-01 | **Shall** render correctly in light and dark themes |
@@ -413,7 +461,7 @@ candidates:
 | Feed stale (>24h) | Visual staleness flag; values still usable |
 | Ticker missing | Explanatory message; manual entry offered |
 | Bars missing for a held position | Manual rung mode with explanation |
-| `localStorage` unavailable | App functions for the session; no persistence; no crash |
+| SQLite/API unavailable | State mutations and risk approval fail closed with a visible error; existing database remains unchanged |
 | Setup incomplete | No numeric output of any kind |
 | Any setting set to 0 | No `NaN`/`Infinity` rendered |
 | Scheduled job fails | Feed ages; staleness flag is the user-visible signal |
@@ -452,7 +500,10 @@ candidates:
 
 ## 10. Verification status
 
-An automated suite exists at `qa/` (**157 assertions, all passing** — run `qa/run_all.sh`, which treats a crashed suite as a failure rather than a silent zero). It covers invariants (monotonicity,
+An automated browser suite exists at `qa/` (**155 assertions, all passing**) plus Python
+tests for the quantitative engine, SQLite repository, authenticated CRUD, CORS, backups,
+and database-owned evaluation. `qa/run_all.sh` treats a crashed suite as a failure rather
+than a silent zero. The browser suite covers invariants (monotonicity,
 continuity, bounds, scale invariance, metamorphic relations, ladder ordering), a
 full-universe sweep of ~2,600 tickers, edge and hostile inputs, a golden snapshot, regression tests for every documented defect, the
 **feed path** (`qa/feed.js`), the
@@ -460,8 +511,9 @@ full-universe sweep of ~2,600 tickers, edge and hostile inputs, a golden snapsho
 **parity between this tool and the `riskml` research simulator**.
 
 It runs in CI on every push and pull request (`.github/workflows/qa.yml`) — see DEF-013.
-CI reports **147** of those assertions: `parity` needs the `riskml` checkout, which CI has
-no access to, so it is reported SKIPPED there. Run `QA_REQUIRE_PARITY=1 sh qa/run_all.sh`
+CI reports all **155** browser assertions and the Python suites; `parity` needs the
+`riskml` checkout, which CI has no access to, so it is reported SKIPPED there. Run
+`QA_REQUIRE_PARITY=1 sh qa/run_all.sh`
 locally before shipping any change to a rule; parity is the only guard on the
 research → production link.
 
@@ -483,8 +535,8 @@ real regression (an unvalidated `minstop` change).
 - Real-browser testing (all current coverage is jsdom)
 - iOS Safari / PWA behaviour, including keyboards and safe-area insets
 - Light/dark theming and accessibility
-- `localStorage` disabled, full, or corrupted
-- Concurrent tabs mutating the same state
+- Concurrent clients mutating the same SQLite rows
+- SQLite lock, disk-full, corruption, and restore drills
 - Data-pipeline failure injection (Yahoo down, partial batches, malformed rows)
 - Requirement-to-test traceability for every `FR-*` above
 
@@ -501,9 +553,12 @@ as a fraction of it is the meaningful per-trade risk figure. Entering total net 
 instead inflates those caps — a 20% cap on total capital can exceed the entire sleeve,
 which is how the setting silently stops capping anything.
 
-Deliberately **not** modelled: aggregate exposure across open positions (portfolio heat).
-The tool is stateless by requirement. Total exposure is therefore bounded by the operator,
-not the software — see RFC-001, closed.
+Aggregate exposure is now modelled through the **Holistic Risk Management architecture**.
+The static Core portfolio and dynamic Active sleeve are treated as one value-weighted
+portfolio before a new Active trade is approved. Pearson correlation detects redundant
+exposure, `wᵀΣw` measures the change in daily variance, and 99% historical VaR enforces a
+hard ILS daily-loss budget. These portfolio-level gates supplement rather than replace the
+existing 1R, crash, beta, liquidity, and stop-distance controls.
 
 ## 10b. Exit model — trail only, no targets
 
