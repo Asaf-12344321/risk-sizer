@@ -1494,29 +1494,57 @@
   var apiKey = loadApiKey();
   var settingsSaveTimer = null;
 
+  // Boot fires /api/settings, /api/positions and /api/core at once, so on a new
+  // device three requests hit 401 together. Funnel them through one prompt:
+  // whoever arrives first asks, the rest wait on that same answer.
+  var keyRequest = null;
+
+  // staleKey is the key the caller actually sent. Comparing against it is what
+  // separates "the key I sent was rejected" from "a key arrived while I was in
+  // flight" — the second case must not discard the key another request just
+  // established, or entering it correctly still ends in an auth error.
+  function acquireApiKey(staleKey) {
+    if (apiKey && apiKey !== staleKey) return Promise.resolve(apiKey);
+    if (keyRequest) return keyRequest;
+    if (staleKey && apiKey === staleKey) { apiKey = null; storeApiKey(null); }
+    keyRequest = new Promise(function (resolve) {
+      var typed = window.prompt("Enter the Risk Sizer API key") || null;
+      if (typed) { apiKey = typed; storeApiKey(typed); }
+      keyRequest = null;
+      resolve(apiKey);
+    });
+    return keyRequest;
+  }
+
+  function readBody(response) {
+    if (response.status === 204) return null;
+    return response.json().catch(function () { return {}; }).then(function (body) {
+      if (!response.ok) throw new Error(body.detail || ("API HTTP " + response.status));
+      return body;
+    });
+  }
+
   function apiFetch(path, options, retried) {
     options = options || {};
     var headers = Object.assign({}, options.headers || {});
-    if (apiKey) headers["X-API-Key"] = apiKey;
+    var sentKey = apiKey;
+    if (sentKey) headers["X-API-Key"] = sentKey;
+    else delete headers["X-API-Key"];
     options.headers = headers;
     return fetch(path, options).then(function (response) {
       if (response.status === 401) {
-        // Whatever key we just sent was rejected, so drop it now. Otherwise a
-        // stale key survives in storage and every later load fails silently.
-        if (apiKey) { apiKey = null; storeApiKey(null); }
         if (!retried) {
-          apiKey = window.prompt("Enter the Risk Sizer API key") || null;
-          if (apiKey) {
-            storeApiKey(apiKey);
+          return acquireApiKey(sentKey).then(function (key) {
+            if (!key) return readBody(response);
             return apiFetch(path, options, true);
-          }
+          });
         }
+        // A retry carrying a freshly supplied key was rejected too, so the key
+        // is wrong rather than merely stale. Drop it instead of leaving a
+        // known-bad key for the next load to start from.
+        if (sentKey && apiKey === sentKey) { apiKey = null; storeApiKey(null); }
       }
-      if (response.status === 204) return null;
-      return response.json().catch(function () { return {}; }).then(function (body) {
-        if (!response.ok) throw new Error(body.detail || ("API HTTP " + response.status));
-        return body;
-      });
+      return readBody(response);
     });
   }
 
