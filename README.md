@@ -4,9 +4,18 @@
 
 ## Open the tool
 
-**https://asaf-12344321.github.io/risk-sizer/**
+**https://34.10.181.21.sslip.io**
 
-Works in any browser on any device — no login, no install. On iPhone, open the link in Safari, then tap Share and choose *Add to Home Screen* for an app icon.
+Works in any browser on any device. The first visit asks once for the API key
+and remembers it on that device. On iPhone, open the link in Safari, then tap
+Share and choose *Add to Home Screen* for an app icon.
+
+Typing the bare IP works too — it redirects to the address above, which is the
+one holding the TLS certificate.
+
+The old GitHub Pages address no longer works. Pages can only serve static
+files, and since this build reads and writes its state through `/api/*`, every
+request there fails with `API HTTP 404`.
 
 - **How much should I buy?**
 - **Where does my initial stop go?**
