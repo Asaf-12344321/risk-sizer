@@ -2,6 +2,12 @@
 
 **A server-backed position-sizing and holistic portfolio-risk terminal.**
 
+## Open the tool
+
+**https://asaf-12344321.github.io/risk-sizer/**
+
+Works in any browser on any device — no login, no install. On iPhone, open the link in Safari, then tap Share and choose *Add to Home Screen* for an app icon.
+
 - **How much should I buy?**
 - **Where does my initial stop go?**
 - **When do I move the stop up?**
