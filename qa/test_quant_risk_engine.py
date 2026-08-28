@@ -89,6 +89,63 @@ class QuantitativeRiskEngineTests(unittest.TestCase):
         self.assertLess(metrics["proposed_var_ils"], metrics["current_var_ils"])
         self.assertFalse(metrics["budget_breach"])
 
+    def test_missing_current_holding_is_retried_then_reported_and_excluded(self):
+        calls = []
+
+        def partial_download(symbols, **kwargs):
+            requested = [symbols] if isinstance(symbols, str) else list(symbols)
+            calls.append((requested, kwargs["threads"]))
+            available = [symbol for symbol in requested if symbol != "5140918"]
+            return synthetic_download(available) if available else pd.DataFrame()
+
+        engine = self.make_engine(
+            current_positions=[
+                {"ticker": "COREA", "value_ils": 100_000, "currency": "ILS"},
+                {"ticker": "5140918", "value_ils": 50_000, "currency": "ILS"},
+            ],
+            proposed_entry_size_ils=10_000,
+            max_daily_var_ils=1_000_000,
+            block_on_warnings=False,
+            downloader=partial_download,
+        )
+        approved, metrics = engine.evaluate_trade()
+
+        self.assertTrue(approved)
+        self.assertIn((["5140918"], False), calls)
+        self.assertTrue(metrics["data"]["degraded"])
+        self.assertEqual(metrics["data"]["excluded_current_positions"], ["5140918"])
+        self.assertIn("5140918", metrics["warnings"][-1])
+
+    def test_missing_proposed_ticker_still_fails_closed(self):
+        def partial_download(symbols, **_kwargs):
+            requested = [symbols] if isinstance(symbols, str) else list(symbols)
+            available = [symbol for symbol in requested if symbol != "NEW"]
+            return synthetic_download(available) if available else pd.DataFrame()
+
+        with self.assertRaisesRegex(RuntimeError, "proposed ticker"):
+            self.make_engine(downloader=partial_download).evaluate_trade()
+
+    def test_empty_batch_is_recovered_by_individual_retries(self):
+        calls = []
+
+        def delayed_download(symbols, **_kwargs):
+            requested = [symbols] if isinstance(symbols, str) else list(symbols)
+            calls.append(requested)
+            if len(calls) == 1:
+                return pd.DataFrame()
+            return synthetic_download(requested)
+
+        approved, metrics = self.make_engine(
+            proposed_entry_size_ils=10_000,
+            max_daily_var_ils=1_000_000,
+            block_on_warnings=False,
+            downloader=delayed_download,
+        ).evaluate_trade()
+
+        self.assertTrue(approved)
+        self.assertGreaterEqual(len(calls), 4)
+        self.assertFalse(metrics["data"]["degraded"])
+
 
 if __name__ == "__main__":
     unittest.main()

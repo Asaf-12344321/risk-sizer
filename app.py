@@ -206,8 +206,12 @@ class CachedDownloader:
             if cached and now - cached[0] <= self.ttl_seconds:
                 return cached[1].copy()
         result = yf.download(tickers, **kwargs)
-        with self._lock:
-            self._cache[key] = (now, result.copy())
+        # Do not turn a transient provider failure into a 15-minute outage. Partial
+        # batch frames are still useful because the risk engine retries absent symbols
+        # individually; wholly empty responses should be attempted again next time.
+        if result is not None and not result.empty:
+            with self._lock:
+                self._cache[key] = (now, result.copy())
         return result
 
 

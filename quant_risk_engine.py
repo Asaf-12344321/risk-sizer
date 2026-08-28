@@ -113,11 +113,13 @@ class QuantitativeRiskEngine:
         self._downloader = downloader or yf.download
         self._ils_prices: pd.DataFrame | None = None
         self._returns: pd.DataFrame | None = None
+        self._excluded_positions: dict[str, str] = {}
 
     def fetch_historical_data(self, force_refresh: bool = False) -> pd.DataFrame:
         """Fetch and cache ILS-valued adjusted closes for all holdings in one batch."""
         if self._ils_prices is not None and not force_refresh:
             return self._ils_prices.copy()
+        self._excluded_positions = {}
 
         specifications = self._ticker_specifications()
         market_tickers = sorted(specifications)
@@ -130,30 +132,83 @@ class QuantitativeRiskEngine:
         )
         symbols = market_tickers + [fx for fx in fx_tickers if fx not in market_tickers]
         period = "3y" if self.var_lookback_days <= 700 else "5y"
-        raw = self._downloader(
-            symbols,
-            period=period,
-            interval="1d",
-            auto_adjust=True,
-            progress=False,
-            group_by="ticker",
-            threads=True,
-        )
-        if raw is None or raw.empty:
-            raise RuntimeError("yfinance returned no historical data")
+        try:
+            raw = self._downloader(
+                symbols,
+                period=period,
+                interval="1d",
+                auto_adjust=True,
+                progress=False,
+                group_by="ticker",
+                threads=True,
+            )
+        except Exception:  # Provider/network failure: retry each symbol below.
+            raw = pd.DataFrame()
+        if raw is None:
+            raw = pd.DataFrame()
 
-        close = {symbol: self._extract_close(raw, symbol) for symbol in symbols}
+        close: dict[str, pd.Series] = {}
+        missing: dict[str, str] = {}
+        for symbol in symbols:
+            try:
+                close[symbol] = self._extract_close(raw, symbol)
+            except RuntimeError as exc:
+                missing[symbol] = str(exc)
+
+        # Yahoo occasionally returns a structurally valid batch frame with one empty
+        # ticker.  An individual retry uses a different endpoint/code path in
+        # yfinance and commonly recovers that ticker without failing the whole book.
+        for symbol in tuple(missing):
+            try:
+                retry = self._downloader(
+                    symbol,
+                    period=period,
+                    interval="1d",
+                    auto_adjust=True,
+                    progress=False,
+                    group_by="ticker",
+                    threads=False,
+                )
+            except Exception:
+                continue
+            if retry is None or retry.empty:
+                continue
+            try:
+                close[symbol] = self._extract_close(retry, symbol)
+            except RuntimeError:
+                continue
+            missing.pop(symbol, None)
+
+        if self.new_position.ticker in missing:
+            raise RuntimeError(
+                f"{self.new_position.ticker}: no valid closing prices for the proposed ticker"
+            )
+
         converted: dict[str, pd.Series] = {}
         for ticker, (currency, fx_ticker) in specifications.items():
+            if ticker in missing:
+                # Existing instruments unsupported by Yahoo (for example local fund
+                # security numbers) must not make the endpoint unavailable. They are
+                # omitted from market-risk calculations and disclosed in the result.
+                self._excluded_positions[ticker] = missing[ticker]
+                continue
             local_price = close[ticker]
             if currency == "ILS":
                 ils_price = local_price
             else:
                 if not fx_ticker:
                     raise ValueError(f"{ticker}: no ILS FX ticker configured for {currency}")
+                if fx_ticker in missing:
+                    raise RuntimeError(
+                        f"{ticker}: no valid closing prices for required FX ticker {fx_ticker}"
+                    )
                 # Multiplication makes pct_change include both the asset and FX return.
                 ils_price = local_price.mul(close[fx_ticker], fill_value=np.nan)
             converted[ticker] = ils_price.rename(ticker)
+
+        current_tickers = {position.ticker for position in self.current_positions}
+        if not current_tickers.intersection(converted):
+            raise RuntimeError("no current holdings have usable closing-price history")
 
         prices = pd.concat(converted.values(), axis=1, join="outer").sort_index()
         prices = prices.replace([np.inf, -np.inf], np.nan)
@@ -292,10 +347,18 @@ class QuantitativeRiskEngine:
                 "prices_are_adjusted": True,
                 "returns_are_ils_adjusted": True,
                 "missing_dates_forward_filled": False,
+                "degraded": bool(self._excluded_positions),
+                "excluded_current_positions": sorted(self._excluded_positions),
             },
             "warnings": warnings,
             "warnings_block_trade": self.block_on_warnings,
         }
+        if self._excluded_positions:
+            omitted = ", ".join(sorted(self._excluded_positions))
+            metrics["warnings"].append(
+                "Market-data warning: excluded current holding(s) with no usable "
+                f"closing-price history: {omitted}."
+            )
         return is_trade_approved, metrics
 
     def _ticker_specifications(self) -> dict[str, tuple[str, str | None]]:
@@ -315,6 +378,11 @@ class QuantitativeRiskEngine:
         amounts: dict[str, float] = {}
         for position in self.current_positions:
             amounts[position.ticker] = amounts.get(position.ticker, 0.0) + position.value_ils
+        if self._returns is not None:
+            amounts = {
+                ticker: amount for ticker, amount in amounts.items()
+                if ticker in self._returns.columns
+            }
         return pd.Series(amounts, dtype=float)
 
     def _get_returns(self) -> pd.DataFrame:

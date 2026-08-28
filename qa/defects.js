@@ -29,9 +29,11 @@ ck('DEF-003 holddays defaults to the evidenced 90 days', /holddays: 90/.test(js)
 ck('DEF-003 age warning compares the server opened_at date',
    /added: row\.opened_at/.test(js) && /ageDays >= cfg\.holddays/.test(js));
 
-// ---------- DEF-002: durable state is now exclusively server-owned ----------
-const browserStorageName = ['local', 'Storage'].join('');
-ck('DEF-002 browser persistence calls are completely absent', !HTML.includes(browserStorageName));
+// ---------- DEF-002: portfolio/settings state is exclusively server-owned ----------
+// The API credential may be remembered per device; no application data may be.
+const storageCalls = [...js.matchAll(/localStorage\.(?:getItem|setItem|removeItem)\(([^)]*)\)/g)];
+ck('DEF-002 browser persistence is limited to the API credential',
+   storageCalls.length > 0 && storageCalls.every(match => /^API_KEY_STORE\b/.test(match[1])));
 ck('DEF-002 settings hydrate from the server', /apiFetch\("\/api\/settings"\)/.test(js));
 ck('DEF-002 Active positions hydrate from the server', /apiFetch\("\/api\/positions"\)/.test(js));
 

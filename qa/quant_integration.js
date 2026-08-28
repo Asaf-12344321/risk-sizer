@@ -93,8 +93,10 @@ const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
        /VaR REJECTION/.test(rejected.$('riskReasons').textContent));
   ck('rejected trade cannot be tracked', rejected.$('addPosBtn').disabled === true);
 
-  ck('browser source contains no client persistence API',
-     !approved.w.document.documentElement.innerHTML.includes(['local', 'Storage'].join('')));
+  const source = approved.w.document.documentElement.innerHTML;
+  const storageCalls = [...source.matchAll(/localStorage\.(?:getItem|setItem|removeItem)\(([^)]*)\)/g)];
+  ck('browser persistence is limited to the API credential',
+     storageCalls.length > 0 && storageCalls.every(match => /^API_KEY_STORE\b/.test(match[1])));
 
   report('QUANTITATIVE RISK INTEGRATION');
 })();
