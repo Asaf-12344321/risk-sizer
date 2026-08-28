@@ -146,6 +146,29 @@ class QuantitativeRiskEngineTests(unittest.TestCase):
         self.assertGreaterEqual(len(calls), 4)
         self.assertFalse(metrics["data"]["degraded"])
 
+    def test_244_aligned_returns_complete_with_degraded_warning(self):
+        def short_download(symbols, **kwargs):
+            return synthetic_download(symbols, **kwargs).iloc[-245:]
+
+        approved, metrics = self.make_engine(
+            proposed_entry_size_ils=10_000,
+            max_daily_var_ils=1_000_000,
+            block_on_warnings=False,
+            downloader=short_download,
+        ).evaluate_trade()
+
+        self.assertTrue(approved)
+        self.assertEqual(metrics["historical_var_99"]["lookback_observations"], 244)
+        self.assertTrue(metrics["data"]["degraded"])
+        self.assertIn("244 aligned returns", metrics["warnings"][-1])
+
+    def test_history_below_200_aligned_returns_still_fails_closed(self):
+        def too_short_download(symbols, **kwargs):
+            return synthetic_download(symbols, **kwargs).iloc[-200:]
+
+        with self.assertRaisesRegex(RuntimeError, "at least 200"):
+            self.make_engine(downloader=too_short_download).evaluate_trade()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -107,6 +107,10 @@ class QuantitativeRiskEngine:
         self.var_lookback_days = int(var_lookback_days)
         self.min_correlation_observations = int(min_correlation_observations)
         self.min_var_observations = int(min_var_observations)
+        # 250 is the preferred sample for 99% historical VaR. A slightly shorter
+        # history (common for newer listings) is still usable, but is disclosed as
+        # degraded. Below 200 observations the tail estimate is too fragile to use.
+        self.minimum_usable_var_observations = min(self.min_var_observations, 200)
         self.block_on_warnings = bool(block_on_warnings)
         if downloader is None and yf is None:
             raise RuntimeError("yfinance is required unless a downloader is injected")
@@ -214,10 +218,10 @@ class QuantitativeRiskEngine:
         prices = prices.replace([np.inf, -np.inf], np.nan)
         returns = prices.pct_change(fill_method=None).dropna(how="any")
         required = max(self.correlation_lookback_days, self.var_lookback_days)
-        if len(returns) < min(required, self.min_var_observations):
+        if len(returns) < min(required, self.minimum_usable_var_observations):
             raise RuntimeError(
                 f"only {len(returns)} aligned returns are available; "
-                f"at least {self.min_var_observations} are required"
+                f"at least {self.minimum_usable_var_observations} are required"
             )
         self._ils_prices = prices
         self._returns = returns
@@ -269,7 +273,7 @@ class QuantitativeRiskEngine:
     def calculate_historical_var_99(self) -> dict[str, float | int | bool]:
         """Calculate conservative empirical 1-day 99% VaR from ILS daily P&L."""
         returns = self._get_returns().tail(self.var_lookback_days)
-        if len(returns) < self.min_var_observations:
+        if len(returns) < self.minimum_usable_var_observations:
             raise RuntimeError("insufficient aligned observations for historical VaR")
         current_amounts = self._current_amounts()
         proposed_amounts = current_amounts.copy()
@@ -347,8 +351,12 @@ class QuantitativeRiskEngine:
                 "prices_are_adjusted": True,
                 "returns_are_ils_adjusted": True,
                 "missing_dates_forward_filled": False,
-                "degraded": bool(self._excluded_positions),
+                "degraded": bool(self._excluded_positions) or (
+                    len(self._get_returns()) < self.min_var_observations
+                ),
                 "excluded_current_positions": sorted(self._excluded_positions),
+                "preferred_var_observations": self.min_var_observations,
+                "minimum_usable_var_observations": self.minimum_usable_var_observations,
             },
             "warnings": warnings,
             "warnings_block_trade": self.block_on_warnings,
@@ -358,6 +366,13 @@ class QuantitativeRiskEngine:
             metrics["warnings"].append(
                 "Market-data warning: excluded current holding(s) with no usable "
                 f"closing-price history: {omitted}."
+            )
+        available_observations = len(self._get_returns())
+        if available_observations < self.min_var_observations:
+            metrics["warnings"].append(
+                "Market-data warning: historical VaR used a limited but usable "
+                f"sample of {available_observations} aligned returns; "
+                f"{self.min_var_observations} are preferred."
             )
         return is_trade_approved, metrics
 
