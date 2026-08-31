@@ -42,6 +42,14 @@ const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
   ck('Settings navigation opens the SQLite-backed settings modal',
      approved.$('settingsPanel').open === true &&
        approved.$('tab-settings').getAttribute('aria-selected') === 'true');
+  ck('Settings exposes only the four owner-facing limits',
+     !approved.$('cfg-capital').closest('[hidden]') &&
+       !approved.$('cfg-riskabs').closest('[hidden]') &&
+       !approved.$('cfg-maxpct').closest('[hidden]') &&
+       !approved.$('cfg-maxdailyvar').closest('[hidden]') &&
+       approved.$('cfg-riskpct').closest('[hidden]') &&
+       approved.$('cfg-trailmult').closest('[hidden]'),
+     'technical safeguards remain internal');
   approved.set('cfg-maxriskonr', '7');
   await wait(300);
   ck('Risk-On budget changes persist through /api/settings',

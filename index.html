@@ -1325,9 +1325,8 @@
     <summary>Risk settings</summary>
     <div class="settings-body">
       <p class="settings-note">
-        Size = 1R ÷ stop%, then held down by the smallest cap that applies. The crash
-        percentages come from measured 45-day drawdowns and are picked automatically
-        from the stock's ATR.
+        Change only the limits you use. Your active positions keep the rule they had
+        when you opened them.
       </p>
       <div class="settings-grid">
         <div class="field">
@@ -1335,16 +1334,21 @@
           <input type="text" inputmode="numeric" autocomplete="off" id="cfg-capital">
         </div>
         <div class="field">
-          <label for="cfg-riskabs">Risk per trade, 1R (₪)</label>
+          <label for="cfg-riskabs">Maximum loss per trade (₪)</label>
           <input type="text" inputmode="numeric" autocomplete="off" id="cfg-riskabs">
         </div>
         <div class="field">
-          <label for="cfg-riskpct">…or as % of capital</label>
-          <input type="number" inputmode="decimal" step="0.1" id="cfg-riskpct">
+          <label for="cfg-maxpct">Maximum position size (% of capital)</label>
+          <input type="number" inputmode="decimal" step="0.1" id="cfg-maxpct">
         </div>
         <div class="field">
-          <label for="cfg-maxdailyvar">Maximum 99% daily VaR (₪)</label>
+          <label for="cfg-maxdailyvar">Maximum portfolio loss on a bad day (₪)</label>
           <input type="text" inputmode="numeric" autocomplete="off" id="cfg-maxdailyvar">
+        </div>
+        <div hidden aria-hidden="true">
+        <div class="field">
+          <label for="cfg-riskpct">Fallback risk (% of capital)</label>
+          <input type="number" inputmode="decimal" step="0.1" id="cfg-riskpct">
         </div>
         <div class="field">
           <label for="cfg-maxriskonr">Max Portfolio Risk-On budget (R)</label>
@@ -1353,10 +1357,6 @@
         <div class="field">
           <label for="cfg-breakbudget">Most you'd lose in a crash (₪)</label>
           <input type="text" inputmode="numeric" autocomplete="off" id="cfg-breakbudget">
-        </div>
-        <div class="field">
-          <label for="cfg-maxpct">Max position (% capital)</label>
-          <input type="number" inputmode="decimal" step="0.1" id="cfg-maxpct">
         </div>
         <div class="field">
           <label for="cfg-betaexpct">Max beta-wtd exposure (%)</label>
@@ -1433,6 +1433,7 @@
         <div class="field">
           <label for="cfg-fx">Default USD/ILS</label>
           <input type="number" inputmode="decimal" step="0.001" id="cfg-fx">
+        </div>
         </div>
       </div>
       <div class="settings-actions">
