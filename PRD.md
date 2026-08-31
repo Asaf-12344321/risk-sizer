@@ -353,6 +353,9 @@ candidates:
 | FR-POS-10 | "Sold" **shall** remove the position | Must |
 | FR-POS-11 | Positions **shall** persist across reload | Must |
 | FR-POS-12 | Position state **shall** survive a settings change without corruption | Must |
+| FR-POS-13 | Each newly tracked position **shall** persist an immutable stop-policy snapshot (entry ATR, multipliers, arming/trailing references, bounds, tick convention and price basis). The tracker shall resolve that position from its snapshot, not current settings. | Must |
+| FR-POS-14 | A post-close replay shall emit a next-session stop payload with `current_stop_price`, `stop_moved_up`, `delta_ticks`, and `actionable_alert_needed`; it shall never recommend lowering a confirmed stop. | Must |
+| FR-POS-15 | HAR-Parkinson forecasts shall be stored and displayed as **Reference Only**. They shall have no path to sizing, initial stops, ladders, crash assumptions, correlation, variance, or VaR gates. | Must |
 
 ### 5.9 Settings and persistence — `FR-CFG`
 

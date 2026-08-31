@@ -19,7 +19,7 @@ const D_MAXSPEC = +(process.env.QA_MAXSPEC || 6000);
 const D_RISK    = +(process.env.QA_RISK    || 1300);
 
 function boot({ capital = D_CAPITAL, maxspec = D_MAXSPEC, riskabs = D_RISK,
-                quotes = QUOTES, positions = null, bars = {}, riskResponse = null } = {}) {
+                quotes = QUOTES, positions = null, bars = {}, shadows = {}, riskResponse = null } = {}) {
   const feed = fs.existsSync(quotes) ? fs.readFileSync(quotes, 'utf8') : null;
   const barsFixture = bars;
   const serverPositions = (positions || []).map((p, i) => ({
@@ -28,7 +28,8 @@ function boot({ capital = D_CAPITAL, maxspec = D_MAXSPEC, riskabs = D_RISK,
     currency: p.currency || 'ILS', fx_to_ils: p.fx_to_ils || 1,
     risk_status: p.risk_status || 'RISK_ON', rung: p.rung || 0,
     display_name: p.display_name || '', legacy: Boolean(p.legacy),
-    opened_at: p.opened_at || p.added || new Date().toISOString().slice(0, 10)
+    opened_at: p.opened_at || p.added || new Date().toISOString().slice(0, 10),
+    policy_snapshot: p.policy_snapshot || null
   }));
   const dom = new JSDOM(HTML, { runScripts: 'dangerously', url: 'https://qa.local/',
     beforeParse(w) {
@@ -67,6 +68,7 @@ function boot({ capital = D_CAPITAL, maxspec = D_MAXSPEC, riskabs = D_RISK,
           if (method === 'PUT' && ix >= 0) { Object.assign(w.__serverCore[ix], body); return response(w.__serverCore[ix]); }
           if (method === 'DELETE' && ix >= 0) { w.__serverCore.splice(ix, 1); return response(null, 204); }
         }
+        if (/\/api\/positions\/shadow$/.test(url)) return response(shadows);
         if (/\/api\/positions(?:\/\d+)?$/.test(url)) {
           if (method === 'GET') return response(w.__serverPositions);
           const body = options.body ? JSON.parse(options.body) : {};
