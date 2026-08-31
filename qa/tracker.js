@@ -24,7 +24,7 @@ async function replay(bars) {
   inst.$('tab-pos').dispatchEvent(new inst.w.Event('click', { bubbles: true }));
   await wait(250);
   const txt = inst.$('posList').textContent.replace(/\s+/g, ' ');
-  const m = /stop was breached on ([\d-]+) at ([\d.]+)/.exec(txt);
+  const m = /Stop breach detected on ([\d-]+) at ([\d.]+)/.exec(txt);
   return { price: m ? parseFloat(m[2]) : NaN, date: m ? m[1] : null,
            gapped: /gapped through/.test(txt), txt };
 }

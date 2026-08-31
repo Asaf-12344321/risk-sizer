@@ -340,12 +340,12 @@
   .add-row { display: flex; flex-direction: column; gap: 10px; border-top: 1px dashed var(--ink-border); padding-top: 14px; }
   .add-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .risk-gate {
-    border: 1px solid var(--ink-border); border-radius: 12px; padding: 12px;
-    background: var(--ink-raised); display: flex; flex-direction: column; gap: 10px;
+    border: 1px solid var(--ink-border); border-radius: 12px; padding: 14px;
+    background: var(--ink-raised); display: flex; flex-direction: column; gap: 8px;
   }
   .risk-gate-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
-  .risk-gate-head span { font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-dim); }
-  .risk-gate-head strong { font-family: var(--font-mono); font-size: 12px; }
+  .risk-gate-head span { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-dim); }
+  .risk-gate-head strong { font-family: var(--font-ui); font-size: 16px; }
   .risk-gate[data-state="approved"] { border-color: var(--good); }
   .risk-gate[data-state="approved"] .risk-gate-head strong { color: var(--good); }
   .risk-gate[data-state="rejected"], .risk-gate[data-state="error"] { border-color: var(--bad); }
@@ -356,10 +356,10 @@
   .risk-metrics div { padding: 8px; border-radius: 8px; background: var(--ink); }
   .risk-metrics span { display: block; font-size: 8px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-dim); }
   .risk-metrics strong { display: block; margin-top: 3px; font-family: var(--font-mono); font-size: 12px; }
-  .risk-reasons { font-size: 11px; line-height: 1.45; color: var(--text-dim); }
+  .risk-reasons { font-size: 15px; line-height: 1.45; color: var(--text); }
   .risk-reasons div + div { margin-top: 5px; }
   .risk-reasons .blocker { color: var(--bad); }
-  .risk-check-btn { align-self: flex-start; border: 0; padding: 0; background: transparent; color: var(--accent); font: 600 11px var(--font-ui); cursor: pointer; }
+  .risk-check-btn { align-self: flex-start; border: 0; padding: 0; background: transparent; color: var(--accent); font: 700 12px var(--font-ui); cursor: pointer; }
   .pos-value-fix { display: flex; gap: 8px; align-items: stretch; }
   .pos-value-fix input { min-width: 0; flex: 1; }
 
@@ -423,6 +423,20 @@
   .stop-comparison .engine strong { color: var(--accent); }
   .stop-comparison .alert { color: var(--good); font-weight: 700; }
   .stop-comparison .waiting { grid-column: 1 / -1; }
+  .position-stop {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+    padding: 12px; border-radius: 10px; background: rgba(var(--accent-rgb), .07);
+    border: 1px solid rgba(var(--accent-rgb), .22);
+  }
+  .position-stop span, .position-state span { display: block; color: var(--text-dim); font-size: 12px; }
+  .position-stop strong { color: var(--accent); font: 700 28px/1 var(--font-mono); }
+  .position-state { padding: 2px 2px 0; font-size: 14px; }
+  .position-state strong { display: block; margin-bottom: 2px; }
+  .position-state.danger strong { color: var(--bad); }
+  .position-state.good strong { color: var(--good); }
+  details.position-details { border: 0; margin: 0; padding: 0; background: transparent; }
+  details.position-details summary { color: var(--text-dim); font-size: 12px; cursor: pointer; }
+  .position-detail-body { display: grid; gap: 8px; margin-top: 8px; color: var(--text-dim); font: 11px/1.45 var(--font-mono); }
   .pos-next {
     font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
     background: var(--ink-raised); border: 1px solid var(--ink-border);
@@ -1044,9 +1058,6 @@
     .lookup-card .card-heading { display: block; padding-bottom: 14px; border-bottom: 1px solid rgba(255,255,255,.07); }
     .lookup-card .section-label { font-size: 20px; letter-spacing: -.025em; text-transform: none; }
     .lookup-card .card-heading p { display: none; }
-    .live-calc { float: right; margin-top: -22px; font-size: 0; }
-    .live-calc::after { content: "↻"; color: #bec9c9; font-size: 19px; }
-    .live-calc i { display: none; }
     .lookup-row { margin-top: 20px; }
     .lookup-row input { min-width: 0; }
     .lookup-row .primary-btn { min-width: 72px; }
@@ -1175,12 +1186,8 @@
       <div class="core-list" id="coreList"></div>
     </section>
     <section class="card">
-      <div class="section-label">Set one alert per position <span class="hint">— then wait</span></div>
-      <p class="setup-intro">
-        Put a price alert in the Yahoo app at each <b>next alert</b> price below. When one fires,
-        tap <b>Reached</b>, move the stop at Leumi to the new number, and set the next alert.
-        Measured on your own history that is about <b>5 stop moves a month</b> for a whole book — you never watch anything.
-      </p>
+      <div class="section-label">Your positions</div>
+      <p class="setup-intro">Check this page after market close. Move a broker stop only when the app tells you to.</p>
       <div id="posList"></div>
     </section>
     </div>
@@ -1191,10 +1198,9 @@
   <section class="card lookup-card">
     <div class="card-heading">
       <div>
-        <div class="section-label">Setup Parameters</div>
-        <p>Search a symbol or enter the market data manually.</p>
+        <div class="section-label">Choose a stock</div>
+        <p>Type a ticker and we will fill in the numbers.</p>
       </div>
-      <span class="live-calc"><i aria-hidden="true"></i> Live calculation</span>
     </div>
     <div class="lookup-row">
       <input type="text" autocomplete="off" autocapitalize="characters" id="in-lookup" placeholder="Ticker, e.g. AAPL">
@@ -1265,17 +1271,17 @@
 
     <section class="risk-gate" id="riskGate" data-state="idle" aria-live="polite">
       <div class="risk-gate-head">
-        <span>Holistic quantitative risk gate</span>
+        <span>Safety check</span>
         <strong id="riskVerdict">WAITING</strong>
       </div>
-      <div class="risk-metrics" id="riskMetrics" hidden>
+      <div class="risk-metrics" id="riskMetrics" hidden aria-hidden="true">
         <div><span>Weighted correlation</span><strong id="riskCorrelation">—</strong></div>
         <div><span>Variance change</span><strong id="riskVariance">—</strong></div>
         <div><span>Incremental 99% VaR</span><strong id="riskIncrementalVar">—</strong></div>
         <div><span>Portfolio heat</span><strong id="riskPortfolioHeat">—</strong></div>
       </div>
-      <div class="risk-reasons" id="riskReasons">Enter a ticker and position value.</div>
-      <button class="risk-check-btn" type="button" id="riskCheckBtn">Run risk check</button>
+      <div class="risk-reasons" id="riskReasons">Enter the position amount to check whether it fits your portfolio.</div>
+      <button class="risk-check-btn" type="button" id="riskCheckBtn">Check again</button>
     </section>
 
     <details class="why">
@@ -2220,7 +2226,7 @@
     el("riskGate").dataset.state = "idle";
     el("riskVerdict").textContent = "WAITING";
     el("riskMetrics").hidden = true;
-    el("riskReasons").textContent = message || "Run the risk check before tracking this position.";
+    el("riskReasons").textContent = message || "Enter the position amount to check whether it fits your portfolio.";
     if (typeof syncAddBtn === "function") syncAddBtn();
   }
 
@@ -2243,7 +2249,7 @@
     clearTimeout(riskTimer);
     var payload = currentRiskPayload();
     if (!payload) {
-      resetRiskGate("Enter a ticker and actual position value.");
+      resetRiskGate("Enter the ticker and position amount first.");
       return;
     }
     if (payload.error) {
@@ -2251,7 +2257,7 @@
       el("riskGate").dataset.state = "error";
       el("riskVerdict").textContent = "BLOCKED";
       el("riskMetrics").hidden = true;
-      el("riskReasons").textContent = payload.error;
+      el("riskReasons").textContent = "We cannot check this position right now. Do not add it yet.";
       syncAddBtn();
       return;
     }
@@ -2260,9 +2266,9 @@
         (riskGateState.status === "approved" || riskGateState.status === "rejected")) return;
     riskGateState = { status: "loading", approved: false, signature: signature };
     el("riskGate").dataset.state = "loading";
-    el("riskVerdict").textContent = "CALCULATING…";
+    el("riskVerdict").textContent = "CHECKING…";
     el("riskMetrics").hidden = true;
-    el("riskReasons").textContent = "Fetching aligned returns and simulating the combined portfolio.";
+    el("riskReasons").textContent = "Checking this against the rest of your portfolio…";
     syncAddBtn();
     riskTimer = setTimeout(function () { runRiskEvaluation(payload, signature); }, immediate ? 0 : 700);
   }
@@ -2282,9 +2288,28 @@
       el("riskGate").dataset.state = "error";
       el("riskVerdict").textContent = "UNAVAILABLE";
       el("riskMetrics").hidden = true;
-      el("riskReasons").textContent = error.message + " Start the app with: uvicorn app:app";
+      el("riskReasons").textContent = "We cannot check this position right now. Do not add it yet.";
       syncAddBtn();
     });
+  }
+
+  function simpleRiskMessage(metrics, approved) {
+    if (approved) return "Good to go. This position fits your safety rules.";
+    var correlation = metrics.correlation || {};
+    var variance = metrics.variance || {};
+    var valueAtRisk = metrics.historical_var_99 || {};
+    var portfolioHeat = metrics.portfolio_heat || {};
+    var rawWarnings = Array.isArray(metrics.warnings) ? metrics.warnings.join(" ") : "";
+    var reasons = [];
+    if (correlation.correlation_warning || /Correlation/i.test(rawWarnings))
+      reasons.push("It is too similar to stocks you already own.");
+    if (variance.variance_warning || /Variance/i.test(rawWarnings))
+      reasons.push("It would make your whole portfolio too risky.");
+    if (valueAtRisk.budget_breach || /VaR REJECTION/i.test(rawWarnings))
+      reasons.push("It could make a bad day too expensive.");
+    if (portfolioHeat.budget_breach)
+      reasons.push("You already have enough active positions.");
+    return reasons.length ? reasons.join(" ") : "This position does not fit your safety rules.";
   }
 
   function renderRiskResult(result, signature) {
@@ -2300,8 +2325,8 @@
       signature: signature
     };
     el("riskGate").dataset.state = riskGateState.status;
-    el("riskVerdict").textContent = approved ? "APPROVED" : "REJECTED";
-    el("riskMetrics").hidden = false;
+    el("riskVerdict").textContent = approved ? "GOOD TO GO" : "DON'T ADD";
+    el("riskMetrics").hidden = true;
     var rho = Number(correlation.new_ticker_to_weighted_portfolio);
     var varianceChange = Number(variance.relative_increase_pct);
     var incrementalVar = Number(valueAtRisk.incremental_var_ils);
@@ -2312,10 +2337,7 @@
     var currentHeat = Number(portfolioHeat.current_r), maxHeat = Number(portfolioHeat.max_r);
     el("riskPortfolioHeat").textContent = isFinite(currentHeat) && isFinite(maxHeat)
       ? currentHeat.toFixed(0) + " / " + maxHeat.toFixed(0) + "R" : "—";
-    var warnings = Array.isArray(metrics.warnings) ? metrics.warnings : [];
-    el("riskReasons").innerHTML = warnings.length
-      ? warnings.map(function (warning) { return '<div class="blocker">' + esc(warning) + "</div>"; }).join("")
-      : "No correlation, variance, or VaR limit was breached.";
+    el("riskReasons").textContent = simpleRiskMessage(metrics, approved);
     syncAddBtn();
   }
 
@@ -2500,8 +2522,7 @@
     el("posCount").textContent = positions.length ? "(" + positions.length + ")" : "";
     var host = el("posList");
     if (!positions.length) {
-      host.innerHTML = '<p class="pos-empty">No positions tracked yet. Size a trade on the other tab, '
-        + "enter its ticker, and tap <b>Track this position</b>.</p>";
+      host.innerHTML = '<p class="pos-empty">No positions yet.</p>';
       return;
     }
     host.innerHTML = positions.map(function (p, i) {
@@ -2509,114 +2530,65 @@
       var live = liveState(p);
       var idx = Math.min(p.rung || 0, rungs.length - 1);
       var next = rungs[idx + 1];
-      var stop = live ? live.stop : rungs[idx].stop;
-      var atBreakeven = stop >= p.entry - 1e-9;
-      var lockedPct = (stop - p.entry) / p.entry * 100;
+      var browserStop = live ? live.stop : rungs[idx].stop;
       var eod = positionStopUpdates[String(p.id)];
+      var eodStop = eod ? Number(eod.current_stop_price) : NaN;
+      var shownStop = isFinite(eodStop) ? eodStop : browserStop;
+      var hit = (eod && eod.position_exit_detected) || (live && live.hit);
       var displayName = p.display_name || p.tick || "—";
       var out = '<div class="pos">'
         + '<div class="pos-head"><div class="pos-heading-copy"><span class="position-name">' + esc(displayName) + "</span>"
         + '<span class="position-ticker">' + esc(p.tick || "—") + '</span>'
-        + '<span class="pos-meta">entry ' + px(p.entry) + " · entry ATR " + px(Number(policyFor(p).entry_atr || p.atr))
-        + (p.value_ils > 0 ? " · " + nis(p.value_ils) : " · value missing")
-        + " · " + esc(p.risk_status || "RISK_ON")
-        + (p.added ? " · " + p.added : "") + "</span>"
-        + (p.legacy ? '<span class="legacy-badge">Legacy · excluded from R-slot budget</span>' : '')
         + '</div><div class="row-actions">'
         + '<button class="ghost-btn" type="button" data-act="edit" data-i="' + i + '">Edit</button>'
         + '<button class="danger-ghost" type="button" data-act="close" data-i="' + i + '">Delete</button>'
         + "</div></div>"
-        + '<div class="stop-comparison"><div><span class="comparison-label">Original browser tracker</span><strong>' + px(stop) + "</strong>"
-        + '<small>' + (live ? "data as of " + esc(live.asOf) : "no live bar; ladder estimate") + " · " + (atBreakeven
-            ? (lockedPct > 0.05 ? "locked +" + lockedPct.toFixed(1) + "%" : "at breakeven")
-            : "risking " + pct((p.entry - stop) / p.entry * 100)) + "</small></div>";
+        + '<div class="position-stop"><span>Your stop</span><strong>' + px(shownStop) + "</strong></div>";
 
-      if (eod) {
-        var eodStop = Number(eod.current_stop_price), difference = eodStop - stop;
-        var diffTicks = Math.round(difference / Number((p.policy && p.policy.tick_size) || 0.01));
-        var diffText = Math.abs(diffTicks) < 1 ? "matches browser tracker"
-          : (diffTicks > 0 ? "+" : "") + diffTicks + " ticks vs browser tracker";
-        var engineDetail = eod.position_exit_detected
-          ? "stop breach replayed — no broker move"
-          : (eod.actionable_alert_needed
-              ? '<span class="alert">Move broker stop up ' + Math.max(0, Number(eod.delta_ticks || 0)) + " ticks</span>"
-              : "no broker-stop change");
-        out += '<div class="engine"><span class="comparison-label">Frozen-policy EOD engine</span><strong>' + px(eodStop) + "</strong>"
-          + '<small>as of ' + esc(eod.as_of_session || "—") + " · " + diffText + "<br>" + engineDetail + "</small></div></div>";
+      if (hit) {
+        out += '<div class="position-state danger"><strong>Stop hit — close this position.</strong><span>Do not wait for another signal.</span></div>';
+      } else if (eod && eod.actionable_alert_needed) {
+        out += '<div class="position-state good"><strong>Move your broker stop to ' + px(shownStop) + '.</strong><span>This is today’s after-close update.</span></div>';
       } else {
-        out += '<div class="engine"><span class="comparison-label">Frozen-policy EOD engine</span><strong>—</strong>'
-          + '<small>Waiting for the next finalized post-close replay. It never changes the browser tracker, sizing, or VaR.</small></div></div>';
+        out += '<div class="position-state"><strong>All set.</strong><span>'
+          + (eod ? "Updated after market close." : "Updates after market close.") + "</span></div>";
       }
 
       if (!(p.value_ils > 0)) {
-        out += '<div class="pos-next"><span class="pos-hit">ILS value required for holistic risk.</span> '
-          + 'Enter the current market value of this position.</div>'
+        out += '<div class="pos-next"><span class="pos-hit">Add the current value.</span></div>'
           + '<div class="pos-value-fix"><input type="number" inputmode="decimal" min="1" step="1" '
           + 'data-role="position-value" data-i="' + i + '" placeholder="Current value ₪">'
           + '<button class="primary-btn" type="button" data-act="save-value" data-i="' + i + '">Save value</button></div>';
       }
 
-      // DEF-003: holddays was a dead setting. Wired to the one time-based finding the
-      // history actually supports — the 90+ day bucket was the only losing one.
       var ageDays = p.added
         ? Math.floor((Date.now() - new Date(p.added + "T00:00:00Z").getTime()) / 86400000) : 0;
-      if (p.added && ageDays >= cfg.holddays) {
-        out += '<div class="pos-next"><span class="pos-hit">Held ' + ageDays + ' days.</span> '
-          + "Positions you kept beyond " + cfg.holddays + " days were the only group that "
-          + "lost money in your own record. Worth a decision, not a default.</div>";
+      var shadow = positionShadows[String(p.id)];
+      var detailStop = eod ? px(eodStop) + " after close" : "waiting for after-close check";
+      out += '<details class="position-details"><summary>Details</summary><div class="position-detail-body">'
+        + '<div>Entry ' + px(p.entry) + " · opened " + esc(p.added || "—") + "</div>"
+        + '<div>Browser tracker ' + px(browserStop) + " · EOD engine " + detailStop + "</div>";
+      if (live) out += '<div>Latest price ' + px(live.last) + " · " + esc(live.asOf) + "</div>";
+      if (live && live.hit) out += '<div>Stop breach detected on ' + esc(live.hit.date) + " at " + px(live.hit.price)
+        + (live.hit.gap ? " — gapped through the stop." : ".") + "</div>";
+      if (p.added && ageDays >= cfg.holddays) out += '<div>Held ' + ageDays + " days — review this position.</div>";
+      if (shadow) {
+        var f21 = shadow.forecasts && shadow.forecasts["21"], f31 = shadow.forecasts && shadow.forecasts["31"];
+        var fmtShadow = function (forecast) {
+          return forecast && forecast.status === "available"
+            ? pct(Number(forecast.forecast_total_volatility) * 100) : "unavailable";
+        };
+        out += '<div>Research volatility outlook: 21d ' + fmtShadow(f21) + " · 31d " + fmtShadow(f31) + "</div>";
       }
-
-      if (live) {
-        var pnl = (live.last - p.entry) / p.entry * 100;
-        out += '<div class="pos-live">live ' + px(live.last) + " (" + (pnl >= 0 ? "+" : "")
-          + pnl.toFixed(1) + "%) · high since entry " + px(live.high) + " · " + live.asOf + "</div>";
-        if (live.hit) {
-          out += '<div class="pos-next"><span class="pos-hit">This should already be closed.</span> The stop was breached on <b>'
-            + live.hit.date + "</b> at <b>" + px(live.hit.price) + "</b>"
-            + (live.hit.gap ? " — it <b>gapped through</b> the stop and opened there, so the stop price was never available"
-                            : "")
-            + ". If you still hold it, you are past your own rule.</div>";
-        } else if (!live.armed) {
-          out += '<div class="pos-next">Keep the stop at <b>' + num(stop, 2)
-            + "</b>. It moves up to breakeven (<b>" + px(p.entry) + "</b>) once the price closes at <b>"
-            + px(armPriceFor(p.entry, Number(policyFor(p).entry_atr || p.atr), policyFor(p))) + "</b> — the move that protects this trade.</div>";
-        } else {
-          out += '<div class="pos-next">Trailing on its own. Set the stop to <b>' + num(stop, 2)
-            + "</b> at Leumi; it rises whenever the price closes at a new high.</div>";
-        }
-        out += '<div class="pos-actions">'
-          + '<button class="btn-reached" type="button" data-act="toggle-risk" data-i="' + i + '">'
-          + (p.risk_status === "ARMED_ZERO_RISK" ? "Mark Risk On" : "Mark Armed") + '</button>'
-          + "</div></div>";
-        var shadow = positionShadows[String(p.id)];
-        if (shadow) {
-          var f21 = shadow.forecasts && shadow.forecasts["21"], f31 = shadow.forecasts && shadow.forecasts["31"];
-          var fmtShadow = function (forecast) {
-            return forecast && forecast.status === "available"
-              ? pct(Number(forecast.forecast_total_volatility) * 100) : "unavailable";
-          };
-          out += '<div class="pos-next"><b>21/31-Session Volatility Outlook (HAR Shadow) — Reference Only</b><br>'
-            + '21d ' + fmtShadow(f21) + ' · 31d ' + fmtShadow(f31) + ' · as of ' + esc(shadow.as_of_session || "—")
-            + '<br><span class="pos-hit">Not used for stop, size, crash curve, or VaR.</span></div>';
-        } else {
-          out += '<div class="pos-next"><b>21/31-Session Volatility Outlook (HAR Shadow) — Reference Only</b><br>'
-            + 'No finalized shadow record yet. This does not affect the broker stop, size, crash curve, or VaR.</div>';
-        }
-        return out;
+      out += '<div class="pos-actions">';
+      if (!live) {
+        out += '<button class="btn-reached" type="button" data-act="reached" data-i="' + i + '"'
+          + (next ? "" : " disabled") + ">Reached " + (next ? px(next.px) : "—") + "</button>"
+          + (idx > 0 ? '<button class="btn-undo" type="button" data-act="undo" data-i="' + i + '">Undo</button>' : "");
       }
-
-      out += '<div class="pos-next">No live data for ' + esc(p.tick || "?")
-        + " — add it to tickers.txt in the repo. Manual mode: "
-        + (next ? "alert at <b>" + px(next.px) + "</b> → then move the stop to <b>" + px(next.stop) + "</b>"
-             + (next.cls === "arm" ? " — the one that protects the trade" : "")
-           : "ladder complete, keep the stop at <b>" + px(stop) + "</b>") + "</div>";
-      out += '<div class="pos-actions">'
-        + '<button class="btn-reached" type="button" data-act="reached" data-i="' + i + '"'
-        + (next ? "" : " disabled") + ">✓ Reached " + (next ? px(next.px) : "—") + "</button>"
-        + (idx > 0 ? '<button class="btn-undo" type="button" data-act="undo" data-i="' + i + '">Undo</button>' : "")
-        + '<button class="btn-reached" type="button" data-act="toggle-risk" data-i="' + i + '">'
-        + (p.risk_status === "ARMED_ZERO_RISK" ? "Mark Risk On" : "Mark Armed") + '</button>'
-        + "</div></div>";
+      out += '<button class="btn-reached" type="button" data-act="toggle-risk" data-i="' + i + '">'
+        + (p.risk_status === "ARMED_ZERO_RISK" ? "Mark active" : "Mark protected") + '</button>'
+        + "</div></div></details></div>";
       return out;
     }).join("");
   }

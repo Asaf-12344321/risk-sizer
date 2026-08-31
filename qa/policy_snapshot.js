@@ -31,12 +31,12 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   await wait(250);
   const text = inst.$('posList').textContent.replace(/\s+/g, ' ');
   // Snapshot multiplier 1x gives 120 - 1x5 = 115; the global 3.5x would have given 102.5.
-  ck('original browser tracker resolves its stop from frozen policy snapshot, not global trail setting',
-     /Original browser tracker\s*115\.00/.test(text), text);
-  ck('post-close frozen-policy stop is rendered beside the original tracker with its alert',
-     /Frozen-policy EOD engine\s*116\.50/.test(text) && /Move broker stop up 150 ticks/.test(text), text);
-  ck('HAR card is explicitly reference-only',
-     /21\/31-Session Volatility Outlook \(HAR Shadow\) — Reference Only/.test(text)
-       && /Not used for stop, size, crash curve, or VaR/.test(text), text);
+  ck('frozen policy still drives the browser-tracker value held in Details',
+     /Browser tracker\s*115\.00/.test(text), text);
+  ck('the only primary instruction is the broker stop to use',
+     /Your stop\s*116\.50/.test(text) && /Move your broker stop to 116\.50/.test(text), text);
+  const details = inst.$('posList').querySelector('details.position-details');
+  ck('research volatility is hidden inside the collapsed Details section',
+     details && !details.open && /Research volatility outlook/.test(details.textContent), text);
   report('POLICY SNAPSHOT');
 })();

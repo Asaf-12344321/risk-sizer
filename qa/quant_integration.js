@@ -19,14 +19,11 @@ const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
        !Object.prototype.hasOwnProperty.call(approved.w.__riskRequests[0], 'max_daily_var_ils'),
      JSON.stringify(approved.w.__riskRequests[0] || {}));
   ck('approved verdict is shown in green state',
-     approved.$('riskGate').dataset.state === 'approved' &&
-       approved.$('riskVerdict').textContent === 'APPROVED');
-  ck('incremental 99% VaR is rendered in ILS',
-     /1,000/.test(approved.$('riskIncrementalVar').textContent),
-     approved.$('riskIncrementalVar').textContent);
-  ck('server-calculated portfolio heat is rendered',
-     approved.$('riskPortfolioHeat').textContent === '1 / 5R',
-     approved.$('riskPortfolioHeat').textContent);
+    approved.$('riskGate').dataset.state === 'approved' &&
+       approved.$('riskVerdict').textContent === 'GOOD TO GO');
+  ck('risk gate gives a plain-language approval and keeps calculations hidden',
+     /Good to go/.test(approved.$('riskReasons').textContent) && approved.$('riskMetrics').hidden,
+     approved.$('riskReasons').textContent);
   ck('Track remains disabled until the matching risk request is approved',
      approved.$('addPosBtn').disabled === false);
 
@@ -86,11 +83,12 @@ const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
   rejected.set('in-ticker', 'HOT');
   await wait(850);
   ck('rejected verdict is shown in red state',
-     rejected.$('riskGate').dataset.state === 'rejected' &&
-       rejected.$('riskVerdict').textContent === 'REJECTED');
-  ck('specific correlation/VaR reasons are visible',
-     /Correlation Warning/.test(rejected.$('riskReasons').textContent) &&
-       /VaR REJECTION/.test(rejected.$('riskReasons').textContent));
+    rejected.$('riskGate').dataset.state === 'rejected' &&
+       rejected.$('riskVerdict').textContent === "DON'T ADD");
+  ck('rejected trade gets a plain-language reason instead of quantitative jargon',
+     /too similar/.test(rejected.$('riskReasons').textContent) &&
+       /bad day too expensive/.test(rejected.$('riskReasons').textContent) &&
+       !/VaR|rho|Correlation Warning/.test(rejected.$('riskReasons').textContent));
   ck('rejected trade cannot be tracked', rejected.$('addPosBtn').disabled === true);
 
   const source = approved.w.document.documentElement.innerHTML;
