@@ -405,6 +405,24 @@
   }
   .pos-now .lbl { font-family: var(--font-ui); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); }
   .pos-now .stop { font-size: 22px; font-weight: 700; }
+  .stop-comparison {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .stop-comparison > div {
+    padding: 9px 10px; border: 1px solid var(--ink-border); border-radius: 9px;
+    background: var(--ink-raised);
+  }
+  .stop-comparison .comparison-label {
+    display: block; font: 700 9.5px/1.3 var(--font-ui); letter-spacing: .05em;
+    text-transform: uppercase; color: var(--text-dim);
+  }
+  .stop-comparison strong { display: block; margin-top: 4px; font: 700 18px/1.15 var(--font-mono); }
+  .stop-comparison small { display: block; margin-top: 5px; font: 11px/1.35 var(--font-mono); color: var(--text-dim); }
+  .stop-comparison .engine { border-color: color-mix(in srgb, var(--accent) 45%, var(--ink-border)); }
+  .stop-comparison .engine strong { color: var(--accent); }
+  .stop-comparison .alert { color: var(--good); font-weight: 700; }
+  .stop-comparison .waiting { grid-column: 1 / -1; }
   .pos-next {
     font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
     background: var(--ink-raised); border: 1px solid var(--ink-border);
@@ -801,6 +819,7 @@
   .pos-now .stop { color: var(--accent); font-size: 25px; }
   .pos-next { background: rgba(15, 24, 33, 0.72); border-color: var(--ink-border-soft); }
   .pos-actions button { min-height: 44px; }
+  .stop-comparison > div { background: rgba(15, 24, 33, 0.72); border-color: var(--ink-border-soft); }
   .portfolio-stack { display: grid; gap: 18px; }
   .core-form { display: grid; grid-template-columns: 1fr 1.2fr 1fr .75fr auto; gap: 10px; align-items: end; }
   .core-list { display: grid; gap: 8px; }
@@ -2314,6 +2333,7 @@
   var positions = [];
   var coreHoldings = [];
   var positionShadows = {};
+  var positionStopUpdates = {};
 
   function normalisePosition(row) {
     return {
@@ -2329,8 +2349,12 @@
   function loadServerPositions() {
     return apiFetch("/api/positions").then(function (rows) {
       positions = (rows || []).map(normalisePosition);
-      return apiFetch("/api/positions/shadow").catch(function () { return {}; }).then(function (shadows) {
-        positionShadows = shadows || {};
+      return Promise.all([
+        apiFetch("/api/positions/shadow").catch(function () { return {}; }),
+        apiFetch("/api/positions/stops").catch(function () { return {}; })
+      ]).then(function (records) {
+        positionShadows = records[0] || {};
+        positionStopUpdates = records[1] || {};
         renderPositions();
         return positions;
       });
@@ -2488,6 +2512,7 @@
       var stop = live ? live.stop : rungs[idx].stop;
       var atBreakeven = stop >= p.entry - 1e-9;
       var lockedPct = (stop - p.entry) / p.entry * 100;
+      var eod = positionStopUpdates[String(p.id)];
       var displayName = p.display_name || p.tick || "—";
       var out = '<div class="pos">'
         + '<div class="pos-head"><div class="pos-heading-copy"><span class="position-name">' + esc(displayName) + "</span>"
@@ -2501,10 +2526,27 @@
         + '<button class="ghost-btn" type="button" data-act="edit" data-i="' + i + '">Edit</button>'
         + '<button class="danger-ghost" type="button" data-act="close" data-i="' + i + '">Delete</button>'
         + "</div></div>"
-        + '<div class="pos-now"><span class="lbl">stop now</span><span class="stop">' + px(stop) + "</span>"
-        + '<span class="lbl">' + (atBreakeven
-            ? '<span class="pos-safe">' + (lockedPct > 0.05 ? "locked in +" + lockedPct.toFixed(1) + "%" : "at breakeven — protected") + "</span>"
-            : "risking " + pct((p.entry - stop) / p.entry * 100)) + "</span></div>";
+        + '<div class="stop-comparison"><div><span class="comparison-label">Original browser tracker</span><strong>' + px(stop) + "</strong>"
+        + '<small>' + (live ? "data as of " + esc(live.asOf) : "no live bar; ladder estimate") + " · " + (atBreakeven
+            ? (lockedPct > 0.05 ? "locked +" + lockedPct.toFixed(1) + "%" : "at breakeven")
+            : "risking " + pct((p.entry - stop) / p.entry * 100)) + "</small></div>";
+
+      if (eod) {
+        var eodStop = Number(eod.current_stop_price), difference = eodStop - stop;
+        var diffTicks = Math.round(difference / Number((p.policy && p.policy.tick_size) || 0.01));
+        var diffText = Math.abs(diffTicks) < 1 ? "matches browser tracker"
+          : (diffTicks > 0 ? "+" : "") + diffTicks + " ticks vs browser tracker";
+        var engineDetail = eod.position_exit_detected
+          ? "stop breach replayed — no broker move"
+          : (eod.actionable_alert_needed
+              ? '<span class="alert">Move broker stop up ' + Math.max(0, Number(eod.delta_ticks || 0)) + " ticks</span>"
+              : "no broker-stop change");
+        out += '<div class="engine"><span class="comparison-label">Frozen-policy EOD engine</span><strong>' + px(eodStop) + "</strong>"
+          + '<small>as of ' + esc(eod.as_of_session || "—") + " · " + diffText + "<br>" + engineDetail + "</small></div></div>";
+      } else {
+        out += '<div class="engine"><span class="comparison-label">Frozen-policy EOD engine</span><strong>—</strong>'
+          + '<small>Waiting for the next finalized post-close replay. It never changes the browser tracker, sizing, or VaR.</small></div></div>';
+      }
 
       if (!(p.value_ils > 0)) {
         out += '<div class="pos-next"><span class="pos-hit">ILS value required for holistic risk.</span> '

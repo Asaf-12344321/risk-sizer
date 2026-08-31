@@ -90,6 +90,13 @@ not trusted from the browser request.
 3. If daily bars are published for that ticker, the app replays them from the entry date and derives the current stop, high since entry and latest daily close.
 4. If bars are unavailable, the position remains usable in manual mode with **Reached**, **Undo**, **Edit**, and **Delete** actions.
 
+Each position also shows a side-by-side check after the post-close run: the original
+browser tracker beside the immutable-policy EOD engine.  Only the EOD engine's
+explicit “Move broker stop up” alert should be used for a broker update; it records
+the finalized session and never lowers a stop.  The HAR-Parkinson outlook remains a
+separate reference-only card and cannot affect stops, position size, crash curves or
+VaR.
+
 Risk Sizer does not transmit an order. You remain responsible for entering and updating the stop at your broker.
 
 ---
@@ -287,6 +294,12 @@ Every lookup states that the price is a daily **close**, not a live quote. Commo
 Ticker lookup comes from the full eligible universe; `tickers.txt` is **not** the lookup list. It controls which held US tickers receive a `bars/{TICKER}.json` history file for automatic position replay.
 
 Add one symbol per line to [`tickers.txt`](tickers.txt). The next successful scheduled run publishes its bars. Until then, the position tracker falls back to manual ladder mode.
+
+The separate **Run post-close stop engine** workflow runs at 22:15 UTC on US weekdays.
+It calls the protected server batch endpoint only after the regular close and fails
+closed if the session is not finalized.  Its repository secrets must be
+`RISK_SIZER_API_URL` and `RISK_SIZER_API_KEY`; no secret is exposed to the browser or
+stored in the data branch.
 
 ---
 

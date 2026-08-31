@@ -105,6 +105,20 @@ class RiskApiTests(unittest.TestCase):
         self.assertIn("21", body["har_parkinson_shadow"]["forecasts"])
         shadows = self.client.get("/api/positions/shadow", headers=self.headers)
         self.assertIn(str(position["id"]), shadows.json())
+        latest_stop = self.client.get("/api/positions/stops", headers=self.headers)
+        self.assertEqual(latest_stop.status_code, 200, latest_stop.text)
+        self.assertEqual(latest_stop.json()[str(position["id"])]["current_stop_price"], body["stop_update"]["current_stop_price"])
+
+        # The scheduler calls the batch endpoint.  Replaying the same finalized session
+        # is idempotent and exposes a position-level result for operational logging.
+        with patch.object(app_module, "_daily_ohlc", return_value=bars):
+            batch = self.client.post(
+                "/api/positions/post-close", headers=self.headers,
+                json={"as_of_session": dates[-1].date().isoformat()},
+            )
+        self.assertEqual(batch.status_code, 200, batch.text)
+        self.assertEqual(batch.json()["processed"][0]["position_id"], position["id"])
+        self.assertFalse(batch.json()["sizing_or_var_inputs_changed"])
 
     def test_risk_evaluation_reads_portfolio_from_database(self):
         self.database.update_settings({"maxdailyvar": 1_000_000, "maxriskonr": 5})

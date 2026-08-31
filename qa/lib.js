@@ -19,7 +19,7 @@ const D_MAXSPEC = +(process.env.QA_MAXSPEC || 6000);
 const D_RISK    = +(process.env.QA_RISK    || 1300);
 
 function boot({ capital = D_CAPITAL, maxspec = D_MAXSPEC, riskabs = D_RISK,
-                quotes = QUOTES, positions = null, bars = {}, shadows = {}, riskResponse = null } = {}) {
+                quotes = QUOTES, positions = null, bars = {}, shadows = {}, stops = {}, riskResponse = null } = {}) {
   const feed = fs.existsSync(quotes) ? fs.readFileSync(quotes, 'utf8') : null;
   const barsFixture = bars;
   const serverPositions = (positions || []).map((p, i) => ({
@@ -69,6 +69,7 @@ function boot({ capital = D_CAPITAL, maxspec = D_MAXSPEC, riskabs = D_RISK,
           if (method === 'DELETE' && ix >= 0) { w.__serverCore.splice(ix, 1); return response(null, 204); }
         }
         if (/\/api\/positions\/shadow$/.test(url)) return response(shadows);
+        if (/\/api\/positions\/stops$/.test(url)) return response(stops);
         if (/\/api\/positions(?:\/\d+)?$/.test(url)) {
           if (method === 'GET') return response(w.__serverPositions);
           const body = options.body ? JSON.parse(options.body) : {};

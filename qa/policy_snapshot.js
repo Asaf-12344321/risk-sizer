@@ -21,14 +21,20 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         '31': { status: 'available', forecast_total_volatility: 0.25 },
       },
     } },
+    stops: { '1': {
+      as_of_session: '2026-01-05', current_stop_price: 116.5,
+      delta_ticks: 150, actionable_alert_needed: true, position_exit_detected: false,
+    } },
   });
   await wait(60);
   inst.$('tab-pos').dispatchEvent(new inst.w.Event('click', { bubbles: true }));
   await wait(250);
   const text = inst.$('posList').textContent.replace(/\s+/g, ' ');
   // Snapshot multiplier 1x gives 120 - 1x5 = 115; the global 3.5x would have given 102.5.
-  ck('open position resolves stop from frozen policy snapshot, not global trail setting',
-     /stop now\s*115\.00/.test(text), text);
+  ck('original browser tracker resolves its stop from frozen policy snapshot, not global trail setting',
+     /Original browser tracker\s*115\.00/.test(text), text);
+  ck('post-close frozen-policy stop is rendered beside the original tracker with its alert',
+     /Frozen-policy EOD engine\s*116\.50/.test(text) && /Move broker stop up 150 ticks/.test(text), text);
   ck('HAR card is explicitly reference-only',
      /21\/31-Session Volatility Outlook \(HAR Shadow\) — Reference Only/.test(text)
        && /Not used for stop, size, crash curve, or VaR/.test(text), text);

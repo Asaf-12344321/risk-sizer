@@ -272,6 +272,29 @@ def _snapshot_missing_positions() -> None:
         if position.get("policy_snapshot") is None:
             db.set_active_policy_snapshot(position["id"], build_policy_snapshot(position["atr"], settings))
 
+
+def _replay_post_close(position: dict[str, Any], as_of_session: date) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Persist one position's finalized EOD stop and reference-only HAR shadow record."""
+    ohlc = _daily_ohlc(position["ticker"], as_of_session)
+    held = ohlc.loc[ohlc.index >= pd.Timestamp(position["opened_at"])]
+    if held.empty:
+        raise RuntimeError("no finalized bars are available after the entry date")
+    bars = [
+        {"session": str(session.date()), "open": float(row.open), "high": float(row.high),
+         "low": float(row.low), "close": float(row.close)}
+        for session, row in held.iterrows()
+    ]
+    previous = db.latest_stop_update(position["id"])
+    previous_stop = previous["payload"]["current_stop_price"] if previous else None
+    stop = replay_post_close_stop(
+        entry_price=float(position["entry_price"]), policy_snapshot=position["policy_snapshot"],
+        bars=bars, previous_confirmed_stop_price=previous_stop,
+    )
+    shadow = har_parkinson_shadow(ohlc, as_of_session=as_of_session)
+    db.append_stop_update(position["id"], stop, shadow["source_hash"])
+    db.append_har_shadow_record(position["id"], shadow)
+    return stop, shadow
+
 cors_origins = [origin.strip() for origin in os.environ.get(
     "RISK_SIZER_CORS_ORIGINS",
     "http://localhost,http://127.0.0.1,http://localhost:8000,http://127.0.0.1:8000",
@@ -372,6 +395,47 @@ def list_position_shadows(_: Protected) -> dict[str, Any]:
     return {str(position_id): record for position_id, record in db.latest_har_shadow_records().items()}
 
 
+@app.get("/api/positions/stops")
+def list_position_stops(_: Protected) -> dict[str, Any]:
+    """Latest frozen-policy EOD replay for comparison with the browser tracker."""
+    return {str(position["id"]): record["payload"] for position in db.list_active()
+            if (record := db.latest_stop_update(position["id"])) is not None}
+
+
+@app.post("/api/positions/post-close")
+def process_post_close_positions(request: PostCloseRequest, _: Protected) -> dict[str, Any]:
+    """Idempotently replay every open position after a finalized exchange session.
+
+    A non-trading session is reported as ``not_finalized`` rather than silently using a
+    prior close.  The scheduled caller can therefore distinguish a market holiday from
+    a genuine provider or data error while the stop engine always fails closed.
+    """
+    _snapshot_missing_positions()
+    processed: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    for position in db.list_active():
+        try:
+            stop, _ = _replay_post_close(position, request.as_of_session)
+            processed.append({
+                "position_id": position["id"], "ticker": position["ticker"],
+                "current_stop_price": stop["current_stop_price"],
+                "actionable_alert_needed": stop["actionable_alert_needed"],
+            })
+        except (RuntimeError, ValueError) as exc:
+            message = str(exc)
+            failures.append({
+                "position_id": position["id"], "ticker": position["ticker"],
+                "code": "not_finalized" if "is not finalized" in message else "replay_error",
+                "detail": message,
+            })
+    return {
+        "as_of_session": request.as_of_session.isoformat(),
+        "processed": processed,
+        "failures": failures,
+        "sizing_or_var_inputs_changed": False,
+    }
+
+
 @app.post("/api/positions/{item_id}/post-close")
 def process_post_close_position(item_id: int, request: PostCloseRequest, _: Protected) -> dict[str, Any]:
     """Run one finalized-session replay plus isolated shadow volatility calculation."""
@@ -380,26 +444,9 @@ def process_post_close_position(item_id: int, request: PostCloseRequest, _: Prot
     if position is None:
         raise HTTPException(status_code=404, detail="Active position not found")
     try:
-        ohlc = _daily_ohlc(position["ticker"], request.as_of_session)
-        held = ohlc.loc[ohlc.index >= pd.Timestamp(position["opened_at"])]
-        if held.empty:
-            raise RuntimeError("no finalized bars are available after the entry date")
-        bars = [
-            {"session": str(session.date()), "open": float(row.open), "high": float(row.high),
-             "low": float(row.low), "close": float(row.close)}
-            for session, row in held.iterrows()
-        ]
-        previous = db.latest_stop_update(item_id)
-        previous_stop = previous["payload"]["current_stop_price"] if previous else None
-        stop = replay_post_close_stop(
-            entry_price=float(position["entry_price"]), policy_snapshot=position["policy_snapshot"],
-            bars=bars, previous_confirmed_stop_price=previous_stop,
-        )
-        shadow = har_parkinson_shadow(ohlc, as_of_session=request.as_of_session)
+        stop, shadow = _replay_post_close(position, request.as_of_session)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    db.append_stop_update(item_id, stop, shadow["source_hash"])
-    db.append_har_shadow_record(item_id, shadow)
     return {
         "position_id": item_id,
         "stop_update": stop,
