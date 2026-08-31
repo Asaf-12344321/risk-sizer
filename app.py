@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import math
 import os
 import sqlite3
@@ -10,6 +11,7 @@ import time
 from datetime import date
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlparse
 
 import pandas as pd
 import yfinance as yf
@@ -196,6 +198,36 @@ class PostCloseRequest(BaseModel):
     as_of_session: date
 
 
+class PushSubscriptionKeys(BaseModel):
+    p256dh: str = Field(min_length=16, max_length=1024)
+    auth: str = Field(min_length=8, max_length=1024)
+
+
+class PushSubscriptionRequest(BaseModel):
+    endpoint: str = Field(min_length=12, max_length=4096)
+    keys: PushSubscriptionKeys
+
+    @field_validator("endpoint")
+    @classmethod
+    def validate_endpoint(cls, value: str) -> str:
+        parsed = urlparse(value)
+        if parsed.scheme != "https" or not parsed.netloc:
+            raise ValueError("push endpoint must be a secure HTTPS URL")
+        return value
+
+
+class PushSubscriptionDelete(BaseModel):
+    endpoint: str = Field(min_length=12, max_length=4096)
+
+    @field_validator("endpoint")
+    @classmethod
+    def validate_endpoint(cls, value: str) -> str:
+        parsed = urlparse(value)
+        if parsed.scheme != "https" or not parsed.netloc:
+            raise ValueError("push endpoint must be a secure HTTPS URL")
+        return value
+
+
 class CachedDownloader:
     """Process-local TTL cache so repeated UI checks reuse the same history."""
 
@@ -233,6 +265,72 @@ def require_api_key(x_api_key: Annotated[str | None, Header()] = None) -> None:
 
 
 Protected = Annotated[None, Depends(require_api_key)]
+
+
+def _push_config() -> dict[str, str] | None:
+    """Return only a complete, explicitly configured Web Push identity.
+
+    The private key is never sent to a browser.  Leaving any setting absent simply
+    leaves the display control disabled; it must never make the stop engine fail.
+    """
+    private_key = os.environ.get("RISK_SIZER_VAPID_PRIVATE_KEY", "").strip()
+    public_key = os.environ.get("RISK_SIZER_VAPID_PUBLIC_KEY", "").strip()
+    subject = os.environ.get("RISK_SIZER_VAPID_SUBJECT", "").strip()
+    if not all((private_key, public_key, subject)):
+        return None
+    return {"private_key": private_key, "public_key": public_key, "subject": subject}
+
+
+def _deliver_web_push(payload: dict[str, Any]) -> dict[str, int]:
+    """Deliver a visible push to each registered device, never affecting stops.
+
+    A browser can invalidate an endpoint when the app is removed.  404/410 are
+    expected lifecycle events, so remove only that dead endpoint and keep all other
+    subscriptions.  Other delivery failures are counted for diagnostics but cannot
+    make a finalized stop replay fail.
+    """
+    config = _push_config()
+    if config is None:
+        return {"sent": 0, "expired": 0, "failed": 0}
+    from pywebpush import WebPushException, webpush
+
+    summary = {"sent": 0, "expired": 0, "failed": 0}
+    for subscription in db.list_push_subscriptions():
+        try:
+            webpush(
+                subscription_info=subscription,
+                data=json.dumps(payload, separators=(",", ":")),
+                vapid_private_key=config["private_key"],
+                vapid_claims={"sub": config["subject"]},
+                ttl=60 * 60 * 12,
+                timeout=10,
+            )
+            summary["sent"] += 1
+        except WebPushException as exc:
+            response = getattr(exc, "response", None)
+            if getattr(response, "status_code", None) in {404, 410}:
+                db.delete_push_subscription(subscription["endpoint"])
+                summary["expired"] += 1
+            else:
+                summary["failed"] += 1
+        except Exception:
+            # A notification provider outage is not permission to alter a broker stop
+            # or to fail the scheduled post-close workflow.
+            summary["failed"] += 1
+    return summary
+
+
+def _send_stop_move_alert(position: dict[str, Any], stop: dict[str, Any]) -> dict[str, int]:
+    if not stop.get("actionable_alert_needed"):
+        return {"sent": 0, "expired": 0, "failed": 0}
+    name = position.get("display_name") or position["ticker"]
+    stop_price = float(stop["current_stop_price"])
+    return _deliver_web_push({
+        "title": "Risk Sizer",
+        "body": f"{name}: move stop to {stop_price:.2f}",
+        "tag": f"risk-sizer-stop-{position['id']}",
+        "url": "/",
+    })
 
 db = Database(DATABASE_PATH)
 db.initialize()
@@ -313,9 +411,59 @@ def index() -> FileResponse:
     return FileResponse(ROOT / "index.html")
 
 
+@app.get("/manifest.webmanifest", include_in_schema=False)
+def web_manifest() -> FileResponse:
+    return FileResponse(ROOT / "manifest.webmanifest", media_type="application/manifest+json")
+
+
+@app.get("/service-worker.js", include_in_schema=False)
+def service_worker() -> FileResponse:
+    return FileResponse(ROOT / "service-worker.js", media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/risk-sizer-icon.svg", include_in_schema=False)
+def app_icon() -> FileResponse:
+    return FileResponse(ROOT / "risk-sizer-icon.svg", media_type="image/svg+xml")
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "storage": "sqlite"}
+
+
+@app.get("/api/notifications/config")
+def notification_config(_: Protected) -> dict[str, Any]:
+    config = _push_config()
+    return {"enabled": config is not None, "public_key": config["public_key"] if config else None}
+
+
+@app.post("/api/notifications/subscribe", status_code=201)
+def subscribe_notifications(request: PushSubscriptionRequest, _: Protected) -> dict[str, bool]:
+    if _push_config() is None:
+        raise HTTPException(status_code=503, detail="Stop alerts are not configured yet")
+    db.upsert_push_subscription(request.model_dump())
+    return {"subscribed": True}
+
+
+@app.delete("/api/notifications/subscribe", status_code=204)
+def unsubscribe_notifications(request: PushSubscriptionDelete, _: Protected) -> Response:
+    db.delete_push_subscription(request.endpoint)
+    return Response(status_code=204)
+
+
+@app.post("/api/notifications/test")
+def test_notification(_: Protected) -> dict[str, int]:
+    if _push_config() is None:
+        raise HTTPException(status_code=503, detail="Stop alerts are not configured yet")
+    if not db.list_push_subscriptions():
+        raise HTTPException(status_code=409, detail="Enable stop alerts on this phone first")
+    return _deliver_web_push({
+        "title": "Risk Sizer",
+        "body": "Alerts are on. You will be notified when a stop needs to move.",
+        "tag": "risk-sizer-test",
+        "url": "/",
+    })
 
 
 def _conflict(exc: sqlite3.IntegrityError) -> HTTPException:
@@ -413,9 +561,13 @@ def process_post_close_positions(request: PostCloseRequest, _: Protected) -> dic
     _snapshot_missing_positions()
     processed: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
+    notifications = {"sent": 0, "expired": 0, "failed": 0}
     for position in db.list_active():
         try:
             stop, _ = _replay_post_close(position, request.as_of_session)
+            delivery = _send_stop_move_alert(position, stop)
+            for key, value in delivery.items():
+                notifications[key] += value
             processed.append({
                 "position_id": position["id"], "ticker": position["ticker"],
                 "current_stop_price": stop["current_stop_price"],
@@ -432,6 +584,7 @@ def process_post_close_positions(request: PostCloseRequest, _: Protected) -> dic
         "as_of_session": request.as_of_session.isoformat(),
         "processed": processed,
         "failures": failures,
+        "notifications": notifications,
         "sizing_or_var_inputs_changed": False,
     }
 

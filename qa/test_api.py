@@ -38,6 +38,55 @@ class RiskApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/health").status_code, 200)
         self.assertEqual(self.client.get("/api/core").status_code, 401)
 
+    def test_native_stop_alert_subscription_and_test_delivery(self):
+        # The browser only receives the public VAPID key. The private key stays in the
+        # process environment and is consumed solely by the server-side sender.
+        configured = {
+            "RISK_SIZER_VAPID_PRIVATE_KEY": "private-test-key",
+            "RISK_SIZER_VAPID_PUBLIC_KEY": "public-test-key",
+            "RISK_SIZER_VAPID_SUBJECT": "https://risk-sizer.test",
+        }
+        with patch.dict(os.environ, configured, clear=False):
+            config = self.client.get("/api/notifications/config", headers=self.headers)
+            self.assertEqual(config.status_code, 200, config.text)
+            self.assertEqual(config.json(), {"enabled": True, "public_key": "public-test-key"})
+            invalid = self.client.post("/api/notifications/subscribe", headers=self.headers, json={
+                "endpoint": "http://not-secure.test/push", "keys": {"p256dh": "a" * 20, "auth": "b" * 12},
+            })
+            self.assertEqual(invalid.status_code, 422)
+            subscription = {
+                "endpoint": "https://push.example.test/subscription-1",
+                "keys": {"p256dh": "a" * 20, "auth": "b" * 12},
+            }
+            created = self.client.post("/api/notifications/subscribe", headers=self.headers, json=subscription)
+            self.assertEqual(created.status_code, 201, created.text)
+            self.assertEqual(len(self.database.list_push_subscriptions()), 1)
+            with patch.object(app_module, "_deliver_web_push", return_value={"sent": 1, "expired": 0, "failed": 0}) as send:
+                test = self.client.post("/api/notifications/test", headers=self.headers)
+            self.assertEqual(test.status_code, 200, test.text)
+            self.assertEqual(test.json()["sent"], 1)
+            self.assertEqual(send.call_args.args[0]["title"], "Risk Sizer")
+            deleted = self.client.request(
+                "DELETE", "/api/notifications/subscribe", headers=self.headers,
+                json={"endpoint": subscription["endpoint"]},
+            )
+            self.assertEqual(deleted.status_code, 204, deleted.text)
+            self.assertEqual(self.database.list_push_subscriptions(), [])
+
+    def test_stop_move_alert_only_sends_for_actionable_instruction(self):
+        position = {"id": 7, "ticker": "ASTS", "display_name": "AST SpaceMobile"}
+        with patch.object(app_module, "_deliver_web_push", return_value={"sent": 1, "expired": 0, "failed": 0}) as send:
+            quiet = app_module._send_stop_move_alert(position, {
+                "actionable_alert_needed": False, "current_stop_price": 42.04,
+            })
+            moved = app_module._send_stop_move_alert(position, {
+                "actionable_alert_needed": True, "current_stop_price": 44.25,
+            })
+        self.assertEqual(quiet["sent"], 0)
+        self.assertEqual(moved["sent"], 1)
+        self.assertEqual(send.call_count, 1)
+        self.assertEqual(send.call_args.args[0]["body"], "AST SpaceMobile: move stop to 44.25")
+
     def test_cors_preflight_allows_configured_mobile_origin_contract(self):
         response = self.client.options(
             "/api/positions",

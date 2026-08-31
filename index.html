@@ -7,7 +7,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Risk Sizer">
-<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%2312161c'/%3E%3Ccircle cx='90' cy='90' r='54' fill='none' stroke='%2356c2ba' stroke-width='10'/%3E%3Ccircle cx='90' cy='90' r='26' fill='none' stroke='%2356c2ba' stroke-width='10'/%3E%3Ccircle cx='90' cy='90' r='6' fill='%2356c2ba'/%3E%3Cline x1='90' y1='14' x2='90' y2='34' stroke='%2356c2ba' stroke-width='8'/%3E%3Cline x1='90' y1='146' x2='90' y2='166' stroke='%2356c2ba' stroke-width='8'/%3E%3Cline x1='14' y1='90' x2='34' y2='90' stroke='%2356c2ba' stroke-width='8'/%3E%3Cline x1='146' y1='90' x2='166' y2='90' stroke='%2356c2ba' stroke-width='8'/%3E%3C/svg%3E">
+<meta name="theme-color" content="#12161c">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/risk-sizer-icon.svg">
 
 <style>
   :root {
@@ -139,6 +141,10 @@
     flex-direction: column;
     gap: 14px;
   }
+  .stop-alert-card { gap: 8px; }
+  .stop-alert-card p { margin: 0; font-size: 13px; color: var(--text-dim); line-height: 1.45; }
+  .stop-alert-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .stop-alert-status { min-height: 18px; font-size: 12px; color: var(--text-dim); }
 
   .section-label {
     font-size: 11px;
@@ -1173,6 +1179,16 @@
 
   <div id="posPanel" hidden>
     <div class="portfolio-stack">
+    <section class="card stop-alert-card" id="stopAlertCard">
+      <div class="section-label">Stop alerts</div>
+      <p id="stopAlertCopy">Get a phone notification only when a broker stop needs to move.</p>
+      <div class="stop-alert-actions">
+        <button class="primary-btn" type="button" id="enableStopAlerts" disabled>Enable alerts</button>
+        <button class="ghost-btn" type="button" id="testStopAlerts" hidden>Send a test</button>
+        <button class="ghost-btn" type="button" id="disableStopAlerts" hidden>Turn off</button>
+      </div>
+      <div class="stop-alert-status" id="stopAlertStatus" aria-live="polite"></div>
+    </section>
     <section class="card">
       <div class="section-label">Core portfolio <span class="hint">— long-term holdings in SQLite</span></div>
       <p class="setup-intro">Values are current market values in ILS. These holdings are included automatically in every risk check.</p>
@@ -1573,6 +1589,130 @@
       return readBody(response);
     });
   }
+
+  // ---- native stop notifications -------------------------------------------
+  // On iPhone, Web Push is available only after this site is installed to the
+  // Home Screen. The permission prompt is deliberately reached only from the
+  // explicit Enable button below; browsers reject surprise permission prompts.
+  var pushRegistration = null;
+  var pushConfig = null;
+  var pushReady = null;
+
+  function setStopAlertUi(copy, statusText, enabled) {
+    el("stopAlertCopy").textContent = copy;
+    el("stopAlertStatus").textContent = statusText || "";
+    el("enableStopAlerts").hidden = enabled === true;
+    el("enableStopAlerts").disabled = enabled !== false;
+    el("testStopAlerts").hidden = enabled !== true;
+    el("disableStopAlerts").hidden = enabled !== true;
+  }
+
+  function isIosBrowserNotInstalled() {
+    var ios = /iPad|iPhone|iPod/.test(navigator.userAgent || "");
+    var standalone = navigator.standalone === true
+      || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+    return ios && !standalone;
+  }
+
+  function supportsStopAlerts() {
+    return window.isSecureContext === true && "serviceWorker" in navigator
+      && "PushManager" in window && "Notification" in window;
+  }
+
+  function base64UrlBytes(value) {
+    var padded = value + "=".repeat((4 - value.length % 4) % 4);
+    var raw = window.atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
+    var bytes = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    return bytes;
+  }
+
+  function prepareStopAlerts() {
+    if (isIosBrowserNotInstalled()) {
+      setStopAlertUi(
+        "Add Risk Sizer to your iPhone Home Screen first. Then open it from its icon to enable stop alerts.",
+        "Safari: Share → Add to Home Screen.", null
+      );
+      return Promise.resolve();
+    }
+    if (!supportsStopAlerts()) {
+      setStopAlertUi("Stop alerts need a modern browser with notifications enabled.", "", null);
+      return Promise.resolve();
+    }
+    setStopAlertUi("Get a phone notification only when a broker stop needs to move.", "Preparing alerts…", null);
+    pushReady = Promise.all([
+      apiFetch("/api/notifications/config"),
+      navigator.serviceWorker.register("/service-worker.js", { scope: "/" })
+    ]).then(function (items) {
+      pushConfig = items[0];
+      pushRegistration = items[1];
+      if (!pushConfig || !pushConfig.enabled || !pushConfig.public_key) {
+        setStopAlertUi("Stop alerts are not ready yet.", "Please try again shortly.", null);
+        return null;
+      }
+      return pushRegistration.pushManager.getSubscription();
+    }).then(function (subscription) {
+      if (subscription) {
+        setStopAlertUi("Stop alerts are on. We notify you only when a broker stop must move.", "", true);
+      } else if (pushConfig && pushConfig.enabled) {
+        setStopAlertUi("Get a phone notification only when a broker stop needs to move.", "", false);
+      }
+      return subscription;
+    }).catch(function () {
+      setStopAlertUi("Stop alerts could not be prepared on this device.", "Open Risk Sizer from your Home Screen and try again.", null);
+      return null;
+    });
+    return pushReady;
+  }
+
+  el("enableStopAlerts").addEventListener("click", function () {
+    // Config and the service worker are prepared at startup, so subscribe is called
+    // directly from this tap — required by iPhone's notification permission policy.
+    if (!pushConfig || !pushRegistration) { prepareStopAlerts(); return; }
+    el("enableStopAlerts").disabled = true;
+    pushRegistration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: base64UrlBytes(pushConfig.public_key)
+    }).then(function (subscription) {
+      return apiFetch("/api/notifications/subscribe", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(subscription.toJSON())
+      });
+    }).then(function () {
+      setStopAlertUi("Stop alerts are on. We notify you only when a broker stop must move.", "Tap Send a test to confirm.", true);
+    }).catch(function () {
+      setStopAlertUi("Stop alerts were not enabled.", "Allow notifications when your phone asks, then try again.", false);
+    });
+  });
+
+  el("testStopAlerts").addEventListener("click", function () {
+    el("stopAlertStatus").textContent = "Sending a test alert…";
+    apiFetch("/api/notifications/test", { method: "POST" }).then(function (result) {
+      el("stopAlertStatus").textContent = result && result.sent > 0
+        ? "Test sent. Check your notifications."
+        : "Alert is on; the test could not be delivered yet.";
+    }).catch(function () {
+      el("stopAlertStatus").textContent = "The test could not be sent. Please try again.";
+    });
+  });
+
+  el("disableStopAlerts").addEventListener("click", function () {
+    if (!pushRegistration) return;
+    pushRegistration.pushManager.getSubscription().then(function (subscription) {
+      if (!subscription) return null;
+      var endpoint = subscription.endpoint;
+      return subscription.unsubscribe().then(function () {
+        return apiFetch("/api/notifications/subscribe", {
+          method: "DELETE", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ endpoint: endpoint })
+        });
+      });
+    }).then(function () {
+      setStopAlertUi("Get a phone notification only when a broker stop needs to move.", "Alerts are off on this phone.", false);
+    }).catch(function () {
+      el("stopAlertStatus").textContent = "Could not turn alerts off. Please try again.";
+    });
+  });
 
   function saveSettings(options) {
     options = options || {};
@@ -2801,6 +2941,7 @@
     inFx.value = cfg.fx;
     if (isSetUp()) showApp(); else showSetup();
     refreshAll();
+    prepareStopAlerts();
   }).catch(function (error) {
     el("setupDerived").textContent = "Cannot connect to the server: " + error.message;
   });

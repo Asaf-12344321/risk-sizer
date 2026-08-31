@@ -103,6 +103,10 @@ const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
   const storageCalls = [...source.matchAll(/localStorage\.(?:getItem|setItem|removeItem)\(([^)]*)\)/g)];
   ck('browser persistence is limited to the API credential',
      storageCalls.length > 0 && storageCalls.every(match => /^API_KEY_STORE\b/.test(match[1])));
+  ck('native stop alerts use an installable web app and a service worker',
+     /rel="manifest" href="\/manifest\.webmanifest"/.test(source) &&
+       /serviceWorker\.register\("\/service-worker\.js"/.test(source) &&
+       /Enable alerts/.test(source));
 
   report('QUANTITATIVE RISK INTEGRATION');
 })();

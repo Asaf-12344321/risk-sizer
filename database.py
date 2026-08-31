@@ -138,6 +138,17 @@ class Database:
                     created_at TEXT NOT NULL,
                     UNIQUE(position_id, as_of_session, model_version)
                 );
+
+                -- A subscription is an opaque browser-issued endpoint plus public
+                -- encryption material. It grants delivery only; it cannot read or
+                -- change any Risk Sizer data.
+                CREATE TABLE IF NOT EXISTS push_subscriptions (
+                    endpoint TEXT PRIMARY KEY,
+                    p256dh TEXT NOT NULL,
+                    auth TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
             # Existing VM databases predate friendly names and grandfathering.
@@ -304,6 +315,33 @@ class Database:
                    ) AS latest ON latest.id = record.id"""
             ).fetchall()
         return {int(row["position_id"]): json.loads(row["payload_json"]) for row in rows}
+
+    def list_push_subscriptions(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT endpoint, p256dh, auth FROM push_subscriptions ORDER BY created_at"
+            ).fetchall()
+        return [
+            {"endpoint": row["endpoint"], "keys": {"p256dh": row["p256dh"], "auth": row["auth"]}}
+            for row in rows
+        ]
+
+    def upsert_push_subscription(self, subscription: Mapping[str, Any]) -> None:
+        now = _now()
+        keys = subscription["keys"]
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO push_subscriptions (endpoint, p256dh, auth, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(endpoint) DO UPDATE SET
+                       p256dh = excluded.p256dh, auth = excluded.auth, updated_at = excluded.updated_at""",
+                (subscription["endpoint"], keys["p256dh"], keys["auth"], now, now),
+            )
+
+    def delete_push_subscription(self, endpoint: str) -> bool:
+        with self.connect() as connection:
+            cursor = connection.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
+        return cursor.rowcount > 0
 
     def delete_active(self, item_id: int) -> bool:
         return self._delete("active_positions", item_id)

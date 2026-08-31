@@ -90,12 +90,18 @@ not trusted from the browser request.
 3. If daily bars are published for that ticker, the app replays them from the entry date and derives the current stop, high since entry and latest daily close.
 4. If bars are unavailable, the position remains usable in manual mode with **Reached**, **Undo**, **Edit**, and **Delete** actions.
 
-Each position also shows a side-by-side check after the post-close run: the original
-browser tracker beside the immutable-policy EOD engine.  Only the EOD engine's
-explicit “Move broker stop up” alert should be used for a broker update; it records
-the finalized session and never lowers a stop.  The HAR-Parkinson outlook remains a
-separate reference-only card and cannot affect stops, position size, crash curves or
-VaR.
+The Portfolio screen shows one operational instruction: **Your stop**. Only an explicit
+**Move your broker stop to …** after-close update should be used for a broker update;
+the frozen-policy EOD engine never lowers a stop. Details retain the browser comparison
+and HAR-Parkinson research reference without cluttering the decision.
+
+### Stop alerts on iPhone
+
+Risk Sizer can send a direct iPhone notification only when that after-close engine moves
+a stop. In Safari, open the tool, select **Share → Add to Home Screen**, then open the
+new Risk Sizer icon. On **Portfolio**, select **Enable alerts** and then **Send a test**.
+This is standards-based Web Push from Risk Sizer itself—no messaging app is involved.
+It does not send a notification when a stop is unchanged.
 
 Risk Sizer does not transmit an order. You remain responsible for entering and updating the stop at your broker.
 
@@ -299,7 +305,8 @@ The separate **Run post-close stop engine** workflow runs at 22:15 UTC on US wee
 It calls the protected server batch endpoint only after the regular close and fails
 closed if the session is not finalized.  Its repository secrets must be
 `RISK_SIZER_API_URL` and `RISK_SIZER_API_KEY`; no secret is exposed to the browser or
-stored in the data branch.
+stored in the data branch. If an actionable stop move is calculated, the same run sends
+direct Web Push notifications to each phone that enabled stop alerts.
 
 ---
 
