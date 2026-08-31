@@ -1599,13 +1599,14 @@
   // Arming trigger, as a % gain from entry. Volatility-scaled, floored at armpct.
   // Measured: arming earlier than +15% is worse on calm names, but on ATR>9% names a
   // +15% trigger fires inside the daily noise — 3x ATR gave +48% there.
-  function armTriggerPct(price, atr) {
-    if (!(cfg.armatrmult > 0) || !(price > 0) || !(atr > 0)) return cfg.armpct;
-    return Math.max(cfg.armpct, cfg.armatrmult * (atr / price * 100));
+  function armTriggerPct(price, atr, policy) {
+    var rule = policy || cfg;
+    if (!(rule.armatrmult > 0) || !(price > 0) || !(atr > 0)) return rule.armpct;
+    return Math.max(rule.armpct, rule.armatrmult * (atr / price * 100));
   }
 
-  function armPriceFor(price, atr) {
-    return price * (1 + armTriggerPct(price, atr) / 100);
+  function armPriceFor(price, atr, policy) {
+    return price * (1 + armTriggerPct(price, atr, policy) / 100);
   }
 
   // ---- beta used for the beta-exposure cap.
@@ -1718,8 +1719,9 @@
 
   // Shared by the calculator and the positions tracker so both show identical levels.
   // Rungs land on round numbers: these get typed into Leumi by hand, so 80.00 beats 77.76.
-  function buildLadder(price, atr, initialStop, armPrice) {
-    var trailDist = cfg.trailmult * atr;
+  function buildLadder(price, atr, initialStop, armPrice, policy) {
+    var rule = policy || cfg;
+    var trailDist = rule.trailmult * atr;
     function trailStopFor(high) { return Math.min(high - trailDist, high); }
     var rungs = [{ label: "— now —", stop: initialStop, why: "set this at entry", cls: "now" }];
     rungs.push({ px: armPrice, stop: price, why: "jumps to BREAKEVEN — protected bar a gap", cls: "arm" });
@@ -2311,6 +2313,7 @@
   // ---- server-backed Core and Active portfolios ----------------------------
   var positions = [];
   var coreHoldings = [];
+  var positionShadows = {};
 
   function normalisePosition(row) {
     return {
@@ -2319,15 +2322,18 @@
       currency: row.currency, fx_to_ils: Number(row.fx_to_ils), fx_ticker: row.fx_ticker,
       risk_status: row.risk_status, rung: Number(row.rung || 0), opened_at: row.opened_at,
       display_name: row.display_name || "", legacy: row.legacy === true || row.legacy === 1,
-      added: row.opened_at
+      added: row.opened_at, policy: row.policy_snapshot || null
     };
   }
 
   function loadServerPositions() {
     return apiFetch("/api/positions").then(function (rows) {
       positions = (rows || []).map(normalisePosition);
-      renderPositions();
-      return positions;
+      return apiFetch("/api/positions/shadow").catch(function () { return {}; }).then(function (shadows) {
+        positionShadows = shadows || {};
+        renderPositions();
+        return positions;
+      });
     }).catch(function (error) {
       el("posList").innerHTML = '<p class="pos-empty">Could not load positions: ' + esc(error.message) + "</p>";
       throw error;
@@ -2405,14 +2411,21 @@
       .catch(function (error) { window.alert(error.message); });
   });
 
-  function ladderFor(p) {
-    var initialStop = initialStopFor(p.entry, p.atr);
-    return buildLadder(p.entry, p.atr, initialStop, armPriceFor(p.entry, p.atr));
+  function policyFor(p) {
+    return p.policy || { entry_atr: p.atr, initmult: cfg.initmult, trailmult: cfg.trailmult,
+      armpct: cfg.armpct, armatrmult: cfg.armatrmult, minstop: cfg.minstop, maxstop: cfg.maxstop };
   }
 
-  function initialStopFor(price, atr) {
-    var raw = (cfg.initmult * atr) / price * 100;
-    return price * (1 - clamp(raw, cfg.minstop, cfg.maxstop) / 100);
+  function ladderFor(p) {
+    var policy = policyFor(p), atr = Number(policy.entry_atr || p.atr);
+    var initialStop = initialStopFor(p.entry, atr, policy);
+    return buildLadder(p.entry, atr, initialStop, armPriceFor(p.entry, atr, policy), policy);
+  }
+
+  function initialStopFor(price, atr, policy) {
+    var rule = policy || cfg;
+    var raw = (rule.initmult * atr) / price * 100;
+    return price * (1 - clamp(raw, rule.minstop, rule.maxstop) / 100);
   }
 
   // Replay the ladder against real bars since entry, so the stop advances itself.
@@ -2422,9 +2435,10 @@
     if (!raw || !raw.length || !p.added) return null;
     var bars = raw.filter(function (b) { return b[0] >= p.added; });
     if (!bars.length) return null;
-    var stop = initialStopFor(p.entry, p.atr);
-    var armPrice = armPriceFor(p.entry, p.atr);
-    var trailDist = cfg.trailmult * p.atr;
+    var policy = policyFor(p), entryAtr = Number(policy.entry_atr || p.atr);
+    var stop = initialStopFor(p.entry, entryAtr, policy);
+    var armPrice = armPriceFor(p.entry, entryAtr, policy);
+    var trailDist = policy.trailmult * entryAtr;
     var armed = false, high = p.entry, hit = null;
     for (var i = 0; i < bars.length; i++) {
       var hi = bars[i][1], lo = bars[i][2], cl = bars[i][3], op = bars[i][4];
@@ -2478,7 +2492,7 @@
       var out = '<div class="pos">'
         + '<div class="pos-head"><div class="pos-heading-copy"><span class="position-name">' + esc(displayName) + "</span>"
         + '<span class="position-ticker">' + esc(p.tick || "—") + '</span>'
-        + '<span class="pos-meta">entry ' + px(p.entry) + " · ATR " + px(p.atr)
+        + '<span class="pos-meta">entry ' + px(p.entry) + " · entry ATR " + px(Number(policyFor(p).entry_atr || p.atr))
         + (p.value_ils > 0 ? " · " + nis(p.value_ils) : " · value missing")
         + " · " + esc(p.risk_status || "RISK_ON")
         + (p.added ? " · " + p.added : "") + "</span>"
@@ -2523,7 +2537,7 @@
         } else if (!live.armed) {
           out += '<div class="pos-next">Keep the stop at <b>' + num(stop, 2)
             + "</b>. It moves up to breakeven (<b>" + px(p.entry) + "</b>) once the price closes at <b>"
-            + px(armPriceFor(p.entry, p.atr)) + "</b> — the move that protects this trade.</div>";
+            + px(armPriceFor(p.entry, Number(policyFor(p).entry_atr || p.atr), policyFor(p))) + "</b> — the move that protects this trade.</div>";
         } else {
           out += '<div class="pos-next">Trailing on its own. Set the stop to <b>' + num(stop, 2)
             + "</b> at Leumi; it rises whenever the price closes at a new high.</div>";
@@ -2532,6 +2546,20 @@
           + '<button class="btn-reached" type="button" data-act="toggle-risk" data-i="' + i + '">'
           + (p.risk_status === "ARMED_ZERO_RISK" ? "Mark Risk On" : "Mark Armed") + '</button>'
           + "</div></div>";
+        var shadow = positionShadows[String(p.id)];
+        if (shadow) {
+          var f21 = shadow.forecasts && shadow.forecasts["21"], f31 = shadow.forecasts && shadow.forecasts["31"];
+          var fmtShadow = function (forecast) {
+            return forecast && forecast.status === "available"
+              ? pct(Number(forecast.forecast_total_volatility) * 100) : "unavailable";
+          };
+          out += '<div class="pos-next"><b>21/31-Session Volatility Outlook (HAR Shadow) — Reference Only</b><br>'
+            + '21d ' + fmtShadow(f21) + ' · 31d ' + fmtShadow(f31) + ' · as of ' + esc(shadow.as_of_session || "—")
+            + '<br><span class="pos-hit">Not used for stop, size, crash curve, or VaR.</span></div>';
+        } else {
+          out += '<div class="pos-next"><b>21/31-Session Volatility Outlook (HAR Shadow) — Reference Only</b><br>'
+            + 'No finalized shadow record yet. This does not affect the broker stop, size, crash curve, or VaR.</div>';
+        }
         return out;
       }
 

@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
+import pandas as pd
 from fastapi.testclient import TestClient
 
 import app as app_module
@@ -67,7 +69,11 @@ class RiskApiTests(unittest.TestCase):
         })
         self.assertEqual(position.status_code, 201, position.text)
         self.assertTrue(position.json()["legacy"])
+        self.assertEqual(position.json()["policy_snapshot"]["entry_atr"], 3.0)
+        self.assertEqual(position.json()["policy_snapshot"]["trailmult"], 3.5)
         position_id = position.json()["id"]
+        immutable = self.client.put(f"/api/positions/{position_id}", headers=self.headers, json={"atr": 4})
+        self.assertEqual(immutable.status_code, 409)
         changed = self.client.put(
             f"/api/positions/{position_id}", headers=self.headers,
             json={"risk_status": "ARMED_ZERO_RISK"},
@@ -75,6 +81,30 @@ class RiskApiTests(unittest.TestCase):
         self.assertEqual(changed.json()["risk_status"], "ARMED_ZERO_RISK")
         self.assertEqual(self.client.delete(f"/api/positions/{position_id}", headers=self.headers).status_code, 204)
         self.assertEqual(self.client.delete(f"/api/core/{core_id}", headers=self.headers).status_code, 204)
+
+    def test_post_close_endpoint_logs_stop_and_reference_only_har_shadow(self):
+        position = self.client.post("/api/positions", headers=self.headers, json={
+            "ticker": "COREA", "entry_price": 100, "atr": 3, "quantity": 100,
+            "value_ils": 10_000, "currency": "ILS", "opened_at": "2025-01-02",
+        }).json()
+        dates = pd.bdate_range("2025-01-02", periods=380)
+        prices = np.linspace(100, 150, len(dates))
+        bars = pd.DataFrame({"open": prices, "high": prices * 1.02,
+                             "low": prices * 0.98, "close": prices}, index=dates)
+        with patch.object(app_module, "_daily_ohlc", return_value=bars):
+            response = self.client.post(
+                f"/api/positions/{position['id']}/post-close", headers=self.headers,
+                json={"as_of_session": dates[-1].date().isoformat()},
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertTrue(body["shadow_reference_only"])
+        self.assertFalse(body["sizing_or_var_inputs_changed"])
+        self.assertIn("current_stop_price", body["stop_update"])
+        self.assertIn("delta_ticks", body["stop_update"])
+        self.assertIn("21", body["har_parkinson_shadow"]["forecasts"])
+        shadows = self.client.get("/api/positions/shadow", headers=self.headers)
+        self.assertIn(str(position["id"]), shadows.json())
 
     def test_risk_evaluation_reads_portfolio_from_database(self):
         self.database.update_settings({"maxdailyvar": 1_000_000, "maxriskonr": 5})

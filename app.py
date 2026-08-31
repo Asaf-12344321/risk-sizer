@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from database import DEFAULT_SETTINGS, Database
 from quant_risk_engine import QuantitativeRiskEngine
+from stop_engine import build_policy_snapshot, har_parkinson_shadow, replay_post_close_stop
 
 
 ROOT = Path(__file__).resolve().parent
@@ -189,6 +190,12 @@ class TradeEvaluationRequest(BaseModel):
     _currency = field_validator("new_ticker_currency")(_normalise_currency)
 
 
+class PostCloseRequest(BaseModel):
+    """The caller supplies the finalized exchange session, never an intraday timestamp."""
+
+    as_of_session: date
+
+
 class CachedDownloader:
     """Process-local TTL cache so repeated UI checks reuse the same history."""
 
@@ -231,6 +238,39 @@ db = Database(DATABASE_PATH)
 db.initialize()
 market_data = CachedDownloader()
 app = FastAPI(title="Risk Sizer", version="6.0")
+
+
+def _daily_ohlc(ticker: str, as_of_session: date) -> pd.DataFrame:
+    """Return final adjusted daily OHLC through the requested session or fail closed."""
+    raw = market_data(
+        ticker, period="6y", interval="1d", auto_adjust=True, progress=False,
+        group_by="ticker", threads=False,
+    )
+    if raw is None or raw.empty:
+        raise RuntimeError(f"{ticker}: no daily OHLC returned")
+    if isinstance(raw.columns, pd.MultiIndex):
+        if ticker in raw.columns.get_level_values(0):
+            raw = raw[ticker]
+        else:
+            raw = raw.xs(ticker, axis=1, level=-1)
+    columns = {str(column).lower(): column for column in raw.columns}
+    required = {"open", "high", "low", "close"}
+    if not required.issubset(columns):
+        raise RuntimeError(f"{ticker}: daily OHLC is incomplete")
+    output = pd.DataFrame({name: pd.to_numeric(raw[column], errors="coerce") for name, column in columns.items() if name in required})
+    output.index = pd.to_datetime(output.index, errors="raise").tz_localize(None).normalize()
+    output = output.sort_index().loc[lambda frame: frame.index <= pd.Timestamp(as_of_session)]
+    if output.empty or output.index[-1] != pd.Timestamp(as_of_session):
+        raise RuntimeError(f"{ticker}: requested session {as_of_session.isoformat()} is not finalized")
+    return output
+
+
+def _snapshot_missing_positions() -> None:
+    """One-time explicit migration: freeze today’s persisted policy for legacy rows."""
+    settings = db.get_settings()["settings"]
+    for position in db.list_active():
+        if position.get("policy_snapshot") is None:
+            db.set_active_policy_snapshot(position["id"], build_policy_snapshot(position["atr"], settings))
 
 cors_origins = [origin.strip() for origin in os.environ.get(
     "RISK_SIZER_CORS_ORIGINS",
@@ -292,6 +332,7 @@ def delete_core(item_id: int, _: Protected) -> Response:
 
 @app.get("/api/positions")
 def list_positions(_: Protected) -> list[dict[str, Any]]:
+    _snapshot_missing_positions()
     return db.list_active()
 
 
@@ -299,6 +340,10 @@ def list_positions(_: Protected) -> list[dict[str, Any]]:
 def create_position(request: ActiveCreate, _: Protected) -> dict[str, Any]:
     values = request.model_dump()
     values["opened_at"] = values["opened_at"].isoformat()
+    # The browser does not send a policy. The server freezes its current persisted
+    # settings together with the entered ATR, so a later Settings edit cannot rewrite
+    # this position's live stop rule.
+    values["policy_snapshot"] = build_policy_snapshot(values["atr"], db.get_settings()["settings"])
     try:
         return db.create_active(values)
     except sqlite3.IntegrityError as exc:
@@ -308,6 +353,8 @@ def create_position(request: ActiveCreate, _: Protected) -> dict[str, Any]:
 @app.put("/api/positions/{item_id}")
 def update_position(item_id: int, request: ActiveUpdate, _: Protected) -> dict[str, Any]:
     values = request.model_dump(exclude_unset=True)
+    if {"entry_price", "atr"}.intersection(values):
+        raise HTTPException(status_code=409, detail="entry price and entry ATR are immutable after position creation")
     if isinstance(values.get("opened_at"), date):
         values["opened_at"] = values["opened_at"].isoformat()
     try:
@@ -317,6 +364,49 @@ def update_position(item_id: int, request: ActiveUpdate, _: Protected) -> dict[s
     if item is None:
         raise HTTPException(status_code=404, detail="Active position not found")
     return item
+
+
+@app.get("/api/positions/shadow")
+def list_position_shadows(_: Protected) -> dict[str, Any]:
+    """Reference-only records for the display card; they never reach a risk gate."""
+    return {str(position_id): record for position_id, record in db.latest_har_shadow_records().items()}
+
+
+@app.post("/api/positions/{item_id}/post-close")
+def process_post_close_position(item_id: int, request: PostCloseRequest, _: Protected) -> dict[str, Any]:
+    """Run one finalized-session replay plus isolated shadow volatility calculation."""
+    _snapshot_missing_positions()
+    position = db.get_active(item_id)
+    if position is None:
+        raise HTTPException(status_code=404, detail="Active position not found")
+    try:
+        ohlc = _daily_ohlc(position["ticker"], request.as_of_session)
+        held = ohlc.loc[ohlc.index >= pd.Timestamp(position["opened_at"])]
+        if held.empty:
+            raise RuntimeError("no finalized bars are available after the entry date")
+        bars = [
+            {"session": str(session.date()), "open": float(row.open), "high": float(row.high),
+             "low": float(row.low), "close": float(row.close)}
+            for session, row in held.iterrows()
+        ]
+        previous = db.latest_stop_update(item_id)
+        previous_stop = previous["payload"]["current_stop_price"] if previous else None
+        stop = replay_post_close_stop(
+            entry_price=float(position["entry_price"]), policy_snapshot=position["policy_snapshot"],
+            bars=bars, previous_confirmed_stop_price=previous_stop,
+        )
+        shadow = har_parkinson_shadow(ohlc, as_of_session=request.as_of_session)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    db.append_stop_update(item_id, stop, shadow["source_hash"])
+    db.append_har_shadow_record(item_id, shadow)
+    return {
+        "position_id": item_id,
+        "stop_update": stop,
+        "har_parkinson_shadow": shadow,
+        "shadow_reference_only": True,
+        "sizing_or_var_inputs_changed": False,
+    }
 
 
 @app.delete("/api/positions/{item_id}", status_code=204)
