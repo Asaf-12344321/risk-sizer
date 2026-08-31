@@ -107,6 +107,8 @@ const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
      /rel="manifest" href="\/manifest\.webmanifest"/.test(source) &&
        /serviceWorker\.register\("\/service-worker\.js"/.test(source) &&
        /Enable alerts/.test(source));
+  ck('stop-alert permission never leaves an inactive Enable button on screen',
+     /enableStopAlerts"\)\.hidden = enabled !== false/.test(source));
 
   report('QUANTITATIVE RISK INTEGRATION');
 })();

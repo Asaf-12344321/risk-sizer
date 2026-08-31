@@ -1601,7 +1601,9 @@
   function setStopAlertUi(copy, statusText, enabled) {
     el("stopAlertCopy").textContent = copy;
     el("stopAlertStatus").textContent = statusText || "";
-    el("enableStopAlerts").hidden = enabled === true;
+    // Never show a dead control. On iPhone, Safari cannot grant web-push
+    // permission until this site is opened from its Home Screen icon.
+    el("enableStopAlerts").hidden = enabled !== false;
     el("enableStopAlerts").disabled = enabled !== false;
     el("testStopAlerts").hidden = enabled !== true;
     el("disableStopAlerts").hidden = enabled !== true;
