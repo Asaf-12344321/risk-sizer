@@ -18,7 +18,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 async function replay(bars) {
   const inst = boot({
     bars: { TRK: bars },
-    positions: [{ tick: 'TRK', entry: ENTRY, atr: ATR, rung: 0, added: ADDED }]
+    positions: [{ tick: 'TRK', entry: ENTRY, atr: ATR, rung: 0, added: ADDED, currency: 'USD' }]
   });
   await wait(60);
   inst.$('tab-pos').dispatchEvent(new inst.w.Event('click', { bubbles: true }));
@@ -81,6 +81,36 @@ const calm = (d) => [d, 101, 99, 100, 100];
   r = await replay([['2026-01-02', 82, 78, 81, 80], calm('2026-01-05'), calm('2026-01-06')]);
   ck('the breach is dated to its own bar, not the end of the replay',
      r.date === '2026-01-02', `reported ${r.date}`);
+
+  // 8. Ladder guidance is independent of EOD availability. Both modes must show
+  //    current stop, trigger, destination, and a purely informational EOD status.
+  const waiting = boot({
+    positions: [{ tick: 'TRK', entry: ENTRY, atr: ATR, rung: 0, added: ADDED, currency: 'USD' }]
+  });
+  await wait(60);
+  waiting.$('tab-pos').dispatchEvent(new waiting.w.Event('click', { bubbles: true }));
+  await wait(250);
+  const waitingText = waiting.$('posList').textContent.replace(/\s+/g, ' ');
+  ck('waiting EOD still shows the deterministic next trigger and stop',
+     /Current stop\s*\$87\.50/.test(waitingText) &&
+       /Next: at \$115\.00, move stop to \$100\.00/.test(waitingText) &&
+       /EOD status: waiting/.test(waitingText), waitingText);
+  ck('manual Reached action names both trigger and stop to apply',
+     /Reached \$115\.00 → apply stop \$100\.00/.test(waitingText), waitingText);
+
+  const completed = boot({
+    positions: [{ tick: 'TRK', entry: ENTRY, atr: ATR, rung: 0, added: ADDED, currency: 'USD' }],
+    stops: { '1': { current_stop_price: STOP, actionable_alert_needed: false,
+                    position_exit_detected: false } }
+  });
+  await wait(60);
+  completed.$('tab-pos').dispatchEvent(new completed.w.Event('click', { bubbles: true }));
+  await wait(250);
+  const completedText = completed.$('posList').textContent.replace(/\s+/g, ' ');
+  ck('completed EOD also shows the deterministic next trigger and stop',
+     /Current stop\s*\$87\.50/.test(completedText) &&
+       /Next: at \$115\.00, move stop to \$100\.00/.test(completedText) &&
+       /EOD status: completed/.test(completedText), completedText);
 
   report('POSITION TRACKER');
 })();

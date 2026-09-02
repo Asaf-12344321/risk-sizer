@@ -449,6 +449,11 @@
     border-radius: 9px; padding: 9px 10px; color: var(--text-dim);
   }
   .pos-next b { color: var(--text); }
+  .eod-status {
+    display: inline-flex; align-items: center; margin-top: 7px; padding: 3px 8px;
+    border: 1px solid var(--ink-border-soft); border-radius: 999px;
+    color: var(--text-dim); font-size: 11px; letter-spacing: .02em;
+  }
   .pos-actions { display: flex; gap: 8px; }
   .pos-actions button {
     appearance: none; font-family: var(--font-ui); font-size: 12.5px; font-weight: 600;
@@ -2678,6 +2683,15 @@
       var eodStop = eod ? Number(eod.current_stop_price) : NaN;
       var shownStop = isFinite(eodStop) ? eodStop : browserStop;
       var hit = (eod && eod.position_exit_detected) || (live && live.hit);
+      // EOD determines the authoritative current stop, but the deterministic ladder
+      // remains useful while an EOD job is pending. Show the first rung that would
+      // actually raise today's stop rather than hiding guidance behind EOD state.
+      var nextStep = rungs.find(function (rung) {
+        return rung.px && rung.stop > shownStop + 1e-9;
+      });
+      function positionPx(value) {
+        return (p.currency === "USD" ? "$" : p.currency === "ILS" ? "₪" : "") + px(value);
+      }
       var displayName = p.display_name || p.tick || "—";
       var out = '<div class="pos">'
         + '<div class="pos-head"><div class="pos-heading-copy"><span class="position-name">' + esc(displayName) + "</span>"
@@ -2686,7 +2700,7 @@
         + '<button class="ghost-btn" type="button" data-act="edit" data-i="' + i + '">Edit</button>'
         + '<button class="danger-ghost" type="button" data-act="close" data-i="' + i + '">Delete</button>'
         + "</div></div>"
-        + '<div class="position-stop"><span>Your stop</span><strong>' + px(shownStop) + "</strong></div>";
+        + '<div class="position-stop"><span>Current stop</span><strong>' + positionPx(shownStop) + "</strong></div>";
 
       if (hit) {
         out += '<div class="position-state danger"><strong>Stop hit — close this position.</strong><span>Do not wait for another signal.</span></div>';
@@ -2696,6 +2710,14 @@
         out += '<div class="position-state"><strong>All set.</strong><span>'
           + (eod ? "Updated after market close." : "Updates after market close.") + "</span></div>";
       }
+
+      out += '<div class="pos-next">'
+        + (nextStep
+          ? 'Next: at <b>' + positionPx(nextStep.px) + '</b>, move stop to <b>'
+            + positionPx(nextStep.stop) + '</b>.'
+          : 'Next: ladder complete; keep the stop at <b>' + positionPx(shownStop) + '</b>.')
+        + '<br><span class="eod-status">EOD status: ' + (eod ? "completed" : "waiting")
+        + "</span></div>";
 
       if (!(p.value_ils > 0)) {
         out += '<div class="pos-next"><span class="pos-hit">Add the current value.</span></div>'
@@ -2726,7 +2748,8 @@
       out += '<div class="pos-actions">';
       if (!live) {
         out += '<button class="btn-reached" type="button" data-act="reached" data-i="' + i + '"'
-          + (next ? "" : " disabled") + ">Reached " + (next ? px(next.px) : "—") + "</button>"
+          + (next ? "" : " disabled") + ">Reached "
+          + (next ? positionPx(next.px) + " → apply stop " + positionPx(next.stop) : "—") + "</button>"
           + (idx > 0 ? '<button class="btn-undo" type="button" data-act="undo" data-i="' + i + '">Undo</button>' : "");
       }
       out += '<button class="btn-reached" type="button" data-act="toggle-risk" data-i="' + i + '">'
