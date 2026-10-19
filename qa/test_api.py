@@ -203,6 +203,17 @@ class RiskApiTests(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/api/positions/{created['id']}", headers=self.headers).status_code, 204)
         self.assertEqual((self._eod_rows("eod_stop_state"), self._eod_rows("eod_stop_log")), (0, 0))
 
+    def test_tase_ticker_is_rejected_by_stop_suggest_and_never_seeded(self):
+        r = self.client.get("/api/stop/suggest", headers=self.headers,
+                            params={"ticker": "imco.ta", "entry_price": 100})
+        self.assertEqual(r.status_code, 422)
+        created = self.client.post("/api/positions", headers=self.headers, json=dict(
+            self.POSITION, ticker="aryt.ta", currency="ILS"))
+        self.assertEqual(created.status_code, 201, created.text)
+        import eod_stops
+        eod_stops.open_state(self.database.path).close()
+        self.assertEqual(self._eod_rows("eod_stop_state"), 0)
+
     def test_stop_suggest_endpoint(self):
         import numpy as np, pandas as pd
         dates = pd.bdate_range("2025-06-02", periods=300)

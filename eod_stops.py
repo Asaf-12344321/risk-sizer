@@ -253,6 +253,7 @@ class Decision:
     reasons: list[str] = field(default_factory=list)
     metrics: dict[str, float] = field(default_factory=dict)
     notice: str | None = None        # one-off heads-up shown in the alert (adoption, ladder-only)
+    notice_kind: str | None = None   # "start" | "ladder": notices of a kind share ONE alert line
     source: str | None = None        # stored in place of the tier name, e.g. "LADDER"
 
     @property
@@ -275,6 +276,27 @@ def sector_context(sector: pd.DataFrame | None, etf: str | None, stock: pd.DataF
         rs = float(stock["Close"].iloc[-1] / stock["Close"].iloc[-11] - c.iloc[-1] / c.iloc[-11])
     note = f"{etf} below falling 20d avg with {down_closes}/5 down closes" if weak else ""
     return Context(etf=etf, weak=weak, note=note, stock_vs_sector_10d=rs)
+
+
+def is_excluded(ticker: str) -> bool:
+    """Tel Aviv (.TA) tickers are outside this engine: Yahoo quotes them in agorot, so entry
+    prices, ATR and stops are not comparable with the shekel figures kept in the database."""
+    return ticker.strip().upper().endswith(".TA")
+
+
+def baseline_stop(ticker: str, df: pd.DataFrame, pos: Mapping[str, Any],
+                  settings: Mapping[str, float]) -> float:
+    """Starting stop from TODAY's price, for a position whose entry-based ladder stop is already
+    above the market (so it is meaningless).  Structural support if a qualified one sits far
+    enough below the close, else the ATR stop at the configured multiple and bounds."""
+    close = float(df["Close"].iloc[-1])
+    found = initial_stop(ticker, df, close, settings).get("stop")
+    if found and 0 < found < close:
+        return float(found)
+    a_now = float(atr(df).iloc[-1]) if len(df) > 14 else float("nan")
+    a = a_now if math.isfinite(a_now) and a_now > 0 else float(pos["atr"])
+    dist = min(max(settings["initmult"] * a / close, settings["minstop"] / 100), settings["maxstop"] / 100)
+    return round(close * (1 - dist), 4 if close < 1 else 2)
 
 
 def _tick(price: float) -> float:
@@ -581,7 +603,9 @@ def stop_info(db_path: str | Path) -> dict[int, dict[str, Any]]:
     conn = open_state(db_path)
     try:
         info: dict[int, dict[str, Any]] = {}
-        for r in conn.execute("SELECT position_id, stop, tier, asof, updated_at FROM eod_stop_state"):
+        for r in conn.execute("SELECT position_id, ticker, stop, tier, asof, updated_at FROM eod_stop_state"):
+            if is_excluded(r["ticker"]):
+                continue
             info[r["position_id"]] = {"stop": r["stop"], "stop_source": r["tier"],
                                       "stop_asof": r["asof"], "stop_updated_at": r["updated_at"],
                                       "stop_why": None, "stop_last_action": None}
@@ -736,6 +760,8 @@ def seed_stop_conn(conn: sqlite3.Connection, position_id: int, ticker: str, stop
     reason it was chosen, so the Positions tab and Telegram read the same record.  Runs on the
     caller's connection so it joins the caller's transaction (no second writer, no lock).
     `asof` is the last completed session: the stop is in force from the next one."""
+    if is_excluded(ticker):
+        return
     now = (now or datetime.now(NY)).astimezone(NY)
     asof = last_session_date(now).isoformat()
     ensure_schema(conn)
@@ -792,8 +818,16 @@ def format_alert(decisions: list[Decision], asof: str, quiet_when_no_changes: bo
         blocks.append(f"🔼 <b>{html.escape(d.ticker)}</b>  ${d.close:,.2f}  [{d.source or TIER_NAME[d.tier]}]\n"
                       f"Prev ${d.prev_stop:,.2f} → <b>New ${d.new_stop:,.2f}</b> ({chg:+.1f}%)\n"
                       f"Why: {html.escape('; '.join(d.reasons))}")
-    for d in sorted(notices, key=lambda x: x.ticker):
-        blocks.append(f"ℹ️ <b>{html.escape(d.ticker)}</b>: {html.escape(d.notice or '')}")
+    start = [d.notice for d in sorted(notices, key=lambda x: x.ticker) if d.notice_kind == "start"]
+    if start:
+        line = "ℹ️ Starting stops, confirm the broker order matches: " + html.escape(" · ".join(start))
+        if any(n.endswith("*") for n in start):
+            line += html.escape("  (* set from today's price: the entry-based stop was already above it)")
+        blocks.append(line)
+    ladder = [d.notice for d in sorted(notices, key=lambda x: x.ticker) if d.notice_kind == "ladder"]
+    if ladder:
+        blocks.append(f"ℹ️ Under {int(RULES['min_bars'])} bars of history, trailing by the ATR ladder only: "
+                      + html.escape(" · ".join(ladder)))
     if skipped:
         blocks.append("⚠️ Not evaluated: " + html.escape(", ".join(
             f"{d.ticker} ({'; '.join(d.reasons)})" for d in skipped)))
@@ -890,7 +924,7 @@ def evaluate(db_path: str | Path, *, overrides_stop: Mapping[str, float] | None 
     now = (now or datetime.now(NY)).astimezone(NY)
     db = Database(db_path)
     settings = db.get_settings()["settings"]
-    positions = list(db.list_active())
+    positions = [p for p in db.list_active() if not is_excluded(p["ticker"])]
     if not positions:
         return Evaluation([], now.date().isoformat(), note="no active positions")
 
@@ -925,24 +959,29 @@ def evaluate(db_path: str | Path, *, overrides_stop: Mapping[str, float] | None 
                 ev.decisions.append(Decision(t, 0.0, forced or 0.0, forced or 0.0, NORMAL, "SKIP", ["no price data"]))
                 continue
             state = load_state(conn, p["id"])
-            adopted = False
+            adopted = baseline = False
             if forced:
                 prev, since = float(forced), pd.Timestamp(last_session_date(now))
             elif state:
                 prev, since = float(state["stop"]), pd.Timestamp(state["asof"])
             else:
-                prev, since, adopted = ladder_stop(df, p, settings)[0], None, True
+                # Never recorded, so never placed at the broker: it cannot have been "breached"
+                # (since = last bar leaves nothing to check).  A ladder stop from the old entry
+                # that already sits above the market is useless, so start from today's price.
+                adopted = True
+                since = df.index[-1]
+                prev = ladder_stop(df, p, settings)[0]
+                if prev >= float(df["Close"].iloc[-1]):
+                    prev, baseline = baseline_stop(t, df, p, settings), True
             etf = etfs.get(t)
             ctx = sector_context(bars.get(etf) if etf else None, etf, df)
             d = decide(t, df, p, prev, settings, ctx, since=since, asof=asof_ts)
-            notes = []
             if adopted and d.action != "SKIP":
-                notes.append(f"no recorded stop - adopted the ATR-ladder stop ${prev:,.2f}; "
-                             f"make sure the broker order matches")
-            if d.source == "LADDER" and (state is None or state["tier"] != "LADDER"):
-                notes.append(f"only {len(df)} bars of history (<{int(RULES['min_bars'])}) - trailing by the "
-                             f"ATR ladder only until technical stops unlock")
-            d.notice = "; ".join(notes) or None
+                d.notice, d.notice_kind = f"{t} ${d.new_stop:,.2f}" + ("*" if baseline else ""), "start"
+                if baseline:
+                    d.source = d.source or "BASELINE"
+            elif d.source == "LADDER" and (state is None or state["tier"] != "LADDER"):
+                d.notice, d.notice_kind = f"{t} ({len(df)} bars)", "ladder"
             ev.decisions.append(d)
             if d.action != "SKIP":
                 ev.pending.append((p["id"], d))

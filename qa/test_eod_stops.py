@@ -428,21 +428,84 @@ class Pipeline(unittest.TestCase):
         e.seed_stop(self.path, p["id"], "NEW", float(ipo["Close"].iloc[-1]) * 0.5, "STRUCTURAL")
         frames = {"*": self.climber, "NEW": ipo}
         self.go(frames)
-        self.assertIn("only 60 bars", self.sent[0])
+        self.assertIn("ATR ladder only: NEW (60 bars)", self.sent[0])
         self.assertEqual(self.state()[0][2], "LADDER")
         self.sent.clear()
         self.go(frames, force=True)
-        self.assertFalse(any("only 60 bars" in m for m in self.sent))
+        self.assertFalse(any("NEW (60 bars)" in m for m in self.sent))
 
     # --- unseeded positions
     def test_first_run_announces_the_adopted_ladder_stop_once(self):
         self.add()
         self.go()
-        self.assertIn("adopted the ATR-ladder stop", self.sent[0])
+        self.assertIn("Starting stops, confirm the broker order matches: ZZZ $", self.sent[0])
         self.assertEqual(len(self.state()), 1)
         self.sent.clear()
         self.go(force=True)
-        self.assertFalse(any("adopted" in m for m in self.sent))
+        self.assertFalse(any("Starting stops" in m for m in self.sent))
+
+
+    # --- adoption never invents a breach, and is one compact line
+    def test_adopting_a_ladder_stop_already_above_the_price_starts_from_todays_price(self):
+        falling = bars(drift=-0.01, vol=0.01, seed=4, end=END)
+        p = self.add("DOWN", falling, back=60)
+        entry_ladder = e.ladder_stop(falling, p, dict(DEFAULT_SETTINGS))[0]
+        close = float(falling["Close"].iloc[-1])
+        self.assertGreater(entry_ladder, close, "fixture must start with a ladder stop above the market")
+        decisions, _ = self.go({"*": falling})
+        d = decisions[0]
+        self.assertNotEqual(d.action, "BREACH")
+        self.assertLess(d.new_stop, close)
+        self.assertGreater(d.new_stop, 0)
+        self.assertEqual(self.state()[0][2], "BASELINE")
+        self.assertIn(f"DOWN ${d.new_stop:,.2f}*", self.sent[0])
+        self.assertNotIn("BREACH", self.sent[0])
+        self.sent.clear()
+        again, _ = self.go({"*": falling}, force=True)           # nothing new: quiet, still no breach
+        self.assertEqual(again[0].action, "HOLD")
+        self.assertFalse(any("Starting stops" in m for m in self.sent))
+
+    def test_adoption_never_reports_a_breach_even_when_the_last_low_is_under_the_ladder(self):
+        df = self.climber.copy()
+        p = self.add("ZZZ", df)
+        ladder = e.ladder_stop(df, p, dict(DEFAULT_SETTINGS))[0]
+        df.iloc[-1, df.columns.get_loc("Low")] = ladder * 0.99
+        decisions, _ = self.go({"*": df})
+        self.assertNotEqual(decisions[0].action, "BREACH")
+
+    def test_many_adopted_positions_share_one_notice_line(self):
+        for t in ("AAA", "BBB", "CCC"):
+            self.add(t)
+        self.go()
+        text = self.sent[0]
+        self.assertEqual(text.count("ℹ️"), 1)
+        for t in ("AAA", "BBB", "CCC"):
+            self.assertIn(f"{t} $", text)
+        self.assertLess(len(text), 400)
+
+    # --- Tel Aviv tickers are out of scope
+    def test_tase_tickers_are_not_evaluated_alerted_or_stored(self):
+        self.add("AAA")
+        self.add("IMCO.TA")
+        self.add("lumi.ta")
+        decisions, _ = self.go()
+        self.assertEqual([d.ticker for d in decisions], ["AAA"])
+        self.assertFalse(any(".TA" in m.upper() for m in self.sent))
+        self.assertEqual([r[0] for r in self.state()], [1])
+
+    def test_only_tase_positions_means_nothing_to_do(self):
+        self.add("IMCO.TA")
+        ev = e.evaluate(self.path, downloader=make_downloader({"*": self.climber}),
+                        sector_lookup=lambda t: None, now=NIGHT_AFTER)
+        self.assertEqual(ev.decisions, [])
+
+    def test_tase_stop_records_are_never_seeded_or_shown(self):
+        with sqlite3.connect(self.path) as c:
+            e.ensure_schema(c)
+            e.seed_stop_conn(c, 7, "IMCO.TA", 90.0, "MANUAL")
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM eod_stop_state").fetchone()[0], 0)
+            c.execute("INSERT INTO eod_stop_state VALUES (8, 'ARYT.TA', 50, 'NORMAL', '2026-10-16', 'x')")
+        self.assertEqual(e.stop_info(self.path), {})
 
     # --- breach window
     def test_breach_in_a_session_the_last_run_missed_is_alerted(self):
