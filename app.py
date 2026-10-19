@@ -102,6 +102,7 @@ class ActiveCreate(BaseModel):
     # first alert compares against the stop actually placed. Optional: older clients omit it.
     initial_stop: float | None = Field(default=None, gt=0)
     stop_source: str = Field(default="ENTRY", max_length=16)
+    stop_note: str | None = Field(default=None, max_length=500)
 
     _ticker = field_validator("ticker")(_normalise_symbol)
     _currency = field_validator("currency")(_normalise_currency)
@@ -299,7 +300,11 @@ def delete_core(item_id: int, _: Protected) -> Response:
 
 @app.get("/api/positions")
 def list_positions(_: Protected) -> list[dict[str, Any]]:
-    return db.list_active()
+    rows = db.list_active()
+    info = eod_stops.stop_info(db.path)
+    for row in rows:
+        row.update(info.get(row["id"], {"stop": None}))
+    return rows
 
 
 @app.post("/api/positions", status_code=201)
@@ -308,12 +313,13 @@ def create_position(request: ActiveCreate, _: Protected) -> dict[str, Any]:
     values["opened_at"] = values["opened_at"].isoformat()
     initial_stop = values.pop("initial_stop")
     stop_source = values.pop("stop_source").upper()
+    stop_note = values.pop("stop_note")
     try:
         created = db.create_active(values)
     except sqlite3.IntegrityError as exc:
         raise _conflict(exc) from exc
     if initial_stop is not None:
-        eod_stops.seed_stop(db.path, created["id"], created["ticker"], initial_stop, stop_source)
+        eod_stops.seed_stop(db.path, created["id"], created["ticker"], initial_stop, stop_source, stop_note)
     return created
 
 

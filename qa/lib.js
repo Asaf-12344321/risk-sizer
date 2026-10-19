@@ -28,6 +28,8 @@ function boot({ capital = D_CAPITAL, maxspec = D_MAXSPEC, riskabs = D_RISK,
     currency: p.currency || 'ILS', fx_to_ils: p.fx_to_ils || 1,
     risk_status: p.risk_status || 'RISK_ON', rung: p.rung || 0,
     display_name: p.display_name || '', legacy: Boolean(p.legacy),
+    stop: p.stop, stop_source: p.stop_source, stop_asof: p.stop_asof,
+    stop_why: p.stop_why, stop_last_action: p.stop_last_action,
     opened_at: p.opened_at || p.added || new Date().toISOString().slice(0, 10)
   }));
   const dom = new JSDOM(HTML, { runScripts: 'dangerously', url: 'https://qa.local/',

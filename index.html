@@ -1849,6 +1849,7 @@
         .catch(function () { if (structural.key === key) { structural = { key: key, status: "failed", data: null }; recalc(); } });
     }, 500);
   }
+  function manualRaw() { return parseFloat(inManualStop.value); }
   // Manual stop: a price or a % below entry. Returns {price} / {error} / null (blank).
   function manualStopFor(price) {
     var raw = parseFloat(inManualStop.value);
@@ -1969,7 +1970,10 @@
       return;
     }
     currentSizing = { size: size, shares: shares, price: price, atr: atr, fx: fx,
-                      stop: stopPrice, stopSource: stopSource };
+                      stop: stopPrice, stopSource: stopSource,
+                      stopNote: stopSource === "STRUCTURAL" ? st.justification
+                        : stopSource === "MANUAL" ? "your chart stop" + (inManualUnit.value === "pct" ? " (" + manualRaw() + "% below entry)" : "")
+                        : "ATR stop (" + cfg.initmult + " x ATR, bounded " + cfg.minstop + "-" + cfg.maxstop + "%)" };
     if (!positionValueOverridden) inPositionValue.value = String(Math.round(size));
     outSize.textContent = nis(size);
     outShares.textContent = num(shares, shares < 10 ? 2 : 0) + " shares"
@@ -2413,7 +2417,11 @@
       currency: row.currency, fx_to_ils: Number(row.fx_to_ils), fx_ticker: row.fx_ticker,
       risk_status: row.risk_status, rung: Number(row.rung || 0), opened_at: row.opened_at,
       display_name: row.display_name || "", legacy: row.legacy === true || row.legacy === 1,
-      added: row.opened_at
+      added: row.opened_at,
+      // The server's recorded stop (eod_stop_state): the one the daily Telegram job uses.
+      srvStop: row.stop > 0 ? Number(row.stop) : null, stopSource: row.stop_source || null,
+      stopAsof: row.stop_asof || null, stopWhy: row.stop_why || null,
+      stopLast: row.stop_last_action || null
     };
   }
 
@@ -2565,7 +2573,8 @@
       var live = liveState(p);
       var idx = Math.min(p.rung || 0, rungs.length - 1);
       var next = rungs[idx + 1];
-      var stop = live ? live.stop : rungs[idx].stop;
+      var recorded = p.srvStop !== null;          // single source of truth, shared with Telegram
+      var stop = recorded ? p.srvStop : (live ? live.stop : rungs[idx].stop);
       var atBreakeven = stop >= p.entry - 1e-9;
       var lockedPct = (stop - p.entry) / p.entry * 100;
       var displayName = p.display_name || p.tick || "—";
@@ -2584,7 +2593,11 @@
         + '<div class="pos-now"><span class="lbl">stop now</span><span class="stop">' + px(stop) + "</span>"
         + '<span class="lbl">' + (atBreakeven
             ? '<span class="pos-safe">' + (lockedPct > 0.05 ? "locked in +" + lockedPct.toFixed(1) + "%" : "at breakeven — protected") + "</span>"
-            : "risking " + pct((p.entry - stop) / p.entry * 100)) + "</span></div>";
+            : "risking " + pct((p.entry - stop) / p.entry * 100)) + "</span></div>"
+        + '<div class="pos-live">' + (recorded
+            ? "stop source: " + esc(stopSourceLabel(p.stopSource)) + (p.stopAsof ? " · as of " + esc(p.stopAsof) : "")
+              + (p.stopWhy ? "<br>" + esc(p.stopWhy) : "")
+            : "ATR ladder stop — not reviewed yet; the daily job records it on its next run") + "</div>";
 
       if (!(p.value_ils > 0)) {
         out += '<div class="pos-next"><span class="pos-hit">ILS value required for holistic risk.</span> '
@@ -2608,12 +2621,23 @@
         var pnl = (live.last - p.entry) / p.entry * 100;
         out += '<div class="pos-live">live ' + px(live.last) + " (" + (pnl >= 0 ? "+" : "")
           + pnl.toFixed(1) + "%) · high since entry " + px(live.high) + " · " + live.asOf + "</div>";
-        if (live.hit) {
+        if (recorded) {
+          // Only today's bar can show a breach of the CURRENT stop: earlier lows happened
+          // while the stop was still lower, so replaying them against it would false-alarm.
+          var lastBar = (barsCache[p.tick] || []).slice(-1)[0];
+          var breached = lastBar && lastBar[2] <= stop;
+          out += breached
+            ? '<div class="pos-next"><span class="pos-hit">Stop touched.</span> The latest bar (<b>' + lastBar[0]
+              + "</b>) traded down to <b>" + px(lastBar[2]) + "</b>, at or below your stop. If you still hold it, you are past your own rule.</div>"
+            : '<div class="pos-next">Keep the stop at <b>' + num(stop, 2) + "</b> at Leumi. It only moves when the daily review sends a raise.</div>";
+        } else if (live.hit) {
           out += '<div class="pos-next"><span class="pos-hit">This should already be closed.</span> The stop was breached on <b>'
             + live.hit.date + "</b> at <b>" + px(live.hit.price) + "</b>"
             + (live.hit.gap ? " — it <b>gapped through</b> the stop and opened there, so the stop price was never available"
                             : "")
             + ". If you still hold it, you are past your own rule.</div>";
+        } else if (recorded) {
+          // handled above
         } else if (!live.armed) {
           out += '<div class="pos-next">Keep the stop at <b>' + num(stop, 2)
             + "</b>. It moves up to breakeven (<b>" + px(p.entry) + "</b>) once the price closes at <b>"
@@ -2629,6 +2653,12 @@
         return out;
       }
 
+      if (recorded) {
+        out += '<div class="pos-next">Keep the stop at <b>' + num(stop, 2) + "</b> at Leumi. It only moves when the daily review sends a raise.</div>"
+          + '<div class="pos-actions"><button class="btn-reached" type="button" data-act="toggle-risk" data-i="' + i + '">'
+          + (p.risk_status === "ARMED_ZERO_RISK" ? "Mark Risk On" : "Mark Armed") + "</button></div></div>";
+        return out;
+      }
       out += '<div class="pos-next">No live data for ' + esc(p.tick || "?")
         + " — add it to tickers.txt in the repo. Manual mode: "
         + (next ? "alert at <b>" + px(next.px) + "</b> → then move the stop to <b>" + px(next.stop) + "</b>"
@@ -2643,6 +2673,13 @@
         + "</div></div>";
       return out;
     }).join("");
+  }
+
+  function stopSourceLabel(src) {
+    var map = { STRUCTURAL: "technical stop set at entry", MANUAL: "your chart stop", ATR: "ATR stop set at entry",
+                ENTRY: "stop set at entry", LOOSE: "daily review (loose trail)",
+                NORMAL: "daily review (support trail)", TIGHT: "daily review (tight trail)" };
+    return map[src] || src || "recorded stop";
   }
 
   function esc(s) {
@@ -2731,7 +2768,8 @@
         currency: inCcy.value === "USD" ? "USD" : "ILS", fx_to_ils: fx,
         risk_status: "RISK_ON", legacy: false, rung: 0, opened_at: todayStr(),
         initial_stop: currentSizing && currentSizing.stop > 0 ? Math.round(currentSizing.stop * 10000) / 10000 : null,
-        stop_source: currentSizing ? currentSizing.stopSource : "ENTRY"
+        stop_source: currentSizing ? currentSizing.stopSource : "ENTRY",
+        stop_note: currentSizing ? currentSizing.stopNote : null
       })
     }).then(function () {
       inTicker.value = "";

@@ -88,6 +88,18 @@ class RiskApiTests(unittest.TestCase):
                                (created.json()["id"],)).fetchone()
         self.assertEqual(row, ("ABC", 91.5, "MANUAL"))
 
+    def test_positions_list_returns_recorded_stop_and_reason(self):
+        self.client.post("/api/positions", headers=self.headers, json={
+            "ticker": "abc", "entry_price": 100, "atr": 4, "quantity": 10, "value_ils": 3650,
+            "initial_stop": 91.5, "stop_source": "structural", "stop_note": "below support 92"})
+        self.client.post("/api/positions", headers=self.headers, json={
+            "ticker": "old", "entry_price": 50, "atr": 2, "quantity": 1, "value_ils": 100})
+        rows = {r["ticker"]: r for r in self.client.get("/api/positions", headers=self.headers).json()}
+        self.assertEqual(rows["ABC"]["stop"], 91.5)
+        self.assertEqual(rows["ABC"]["stop_source"], "STRUCTURAL")
+        self.assertEqual(rows["ABC"]["stop_why"], "below support 92")
+        self.assertIsNone(rows["OLD"]["stop"])
+
     def test_position_without_stop_is_not_seeded_and_bad_stop_rejected(self):
         ok = self.client.post("/api/positions", headers=self.headers, json={
             "ticker": "OLD", "entry_price": 100, "atr": 4, "quantity": 1, "value_ils": 100})

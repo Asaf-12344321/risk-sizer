@@ -462,8 +462,10 @@ def initial_stop(ticker: str, df: pd.DataFrame, entry: float, settings: Mapping[
     return out
 
 
-def seed_stop(db_path: str | Path, position_id: int, ticker: str, stop: float, source: str) -> None:
-    """Record the stop chosen at entry as the 'previous stop' for the daily job."""
+def seed_stop(db_path: str | Path, position_id: int, ticker: str, stop: float, source: str,
+              note: str | None = None) -> None:
+    """Record the stop chosen at entry as the 'previous stop' for the daily job, with the
+    reason it was chosen, so the Positions tab and Telegram read the same record."""
     conn = open_state(db_path)
     try:
         now = datetime.now(NY)
@@ -473,7 +475,40 @@ def seed_stop(db_path: str | Path, position_id: int, ticker: str, stop: float, s
                ON CONFLICT(position_id) DO UPDATE SET stop=excluded.stop, tier=excluded.tier,
                    asof=excluded.asof, updated_at=excluded.updated_at""",
             (position_id, ticker, float(stop), source, now.date().isoformat(), now.isoformat(timespec="seconds")))
+        conn.execute(
+            """INSERT INTO eod_stop_log (asof, position_id, ticker, new_stop, tier, action, reasons)
+               VALUES (?, ?, ?, ?, ?, 'ENTRY', ?)""",
+            (now.date().isoformat(), position_id, ticker, float(stop), source, json.dumps([note or f"{source} stop chosen at entry"])))
         conn.commit()
+    finally:
+        conn.close()
+
+
+def stop_info(db_path: str | Path) -> dict[int, dict[str, Any]]:
+    """Live stop per position id: the single record the Positions tab and the Telegram job share.
+    `stop_why` is the reason of the latest ENTRY/RAISE, i.e. why the stop sits where it does;
+    `stop_last_action` is the latest review outcome (HOLD, BREACH ...)."""
+    conn = open_state(db_path)
+    try:
+        info: dict[int, dict[str, Any]] = {}
+        for r in conn.execute("SELECT position_id, stop, tier, asof, updated_at FROM eod_stop_state"):
+            info[r["position_id"]] = {"stop": r["stop"], "stop_source": r["tier"],
+                                      "stop_asof": r["asof"], "stop_updated_at": r["updated_at"],
+                                      "stop_why": None, "stop_last_action": None}
+        for r in conn.execute("""SELECT position_id, action, reasons, asof FROM eod_stop_log
+                                 WHERE id IN (SELECT MAX(id) FROM eod_stop_log GROUP BY position_id)"""):
+            if r["position_id"] in info:
+                info[r["position_id"]]["stop_last_action"] = r["action"]
+                info[r["position_id"]]["stop_last_asof"] = r["asof"]
+        for r in conn.execute("""SELECT position_id, reasons FROM eod_stop_log
+                                 WHERE id IN (SELECT MAX(id) FROM eod_stop_log
+                                              WHERE action IN ('ENTRY', 'RAISE') GROUP BY position_id)"""):
+            if r["position_id"] in info:
+                try:
+                    info[r["position_id"]]["stop_why"] = "; ".join(json.loads(r["reasons"] or "[]"))
+                except ValueError:
+                    pass
+        return info
     finally:
         conn.close()
 
@@ -647,7 +682,10 @@ def run(db_path: str | Path, *, dry_run: bool, overrides_stop: Mapping[str, floa
         if df is None or df.empty:
             decisions.append(Decision(t, 0.0, 0.0, 0.0, NORMAL, "SKIP", ["no price data"]))
             continue
-        prev = (overrides_stop or {}).get(t) or load_prev(conn, p["id"])
+        forced = (overrides_stop or {}).get(t)
+        if forced and not dry_run:
+            seed_stop(db_path, p["id"], t, forced, "MANUAL", "stop set manually at the broker (--set-stop)")
+        prev = forced or load_prev(conn, p["id"])
         if prev is None:
             prev = ladder_stop(df, p, settings)[0]
         etf = etfs.get(t)
