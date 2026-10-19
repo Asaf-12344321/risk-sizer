@@ -196,6 +196,30 @@ The 8% floor keeps the placed stop outside very small daily noise. The 30% ceili
 
 When the raw `2.5 × ATR` distance exceeds 30%, the **order** remains at the 30% ceiling but the **position size** is calculated against the full volatility-implied distance. A stop order cannot guarantee protection from a larger move or overnight gap, so sizing must not pretend that the ceiling eliminates that risk.
 
+### Technical and manual initial stops
+
+The calculator no longer defaults to the ATR stop when a better one exists. Stop precedence:
+
+1. **Your chart stop** — optional field (a price, or a % below entry). Sizing uses its exact distance, still limited by 1R, the maximum position %, the crash, beta and liquidity caps.
+2. **Technical stop** — nearest qualified support (clustered swing lows, strengthened by volume-profile nodes) with the stop placed 0.3 ATR beneath it, at least 1.5 ATR from entry in a clean uptrend (2 ATR when ADX shows range or downtrend). The justification is shown under the stop.
+3. **ATR ladder** — the previous behaviour, used only when no qualified support exists or the lookup fails.
+
+If the nearest support is more than *Extended-from-support warn* (default 22.5%) below entry, or none exists, the calculator shows **"⚠️ Extended from support — poor R/R entry timing"**. The honest size is still shown; it is not hidden.
+
+Saving a position sends the chosen stop to the server, which records it as the starting stop for the daily `eod_stops.py` job, so no `--set-stop` is needed for new trades.
+
+### Daily stop review (`eod_stops.py`)
+
+Runs from `deploy/risk-sizer-eod.timer` at **01:00 New York, Tue-Sat** (the morning after each session, about 07:00-08:00 Israel time). Broker stops only matter for the next session, and by then Yahoo's volume and split data are settled.
+
+- **Send first, save second.** The Telegram message (retried with backoff, `Retry-After` honoured, plain-text fallback if the markup is rejected) must be accepted before any stop is written. A failed run changes nothing, so the next run re-sends the alert. `OnFailure=` pings Telegram if the job itself crashes.
+- **Holidays and missed days.** No new completed session means no run. Breaches are checked against every bar since the position's last review, so a missed night is still caught. A ticker whose last bar is behind the others is reported as stale, not judged.
+- **Splits.** A split since the position was opened makes the stored entry, ATR and stop meaningless, so the position is reported as `split detected` and skipped. Fix the entry price/ATR/`opened_at` in the position (or re-add it), then `--set-stop TICKER=PRICE`.
+- **Short history.** Under 120 bars the job trails by the plain ATR ladder and says so once.
+- **Unseeded positions.** The first run adopts the ATR-ladder stop and tells you once, so you can confirm the broker order matches.
+- **Source of truth.** The Positions tab and `/api/positions` show this job's recorded stop (`eod_stop_state`), the same number the Telegram alert carries. Only a position with no record yet falls back to the post-close engine, then to the browser ATR ladder.
+- `--dry-run` computes and prints without saving; `--force` runs even when no new session has completed.
+
 ### Continuous crash assumption
 
 Risk Sizer derives a crash assumption continuously from ATR%. It interpolates between eight configurable anchors instead of assigning a manual Quality/Growth/Speculative tier.

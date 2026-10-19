@@ -21,3 +21,5 @@ docs/
 
 # macOS Finder metadata. Was tracked at repo root until 2026-08-09.
 .DS_Store
+# Runtime caches written by eod_stops.py (sector cache, optional overrides) and the databases.
+data/

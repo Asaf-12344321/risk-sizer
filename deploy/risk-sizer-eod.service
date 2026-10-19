@@ -1,0 +1,24 @@
+[Unit]
+Description=Risk Sizer end-of-day stop review (Telegram alert)
+After=network-online.target
+Wants=network-online.target
+OnFailure=risk-sizer-eod-failed.service
+
+[Service]
+Type=oneshot
+User=risk-sizer
+Group=risk-sizer
+WorkingDirectory=/opt/risk-sizer
+EnvironmentFile=/etc/risk-sizer.env
+# yfinance keeps its timezone cache under XDG_CACHE_HOME; with ProtectHome=true the default
+# (~/.cache) is not writable, so give it a service-owned directory.
+Environment=XDG_CACHE_HOME=/var/cache/risk-sizer
+ExecStart=/opt/risk-sizer/.venv/bin/python eod_stops.py
+TimeoutStartSec=300
+CacheDirectory=risk-sizer
+StateDirectory=risk-sizer
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# data/ holds the sector cache; the DB lives in /var/lib/risk-sizer (StateDirectory)
+ReadWritePaths=/var/lib/risk-sizer -/opt/risk-sizer/data

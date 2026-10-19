@@ -131,6 +131,94 @@ class RiskApiTests(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/api/positions/{position_id}", headers=self.headers).status_code, 204)
         self.assertEqual(self.client.delete(f"/api/core/{core_id}", headers=self.headers).status_code, 204)
 
+    def test_new_position_seeds_eod_stop_state(self):
+        import sqlite3
+        created = self.client.post("/api/positions", headers=self.headers, json={
+            "ticker": "abc", "entry_price": 100, "atr": 4, "quantity": 10, "value_ils": 3650,
+            "currency": "USD", "initial_stop": 91.5, "stop_source": "manual",
+        })
+        self.assertEqual(created.status_code, 201, created.text)
+        with sqlite3.connect(self.database.path) as conn:
+            row = conn.execute("SELECT ticker, stop, tier FROM eod_stop_state WHERE position_id = ?",
+                               (created.json()["id"],)).fetchone()
+        self.assertEqual(row, ("ABC", 91.5, "MANUAL"))
+
+    def test_positions_list_returns_recorded_stop_and_reason(self):
+        self.client.post("/api/positions", headers=self.headers, json={
+            "ticker": "abc", "entry_price": 100, "atr": 4, "quantity": 10, "value_ils": 3650,
+            "initial_stop": 91.5, "stop_source": "structural", "stop_note": "below support 92"})
+        self.client.post("/api/positions", headers=self.headers, json={
+            "ticker": "old", "entry_price": 50, "atr": 2, "quantity": 1, "value_ils": 100})
+        rows = {r["ticker"]: r for r in self.client.get("/api/positions", headers=self.headers).json()}
+        self.assertEqual(rows["ABC"]["stop"], 91.5)
+        self.assertEqual(rows["ABC"]["stop_source"], "STRUCTURAL")
+        self.assertEqual(rows["ABC"]["stop_why"], "below support 92")
+        self.assertIsNone(rows["OLD"]["stop"])
+
+    def test_position_without_stop_is_not_seeded_and_bad_stop_rejected(self):
+        ok = self.client.post("/api/positions", headers=self.headers, json={
+            "ticker": "OLD", "entry_price": 100, "atr": 4, "quantity": 1, "value_ils": 100})
+        self.assertEqual(ok.status_code, 201)
+        bad = self.client.post("/api/positions", headers=self.headers, json={
+            "ticker": "BAD", "entry_price": 100, "atr": 4, "quantity": 1, "value_ils": 100,
+            "initial_stop": 100})
+        self.assertEqual(bad.status_code, 422)
+
+    POSITION = {"ticker": "abc", "entry_price": 100, "atr": 4, "quantity": 10, "value_ils": 3650,
+                "currency": "USD", "initial_stop": 91.5, "stop_source": "manual"}
+
+    def _eod_rows(self, table):
+        import sqlite3
+        with sqlite3.connect(self.database.path) as conn:
+            return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+
+    def test_position_and_stop_seed_are_one_transaction(self):
+        with patch.object(app_module.eod_stops, "seed_stop_conn", side_effect=RuntimeError("seed failed")):
+            with self.assertRaises(RuntimeError):
+                self.client.post("/api/positions", headers=self.headers, json=self.POSITION)
+        self.assertEqual(self.database.list_active(), [], "position survived a failed stop seed")
+
+    def test_creating_a_position_waits_for_a_busy_writer(self):
+        import sqlite3, threading, time
+        started = threading.Event()
+
+        def hold_write_lock():
+            conn = sqlite3.connect(self.database.path, timeout=10)
+            conn.execute("BEGIN IMMEDIATE")
+            started.set()
+            time.sleep(1.5)
+            conn.rollback()
+            conn.close()
+        t = threading.Thread(target=hold_write_lock)
+        t.start()
+        started.wait()
+        created = self.client.post("/api/positions", headers=self.headers, json=self.POSITION)
+        t.join()
+        self.assertEqual(created.status_code, 201, created.text)
+        self.assertEqual(self._eod_rows("eod_stop_state"), 1)
+
+    def test_deleting_a_position_removes_its_stop_record_and_history(self):
+        created = self.client.post("/api/positions", headers=self.headers, json=self.POSITION).json()
+        self.assertEqual((self._eod_rows("eod_stop_state"), self._eod_rows("eod_stop_log")), (1, 1))
+        self.assertEqual(self.client.delete(f"/api/positions/{created['id']}", headers=self.headers).status_code, 204)
+        self.assertEqual((self._eod_rows("eod_stop_state"), self._eod_rows("eod_stop_log")), (0, 0))
+
+    def test_stop_suggest_endpoint(self):
+        import numpy as np, pandas as pd
+        dates = pd.bdate_range("2025-06-02", periods=300)
+        rng = np.random.default_rng(2)
+        close = 100 * np.cumprod(1 + rng.normal(0.002, 0.012, 300))
+        cols = {("ZZZ", "Open"): close, ("ZZZ", "High"): close * 1.01, ("ZZZ", "Low"): close * 0.99,
+                ("ZZZ", "Close"): close, ("ZZZ", "Volume"): np.full(300, 1e6)}
+        frame = pd.DataFrame(cols, index=dates)
+        with patch.object(app_module, "market_data", lambda *a, **k: frame):
+            r = self.client.get("/api/stop/suggest", headers=self.headers,
+                                params={"ticker": "zzz", "entry_price": float(close[-1])})
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        self.assertIn("extended", body)
+        self.assertTrue(body["stop"] is None or body["stop"] < close[-1])
+
     def test_post_close_endpoint_logs_stop_and_reference_only_har_shadow(self):
         position = self.client.post("/api/positions", headers=self.headers, json={
             "ticker": "COREA", "entry_price": 100, "atr": 3, "quantity": 100,

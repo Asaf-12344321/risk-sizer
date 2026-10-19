@@ -1,0 +1,14 @@
+[Unit]
+Description=Run the Risk Sizer EOD stop review the morning after each US session
+
+[Timer]
+# 01:00 New York, Tuesday-Saturday = the morning after each Mon-Fri session (about 07:00-08:00
+# in Israel). Broker stops only matter for the next session, and by now Yahoo's daily volume and
+# split data are settled, so no partial bar or provisional volume reaches an indicator.
+# New York time keeps this correct across the US/Israel daylight-saving mismatch weeks.
+# A holiday session produces no new bar: the job notices and exits quietly.
+OnCalendar=Tue..Sat 01:00:00 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

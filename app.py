@@ -19,8 +19,9 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+import eod_stops
 from database import DEFAULT_SETTINGS, Database
 from quant_risk_engine import QuantitativeRiskEngine
 from stop_engine import build_policy_snapshot, har_parkinson_shadow, replay_post_close_stop
@@ -100,9 +101,20 @@ class ActiveCreate(BaseModel):
     risk_status: str = "RISK_ON"
     rung: int = Field(default=0, ge=0)
     opened_at: date = Field(default_factory=date.today)
+    # The stop chosen at entry (structural, manual or ATR). Seeds the daily EOD job so the
+    # first alert compares against the stop actually placed. Optional: older clients omit it.
+    initial_stop: float | None = Field(default=None, gt=0)
+    stop_source: str = Field(default="ENTRY", max_length=16)
+    stop_note: str | None = Field(default=None, max_length=500)
 
     _ticker = field_validator("ticker")(_normalise_symbol)
     _currency = field_validator("currency")(_normalise_currency)
+
+    @model_validator(mode="after")
+    def stop_below_entry(self) -> "ActiveCreate":
+        if self.initial_stop is not None and self.initial_stop >= self.entry_price:
+            raise ValueError("initial_stop must be below entry_price")
+        return self
 
     @field_validator("fx_ticker")
     @classmethod
@@ -504,7 +516,11 @@ def delete_core(item_id: int, _: Protected) -> Response:
 @app.get("/api/positions")
 def list_positions(_: Protected) -> list[dict[str, Any]]:
     _snapshot_missing_positions()
-    return db.list_active()
+    rows = db.list_active()
+    info = eod_stops.stop_info(db.path)
+    for row in rows:
+        row.update(info.get(row["id"], {"stop": None}))
+    return rows
 
 
 @app.post("/api/positions", status_code=201)
@@ -515,10 +531,42 @@ def create_position(request: ActiveCreate, _: Protected) -> dict[str, Any]:
     # settings together with the entered ATR, so a later Settings edit cannot rewrite
     # this position's live stop rule.
     values["policy_snapshot"] = build_policy_snapshot(values["atr"], db.get_settings()["settings"])
+    initial_stop = values.pop("initial_stop")
+    stop_source = values.pop("stop_source").upper()
+    stop_note = values.pop("stop_note")
+    seed = None
+    if initial_stop is not None:
+        # Same transaction as the INSERT: the position never exists without its stop record,
+        # and there is no second writer connection to collide with the EOD job.
+        def seed(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+            eod_stops.seed_stop_conn(conn, row["id"], row["ticker"], initial_stop, stop_source, stop_note)
     try:
-        return db.create_active(values)
+        return db.create_active(values, after_insert=seed)
     except sqlite3.IntegrityError as exc:
         raise _conflict(exc) from exc
+
+
+@app.get("/api/stop/suggest")
+async def suggest_stop(ticker: str, entry_price: float, _: Protected) -> dict[str, Any]:
+    """Structural initial stop for a trade being evaluated (same logic as the daily job)."""
+    try:
+        symbol = _normalise_symbol(ticker)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not entry_price > 0:
+        raise HTTPException(status_code=422, detail="entry_price must be positive")
+    settings = (await run_in_threadpool(db.get_settings))["settings"]
+
+    def compute() -> dict[str, Any]:
+        bars = eod_stops.download([symbol], market_data).get(symbol)
+        if bars is None or bars.empty:
+            raise ValueError(f"no price history for {symbol}")
+        return eod_stops.initial_stop(symbol, bars, entry_price, settings)
+
+    try:
+        return await run_in_threadpool(compute)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.put("/api/positions/{item_id}")
@@ -611,7 +659,7 @@ def process_post_close_position(item_id: int, request: PostCloseRequest, _: Prot
 
 @app.delete("/api/positions/{item_id}", status_code=204)
 def delete_position(item_id: int, _: Protected) -> Response:
-    if not db.delete_active(item_id):
+    if not db.delete_active(item_id, after_delete=eod_stops.purge_position):
         raise HTTPException(status_code=404, detail="Active position not found")
     return Response(status_code=204)
 
