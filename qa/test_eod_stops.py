@@ -141,7 +141,7 @@ class DecisionTests(unittest.TestCase):
         df.iloc[-3, df.columns.get_loc("Low")] = 40.0           # dipped through the stop 2 sessions ago
         d = e.decide("X", df, self.pos, 60.0, self.st, since=df.index[-6])
         self.assertEqual(d.action, "BREACH")
-        self.assertIn(str(df.index[-3].date()), d.reasons[0])
+        self.assertIn(df.index[-3].strftime("%b %-d"), d.reasons[0])
         self.assertEqual(d.new_stop, 60.0)
         # a review already made after that dip must not report it again
         again = e.decide("X", df, self.pos, 60.0, self.st, since=df.index[-1])
@@ -150,7 +150,7 @@ class DecisionTests(unittest.TestCase):
     def test_stale_ticker_is_skipped_not_judged(self):
         d = e.decide("X", self.df.iloc[:-3], self.pos, 60.0, self.st, asof=self.df.index[-1])
         self.assertEqual(d.action, "SKIP")
-        self.assertIn("stale", d.reasons[0])
+        self.assertIn("older than the rest of the market", d.reasons[0])
 
     def test_last_bar_without_volume_is_skipped(self):
         df = self.df.copy()
@@ -166,7 +166,7 @@ class DecisionTests(unittest.TestCase):
         prev = float(self.df["Close"].iloc[-1]) * 0.9           # recorded in pre-split dollars
         d = e.decide("X", df, self.pos, prev, self.st)
         self.assertEqual(d.action, "SKIP")
-        self.assertIn("split detected", d.reasons[0])
+        self.assertIn("stock split", d.reasons[0])
 
     def test_split_before_entry_is_ignored(self):
         df = self.df.copy()
@@ -202,8 +202,9 @@ class AlertTests(unittest.TestCase):
         self.assertIn("BAD", msgs[0])
         self.assertNotIn("SIT", msgs[0])
         self.assertLess(msgs[0].index("BAD"), msgs[0].index("UP"))   # breach first
-        self.assertIn("Prev $40.00", msgs[0])
-        self.assertIn("New $45.00", msgs[0])
+        self.assertIn("$40.00 → <b>$45.00</b>", msgs[0])
+        self.assertIn("🟢⬆️ <b>UP</b>", msgs[0])                    # a raise is flagged with a green arrow
+        self.assertNotIn("🟢⬆️ <b>BAD</b>", msgs[0])
 
     def test_silent_or_quiet_line_when_nothing_to_do(self):
         ds = [self.dec("SIT", "HOLD", new=40.0)]
@@ -346,7 +347,7 @@ class Pipeline(unittest.TestCase):
 
         decisions, _ = self.go()                                    # retry succeeds
         self.assertEqual([d.action for d in decisions], ["RAISE"])
-        self.assertIn("New $", self.sent[0])
+        self.assertIn("Move your stop up: $", self.sent[0])
         self.assertGreater(self.state()[0][1], before[0][1])
         self.sent.clear()
         again, _ = self.go(force=True)                              # alert delivered once, now quiet
@@ -409,9 +410,9 @@ class Pipeline(unittest.TestCase):
         decisions, _ = self.go(frames)
         by = {d.ticker: d for d in decisions}
         self.assertEqual(by["BBB"].action, "SKIP")
-        self.assertIn("stale", by["BBB"].reasons[0])
+        self.assertIn("older than the rest of the market", by["BBB"].reasons[0])
         self.assertEqual(by["AAA"].action, "RAISE")
-        self.assertIn("Not evaluated: BBB", self.sent[0])
+        self.assertIn("Skipped: BBB", self.sent[0])
         self.assertIsNone(self.last_asof(), "a data gap must not close the day")
 
     def test_ticker_missing_from_download_is_reported_not_silent(self):
@@ -428,11 +429,11 @@ class Pipeline(unittest.TestCase):
         e.seed_stop(self.path, p["id"], "NEW", float(ipo["Close"].iloc[-1]) * 0.5, "STRUCTURAL")
         frames = {"*": self.climber, "NEW": ipo}
         self.go(frames)
-        self.assertIn("ATR ladder only: NEW (60 bars)", self.sent[0])
+        self.assertIn("simple distance rule: NEW (60 days)", self.sent[0])
         self.assertEqual(self.state()[0][2], "LADDER")
         self.sent.clear()
         self.go(frames, force=True)
-        self.assertFalse(any("NEW (60 bars)" in m for m in self.sent))
+        self.assertFalse(any("NEW (60 days)" in m for m in self.sent))
 
     # --- unseeded positions
     def test_first_run_announces_the_adopted_ladder_stop_once(self):
@@ -509,6 +510,37 @@ class Pipeline(unittest.TestCase):
             c.execute("INSERT INTO eod_stop_state VALUES (8, 'ARYT.TA', 50, 'NORMAL', '2026-10-16', 'x')")
         self.assertEqual(e.stop_info(self.path), {})
 
+    # --- plain-language explanations
+    JARGON = r"\b(ADX|RSI|ATR|DI|EMA|SMA|HVN|POC|volume node|bars?|ladder|tier|notch|distribution|exhaustion|divergence|chandelier)\b"
+
+    def test_every_explanation_is_plain_language(self):
+        import re
+        seen = []
+        for seed, drift in ((11, 0.004), (3, 0.0015), (5, -0.003), (9, 0.01)):
+            df = bars(drift=drift, seed=seed, end=END)
+            pos = position(df, 60)
+            for frac in (0.4, 0.9, 1.5):
+                prev = float(df["Close"].iloc[-1]) * frac
+                for ctx in (e.Context(), e.Context("XLK", True, "x", stock_vs_sector_10d=-0.05)):
+                    d = e.decide("X", df, pos, prev, dict(DEFAULT_SETTINGS), ctx, since=df.index[-6])
+                    seen += d.reasons
+        seen += e.decide("X", df.iloc[:60], position(df.iloc[:60], 30), 1.0, dict(DEFAULT_SETTINGS)).reasons
+        seen += e.initial_stop("X", bars(drift=0.002, seed=5), 190.0, dict(DEFAULT_SETTINGS))["reasons"]
+        self.assertGreater(len(set(seen)), 8, "fixtures must exercise many different explanations")
+        for text in set(seen):
+            self.assertIsNone(re.search(self.JARGON, text, re.I), text)
+            self.assertNotRegex(text, r"\d+\.\d{3,}|[<>]=?\s*\d", text)       # no raw metrics
+            self.assertTrue(text.rstrip().endswith((".", ")")), text)
+
+    def test_raise_explanation_reads_like_a_sentence(self):
+        df = self.climber
+        d = e.decide("X", df, position(df, 60), float(df["Close"].iloc[-1]) * 0.5, dict(DEFAULT_SETTINGS))
+        self.assertEqual(d.action, "RAISE")
+        text = e.format_alert([d], "d")[0]
+        self.assertIn("Why: ", text)
+        self.assertIn("🟢⬆️", text)
+        self.assertNotIn("[", text.split("Why:")[0])                 # no [TIER] tag any more
+
     # --- breach window
     def test_breach_in_a_session_the_last_run_missed_is_alerted(self):
         df = self.climber.copy()
@@ -533,7 +565,7 @@ class Pipeline(unittest.TestCase):
         before = self.state()
         decisions, _ = self.go({"*": df})
         self.assertEqual(decisions[0].action, "SKIP")
-        self.assertIn("split detected", self.sent[0])
+        self.assertIn("stock split", self.sent[0])
         self.assertEqual(self.state(), before)
 
     # --- seeding semantics
@@ -542,6 +574,19 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(e.last_session_date(monday_morning).isoformat(), "2026-07-17")   # Friday
         self.assertEqual(e.last_session_date(datetime(2026, 7, 21, 17, 0, tzinfo=NY)).isoformat(), "2026-07-21")
         self.assertEqual(e.last_session_date(datetime(2026, 7, 21, 1, 0, tzinfo=NY)).isoformat(), "2026-07-20")
+
+    def test_stop_info_reports_previous_stop_only_after_a_raise(self):
+        p = self.add()
+        self.seed_low(p)
+        before = self.state()[0][1]
+        self.go()
+        info = e.stop_info(self.path)[p["id"]]
+        self.assertEqual(info["stop_last_action"], "RAISE")
+        self.assertAlmostEqual(info["stop_prev"], before)
+        self.assertGreater(info["stop"], info["stop_prev"])
+        self.assertNotIn(";", info["stop_why"])
+        self.go(force=True)                                         # next review: no change
+        self.assertIsNone(e.stop_info(self.path)[p["id"]]["stop_prev"])
 
     def test_log_index_exists(self):
         e.open_state(self.path).close()

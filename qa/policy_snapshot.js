@@ -35,7 +35,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
      /Browser tracker\s*115\.00/.test(text), text);
   ck('primary guidance separates the current stop from the next ladder action',
      /Current stop\s*₪116\.50/.test(text) &&
-       /Move your broker stop to 116\.50/.test(text) &&
+       /Move your broker stop up to 116\.50/.test(text) &&
        /Next: at ₪125\.00, move stop to ₪120\.00/.test(text) &&
        /EOD status: completed/.test(text), text);
   const details = inst.$('posList').querySelector('details.position-details');
