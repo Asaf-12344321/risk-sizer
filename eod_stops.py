@@ -976,6 +976,8 @@ def evaluate(db_path: str | Path, *, overrides_stop: Mapping[str, float] | None 
             etf = etfs.get(t)
             ctx = sector_context(bars.get(etf) if etf else None, etf, df)
             d = decide(t, df, p, prev, settings, ctx, since=since, asof=asof_ts)
+            if adopted and d.action == "RAISE":
+                d.action = "ENTRY"      # the first recorded stop is a starting stop, not a raise from a stop nobody placed
             if adopted and d.action != "SKIP":
                 d.notice, d.notice_kind = f"{t} ${d.new_stop:,.2f}" + ("*" if baseline else ""), "start"
                 if baseline:
