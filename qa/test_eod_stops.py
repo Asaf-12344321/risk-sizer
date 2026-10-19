@@ -139,6 +139,37 @@ class AlertTests(unittest.TestCase):
         self.assertIn("&gt;", e.format_alert([d], "d")[0])
 
 
+class InitialStopTests(unittest.TestCase):
+    def test_structural_stop_below_entry_with_justification(self):
+        df = bars(drift=0.002, seed=5)
+        entry = float(df["Close"].iloc[-1])
+        out = e.initial_stop("X", df, entry, dict(DEFAULT_SETTINGS))
+        if out["stop"] is not None:
+            self.assertLess(out["stop"], entry)
+            self.assertGreaterEqual(entry - out["stop"], 1.5 * out["atr"] - 0.01)
+            self.assertIn("support", out["justification"])
+
+    def test_far_support_is_flagged_extended(self):
+        df = bars(drift=0.002, seed=5)
+        entry = float(df["Close"].iloc[-1]) * 2.0          # price doubled away from all structure
+        out = e.initial_stop("X", df, entry, dict(DEFAULT_SETTINGS))
+        self.assertTrue(out["extended"])
+
+    def test_extended_limit_is_a_setting(self):
+        df = bars(drift=0.002, seed=5)
+        entry = float(df["Close"].iloc[-1]) * 1.3
+        loose = e.initial_stop("X", df, entry, dict(DEFAULT_SETTINGS, extendedpct=90))
+        tight = e.initial_stop("X", df, entry, dict(DEFAULT_SETTINGS, extendedpct=5))
+        if loose["stop"] is not None:
+            self.assertFalse(loose["extended"])
+            self.assertTrue(tight["extended"])
+
+    def test_short_history_has_no_stop(self):
+        out = e.initial_stop("X", bars().iloc[:40], 100.0, dict(DEFAULT_SETTINGS))
+        self.assertIsNone(out["stop"])
+        self.assertTrue(out["no_support"])
+
+
 class ThresholdTests(unittest.TestCase):
     def test_raise_needs_half_atr_and_one_and_half_percent(self):
         df = bars()

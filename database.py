@@ -38,6 +38,7 @@ DEFAULT_SETTINGS: dict[str, float] = {
     "minstop": 8,
     "maxstop": 30,
     "drawdown": 40,
+    "extendedpct": 22.5,
     "holddays": 90,
     "fx": 3.65,
 }

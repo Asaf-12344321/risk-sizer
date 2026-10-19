@@ -76,6 +76,43 @@ class RiskApiTests(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/api/positions/{position_id}", headers=self.headers).status_code, 204)
         self.assertEqual(self.client.delete(f"/api/core/{core_id}", headers=self.headers).status_code, 204)
 
+    def test_new_position_seeds_eod_stop_state(self):
+        import sqlite3
+        created = self.client.post("/api/positions", headers=self.headers, json={
+            "ticker": "abc", "entry_price": 100, "atr": 4, "quantity": 10, "value_ils": 3650,
+            "currency": "USD", "initial_stop": 91.5, "stop_source": "manual",
+        })
+        self.assertEqual(created.status_code, 201, created.text)
+        with sqlite3.connect(self.database.path) as conn:
+            row = conn.execute("SELECT ticker, stop, tier FROM eod_stop_state WHERE position_id = ?",
+                               (created.json()["id"],)).fetchone()
+        self.assertEqual(row, ("ABC", 91.5, "MANUAL"))
+
+    def test_position_without_stop_is_not_seeded_and_bad_stop_rejected(self):
+        ok = self.client.post("/api/positions", headers=self.headers, json={
+            "ticker": "OLD", "entry_price": 100, "atr": 4, "quantity": 1, "value_ils": 100})
+        self.assertEqual(ok.status_code, 201)
+        bad = self.client.post("/api/positions", headers=self.headers, json={
+            "ticker": "BAD", "entry_price": 100, "atr": 4, "quantity": 1, "value_ils": 100,
+            "initial_stop": 100})
+        self.assertEqual(bad.status_code, 422)
+
+    def test_stop_suggest_endpoint(self):
+        import numpy as np, pandas as pd
+        dates = pd.bdate_range("2025-06-02", periods=300)
+        rng = np.random.default_rng(2)
+        close = 100 * np.cumprod(1 + rng.normal(0.002, 0.012, 300))
+        cols = {("ZZZ", "Open"): close, ("ZZZ", "High"): close * 1.01, ("ZZZ", "Low"): close * 0.99,
+                ("ZZZ", "Close"): close, ("ZZZ", "Volume"): np.full(300, 1e6)}
+        frame = pd.DataFrame(cols, index=dates)
+        with patch.object(app_module, "market_data", lambda *a, **k: frame):
+            r = self.client.get("/api/stop/suggest", headers=self.headers,
+                                params={"ticker": "zzz", "entry_price": float(close[-1])})
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        self.assertIn("extended", body)
+        self.assertTrue(body["stop"] is None or body["stop"] < close[-1])
+
     def test_risk_evaluation_reads_portfolio_from_database(self):
         self.database.update_settings({"maxdailyvar": 1_000_000, "maxriskonr": 5})
         self.database.create_core({

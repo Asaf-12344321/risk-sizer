@@ -17,8 +17,9 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+import eod_stops
 from database import DEFAULT_SETTINGS, Database
 from quant_risk_engine import QuantitativeRiskEngine
 
@@ -97,9 +98,19 @@ class ActiveCreate(BaseModel):
     risk_status: str = "RISK_ON"
     rung: int = Field(default=0, ge=0)
     opened_at: date = Field(default_factory=date.today)
+    # The stop chosen at entry (structural, manual or ATR). Seeds the daily EOD job so the
+    # first alert compares against the stop actually placed. Optional: older clients omit it.
+    initial_stop: float | None = Field(default=None, gt=0)
+    stop_source: str = Field(default="ENTRY", max_length=16)
 
     _ticker = field_validator("ticker")(_normalise_symbol)
     _currency = field_validator("currency")(_normalise_currency)
+
+    @model_validator(mode="after")
+    def stop_below_entry(self) -> "ActiveCreate":
+        if self.initial_stop is not None and self.initial_stop >= self.entry_price:
+            raise ValueError("initial_stop must be below entry_price")
+        return self
 
     @field_validator("fx_ticker")
     @classmethod
@@ -295,10 +306,38 @@ def list_positions(_: Protected) -> list[dict[str, Any]]:
 def create_position(request: ActiveCreate, _: Protected) -> dict[str, Any]:
     values = request.model_dump()
     values["opened_at"] = values["opened_at"].isoformat()
+    initial_stop = values.pop("initial_stop")
+    stop_source = values.pop("stop_source").upper()
     try:
-        return db.create_active(values)
+        created = db.create_active(values)
     except sqlite3.IntegrityError as exc:
         raise _conflict(exc) from exc
+    if initial_stop is not None:
+        eod_stops.seed_stop(db.path, created["id"], created["ticker"], initial_stop, stop_source)
+    return created
+
+
+@app.get("/api/stop/suggest")
+async def suggest_stop(ticker: str, entry_price: float, _: Protected) -> dict[str, Any]:
+    """Structural initial stop for a trade being evaluated (same logic as the daily job)."""
+    try:
+        symbol = _normalise_symbol(ticker)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not entry_price > 0:
+        raise HTTPException(status_code=422, detail="entry_price must be positive")
+    settings = (await run_in_threadpool(db.get_settings))["settings"]
+
+    def compute() -> dict[str, Any]:
+        bars = eod_stops.download([symbol], market_data).get(symbol)
+        if bars is None or bars.empty:
+            raise ValueError(f"no price history for {symbol}")
+        return eod_stops.initial_stop(symbol, bars, entry_price, settings)
+
+    try:
+        return await run_in_threadpool(compute)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.put("/api/positions/{item_id}")

@@ -1214,6 +1214,19 @@
           <label for="in-beta">Beta <span class="opt">optional</span></label>
           <input type="number" inputmode="decimal" step="0.01" id="in-beta" placeholder="e.g. 1.16">
         </div>
+        <div class="row2">
+          <div class="field">
+            <label for="in-manual-stop">Your chart stop <span class="opt">optional</span></label>
+            <input type="number" inputmode="decimal" step="any" id="in-manual-stop" placeholder="blank = use technical stop">
+          </div>
+          <div class="field">
+            <label for="in-manual-unit">Stop is a</label>
+            <select id="in-manual-unit">
+              <option value="price">price</option>
+              <option value="pct">% below entry</option>
+            </select>
+          </div>
+        </div>
       </div>
     </details>
   </section>
@@ -1241,6 +1254,7 @@
       <div class="answer-label">Initial stop</div>
       <div class="answer-num" id="out-stopprice">—</div>
       <div class="answer-sub" id="out-stopsub"></div>
+      <div class="answer-sub" id="out-stopwhy"></div>
     </div>
     <div class="flag-row" id="out-flags"></div>
 
@@ -1402,6 +1416,10 @@
           <input type="number" inputmode="decimal" step="1" id="cfg-drawdown">
         </div>
         <div class="field">
+          <label for="cfg-extendedpct">Extended-from-support warn (% below entry)</label>
+          <input type="number" inputmode="decimal" step="0.5" id="cfg-extendedpct">
+        </div>
+        <div class="field">
           <label for="cfg-holddays">Warn when a position is older than (days)</label>
           <input type="number" inputmode="decimal" step="1" id="cfg-holddays">
         </div>
@@ -1472,6 +1490,7 @@
     // protection at all. -30% also tested best of every fixed depth on the real trade history.
     maxstop: 30,
     drawdown: 40,
+    extendedpct: 22.5,   // support further below entry than this = extended, poor R/R timing
     holddays: 90,       // your own history: the 90+ day bucket was the only losing one
     fx: 3.65
   };
@@ -1805,6 +1824,40 @@
   // ---- inputs ----
   var inPrice = el("in-price"), inCcy = el("in-ccy"), inFx = el("in-fx"), fxField = el("fx-field");
   var inAtr = el("in-atr"), inBeta = el("in-beta");
+  var inManualStop = el("in-manual-stop"), inManualUnit = el("in-manual-unit");
+  var outStopWhy = el("out-stopwhy");
+
+  // ---- structural initial stop (server: same support/volume/ADX logic as the daily job) --
+  // Keyed by ticker@price so a stale reply for a previous entry can never be shown.
+  var structural = { key: null, status: "idle", data: null };
+  var structTimer = null;
+  function structuralKey() {
+    var sym = (extra.feedSym || el("in-ticker").value || el("in-lookup").value || "").trim().toUpperCase();
+    var p = parseFloat(inPrice.value);
+    return sym && p > 0 ? sym + "@" + p : null;
+  }
+  function requestStructural() {
+    var key = structuralKey();
+    if (!key) { structural = { key: null, status: "idle", data: null }; return; }
+    if (structural.key === key && structural.status !== "idle") return;
+    structural = { key: key, status: "loading", data: null };
+    clearTimeout(structTimer);
+    structTimer = setTimeout(function () {
+      var parts = key.split("@");
+      apiFetch("/api/stop/suggest?ticker=" + encodeURIComponent(parts[0]) + "&entry_price=" + parts[1])
+        .then(function (d) { if (structural.key === key) { structural = { key: key, status: "ready", data: d }; recalc(); } })
+        .catch(function () { if (structural.key === key) { structural = { key: key, status: "failed", data: null }; recalc(); } });
+    }, 500);
+  }
+  // Manual stop: a price or a % below entry. Returns {price} / {error} / null (blank).
+  function manualStopFor(price) {
+    var raw = parseFloat(inManualStop.value);
+    if (!isFinite(raw)) return null;
+    var p = inManualUnit.value === "pct" ? price * (1 - raw / 100) : raw;
+    if (!(p > 0) || !(p < price)) return { error: "Your stop must be below the entry price" + (inManualUnit.value === "pct" ? " (use a % between 0 and 100)." : ".") };
+    return { price: p };
+  }
+  var TIMING_WARNING = "⚠️ Extended from support — poor R/R entry timing";
   var inPositionValue = el("in-position-value");
   var positionValueOverridden = false, currentSizing = null;
   var riskGateState = { status: "idle", approved: false, signature: null };
@@ -1833,6 +1886,7 @@
     outShares.textContent = msg;
     outStopPrice.textContent = "—";
     outStopSub.textContent = "";
+    outStopWhy.textContent = "";
     outSizeFormula.textContent = "";
     outLadder.innerHTML = "";
     outFlags.innerHTML = "";
@@ -1864,13 +1918,28 @@
     var stopPct = clamp(rawStopPct, cfg.minstop, cfg.maxstop);
     var stopPrice = price * (1 - stopPct / 100);
 
+    // Stop precedence: your own chart stop > structural (support/volume/ADX) > ATR ladder.
+    // A chosen stop is an exact exit price, so sizing uses its real distance — no 8% floor
+    // and no 30% ceiling, which exist only to tame the volatility formula.
+    requestStructural();
+    var manual = manualStopFor(price);
+    var st = (structural.status === "ready" && structural.key === structuralKey()) ? structural.data : null;
+    var stopSource = "ATR";
+    var chosenStopPrice = null;
+    if (manual && manual.price) { stopSource = "MANUAL"; chosenStopPrice = manual.price; }
+    else if (st && st.stop > 0 && st.stop < price) { stopSource = "STRUCTURAL"; chosenStopPrice = st.stop; }
+    if (chosenStopPrice) {
+      stopPrice = chosenStopPrice;
+      stopPct = (price - stopPrice) / price * 100;
+    }
+
     // Sizing uses the volatility-implied distance, with the FLOOR applied but NOT the
     // ceiling. Capping the stop at 30% limits where the order sits; it does nothing to
     // stop the price falling initmult x ATR. Sizing off the capped figure would assume a
     // protection the stop cannot deliver — on NBIS (49.5% implied) that understated the
     // real risk by two thirds, and made every name above 10% ATR the same size.
-    var riskStopPct = Math.min(Math.max(rawStopPct, cfg.minstop), 100);
-    var stopWasCapped = riskStopPct > stopPct + 0.01;
+    var riskStopPct = chosenStopPrice ? stopPct : Math.min(Math.max(rawStopPct, cfg.minstop), 100);
+    var stopWasCapped = !chosenStopPrice && riskStopPct > stopPct + 0.01;
 
     // ---- size: 1R / stop%, then the smallest cap wins
     var riskBudget = riskBudgetNis();
@@ -1899,17 +1968,26 @@
       outShares.textContent = "at " + pct(riskStopPct) + " implied risk, no position is small enough";
       return;
     }
-    currentSizing = { size: size, shares: shares, price: price, atr: atr, fx: fx };
+    currentSizing = { size: size, shares: shares, price: price, atr: atr, fx: fx,
+                      stop: stopPrice, stopSource: stopSource };
     if (!positionValueOverridden) inPositionValue.value = String(Math.round(size));
     outSize.textContent = nis(size);
     outShares.textContent = num(shares, shares < 10 ? 2 : 0) + " shares"
       + (inCcy.value === "USD" ? " · $" + num(inCcyAmt, 0) : "")
       + " · " + pct(size / cfg.capital * 100) + " of capital";
     outStopPrice.textContent = px(stopPrice);
-    outStopSub.textContent = pct(stopPct) + " below entry · risking " + nis(riskAmount)
+    outStopSub.textContent = (stopSource === "MANUAL" ? "your chart stop · "
+        : stopSource === "STRUCTURAL" ? "technical stop · " : "") + pct(stopPct) + " below entry · risking " + nis(riskAmount)
       + (stopWasCapped ? ", or " + nis(size * riskStopPct / 100) + " if it runs the full "
           + pct(riskStopPct) : "")
       + (binding === "risk-based" ? "" : " · size held down by the " + binding);
+    outStopWhy.textContent = stopSource === "MANUAL" ? "Using your stop. "
+        + (st && st.stop > 0 ? "Technical stop would be " + px(st.stop) + " — " + st.justification : "")
+      : stopSource === "STRUCTURAL" ? st.justification
+      : structural.status === "loading" ? "Looking up the technical stop…"
+      : structural.status === "failed" ? "Technical stop unavailable — using the ATR ladder."
+      : st && st.no_support ? "No valid support found — using the ATR ladder."
+      : "";
     el("summaryPosition").textContent = nis(size);
     el("summaryShares").textContent = num(shares, shares < 10 ? 2 : 0);
     el("summaryStop").textContent = px(stopPrice);
@@ -1955,6 +2033,14 @@
 
     // ---- at most two flags, and only when they change a decision
     var flags = [];
+    if (manual && manual.error) flags.push(["bad", manual.error + " Using the technical stop instead."]);
+    var noStopAtAll = !(manual && manual.price) && st && !(st.stop > 0);
+    if (st && (st.extended || noStopAtAll) && structural.status === "ready") {
+      flags.push(["bad", TIMING_WARNING + (st.no_support
+        ? ". No valid support found below this price."
+        : ". Nearest support " + px(st.support_hi) + " is " + pct(st.support_gap_pct)
+          + " below entry (limit " + cfg.extendedpct + "%).")]);
+    }
     // An ATR this small cannot be a DAILY ATR. Across 2,606 liquid US tickers the lowest
     // measured is about 0.27% of price (GBTG/DBRG). A value under the
     // floor almost always means an INTRADAY reading: Yahoo's chart computes ATR on
@@ -2009,7 +2095,7 @@
     extra.betaMeasured = isFinite(parseFloat(inBeta.value));
   });
 
-  [inPrice, inCcy, inFx, inAtr, inBeta].forEach(function (input) {
+  [inPrice, inCcy, inFx, inAtr, inBeta, inManualStop, inManualUnit].forEach(function (input) {
     input.addEventListener("input", recalc);
     input.addEventListener("change", recalc);
   });
@@ -2193,8 +2279,10 @@
   // ---- holistic quantitative risk gate ------------------------------------
   // The server reads Core and Active holdings from SQLite. The browser submits only the
   // proposed trade, so it cannot accidentally omit an existing position.
+  var riskTimerPending = false;
   function resetRiskGate(message) {
     clearTimeout(riskTimer);
+    riskTimerPending = false;
     riskGateState = { status: "idle", approved: false, signature: null };
     el("riskGate").dataset.state = "idle";
     el("riskVerdict").textContent = "WAITING";
@@ -2219,6 +2307,11 @@
   }
 
   function scheduleRiskEvaluation(immediate) {
+    // Same proposal already waiting out its debounce: a repeat recalc (e.g. the structural
+    // stop arriving) must not push the check back again.
+    var pending = currentRiskPayload();
+    if (!immediate && riskTimerPending && pending && !pending.error &&
+        riskGateState.status === "loading" && riskGateState.signature === riskSignature(pending)) return;
     clearTimeout(riskTimer);
     var payload = currentRiskPayload();
     if (!payload) {
@@ -2243,7 +2336,8 @@
     el("riskMetrics").hidden = true;
     el("riskReasons").textContent = "Fetching aligned returns and simulating the combined portfolio.";
     syncAddBtn();
-    riskTimer = setTimeout(function () { runRiskEvaluation(payload, signature); }, immediate ? 0 : 700);
+    riskTimerPending = true;
+    riskTimer = setTimeout(function () { riskTimerPending = false; runRiskEvaluation(payload, signature); }, immediate ? 0 : 700);
   }
 
   function runRiskEvaluation(payload, signature) {
@@ -2635,7 +2729,9 @@
         display_name: extra.name || null,
         quantity: valueIls / (price * fx), value_ils: valueIls,
         currency: inCcy.value === "USD" ? "USD" : "ILS", fx_to_ils: fx,
-        risk_status: "RISK_ON", legacy: false, rung: 0, opened_at: todayStr()
+        risk_status: "RISK_ON", legacy: false, rung: 0, opened_at: todayStr(),
+        initial_stop: currentSizing && currentSizing.stop > 0 ? Math.round(currentSizing.stop * 10000) / 10000 : null,
+        stop_source: currentSizing ? currentSizing.stopSource : "ENTRY"
       })
     }).then(function () {
       inTicker.value = "";

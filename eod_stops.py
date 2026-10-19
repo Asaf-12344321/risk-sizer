@@ -79,6 +79,8 @@ RULES: dict[str, float] = {
     "exhaustion_min_gain_atr": 2.0,  # exhaustion only matters once well in profit
     "chandelier_extra_tight_atr": 2.0,
     "tight_clearance_atr": 0.75,
+    "entry_min_atr_trend": 1.5,  # initial stop must sit this far (ATR) below entry in a clean trend
+    "entry_min_atr_chop": 2.0,   # ... and this far when ADX says range or downtrend
     "min_move_atr": 0.5,        # a raise must clear BOTH this many ATR ...
     "min_move_pct": 1.5,        # ... and this % of the current stop, else it is HOLD
 }
@@ -409,6 +411,71 @@ def decide(
     metrics = dict(atr=a, rsi=rsi_now, adx=adx_now, pdi=pdi, mdi=mdi, vol_ratio=vol_ratio,
                    poc=poc, ladder=ladder, dist_days=dist_days)
     return Decision(ticker, close, prev_stop, new_stop, tier, action, reasons, metrics)
+
+
+# ------------------------------------------------------------------- initial stop
+def initial_stop(ticker: str, df: pd.DataFrame, entry: float, settings: Mapping[str, float]) -> dict[str, Any]:
+    """Structural stop for a NEW position, from the same zones/volume/ADX as the daily job.
+
+    Picks the nearest qualified support whose stop sits far enough below entry to survive
+    normal noise (1.5 ATR in a clean uptrend, 2.0 ATR when ADX shows range or downtrend).
+    `extended` is True when that support is more than settings['extendedpct'] below entry:
+    the stock has run too far from structure, so any stop that respects structure makes a
+    poor risk/reward entry.  Returns stop=None when no qualified support exists."""
+    if len(df) < RULES["min_bars"]:
+        return {"ticker": ticker, "stop": None, "no_support": True, "extended": False,
+                "reasons": [f"only {len(df)} bars of history"], "justification": "not enough price history"}
+    a = float(atr(df).iloc[-1])
+    ax = adx(df)
+    adx_now, pdi, mdi = (float(ax[c].iloc[-1]) for c in ("adx", "pdi", "mdi"))
+    rsi_now = float(rsi(df["Close"]).iloc[-1])
+    trend_strong = adx_now >= RULES["adx_trend"] and pdi > mdi
+    downtrend = adx_now >= RULES["adx_range"] and mdi > pdi
+    regime = "uptrend" if trend_strong else "downtrend" if downtrend else "range/weak trend"
+    min_atr = RULES["entry_min_atr_trend"] if trend_strong else RULES["entry_min_atr_chop"]
+
+    hvn, _, poc = volume_profile(df, a)
+    zones = [z for z in support_zones(df, a, hvn)
+             if z.score >= RULES["min_zone_score"] and z.hi < entry]
+    zones.sort(key=lambda z: z.hi, reverse=True)
+    buf = RULES["stop_buffer_atr"] * a
+    chosen = next((z for z in zones if entry - (z.lo - buf) >= min_atr * a), None)
+    out: dict[str, Any] = {"ticker": ticker, "entry": entry, "atr": a, "adx": adx_now, "rsi": rsi_now,
+                           "regime": regime, "poc": poc, "last_close": float(df["Close"].iloc[-1]),
+                           "asof": df.index[-1].date().isoformat()}
+    ext_limit = float(settings.get("extendedpct", 22.5))
+    if chosen is None:
+        out.update(stop=None, no_support=True, extended=True, reasons=["no qualified support below entry"],
+                   justification="No valid structural support below this price.")
+        return out
+    stop = round(chosen.lo - buf, 4 if entry < 1 else 2)
+    support_gap = (entry - chosen.hi) / entry * 100
+    reasons = [f"below support {chosen.lo:.2f}-{chosen.hi:.2f} ({chosen.touches} touch"
+               f"{'es' if chosen.touches != 1 else ''}{', volume node' if chosen.hvn else ''})",
+               f"{regime}, ADX {adx_now:.0f}", f"stop {(entry - stop) / a:.1f} ATR from entry"]
+    if downtrend:
+        reasons.append("falling market structure - support may not hold")
+    out.update(stop=stop, no_support=False, extended=support_gap > ext_limit, support_lo=chosen.lo,
+               support_hi=chosen.hi, touches=chosen.touches, hvn=chosen.hvn,
+               support_gap_pct=support_gap, distance_pct=(entry - stop) / entry * 100,
+               reasons=reasons, justification="; ".join(reasons))
+    return out
+
+
+def seed_stop(db_path: str | Path, position_id: int, ticker: str, stop: float, source: str) -> None:
+    """Record the stop chosen at entry as the 'previous stop' for the daily job."""
+    conn = open_state(db_path)
+    try:
+        now = datetime.now(NY)
+        conn.execute(
+            """INSERT INTO eod_stop_state (position_id, ticker, stop, tier, asof, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(position_id) DO UPDATE SET stop=excluded.stop, tier=excluded.tier,
+                   asof=excluded.asof, updated_at=excluded.updated_at""",
+            (position_id, ticker, float(stop), source, now.date().isoformat(), now.isoformat(timespec="seconds")))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ------------------------------------------------------------------------------ data
