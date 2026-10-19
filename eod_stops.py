@@ -25,21 +25,33 @@ Decision flow (see RULES below for the numbers):
      max(0.5 x ATR, 1.5% of the current stop).  Smaller steps are not saved, so
      they accumulate until one clears the bar.
 
-Prices are unadjusted (auto_adjust=False) because broker stops are entered in
-real prices.  ATR is Wilder's over the full history, as in fetch_data.py.
+Prices come with auto_adjust=False (no dividend adjustment) because broker stops are
+entered in real prices.  Yahoo still rewrites history for SPLITS, so a split since the
+position was opened makes every stored price stale: those positions are SKIPped with an
+explicit message instead of producing a false BREACH/RAISE.  ATR is Wilder's over the
+full history, as in fetch_data.py.
+
+Schedule: the job runs the morning after each session (see deploy/risk-sizer-eod.timer).
+Broker stops only matter for the next session anyway, and by then Yahoo's volume and
+split data are settled.  Nothing is persisted until Telegram accepted every message, so a
+failed send is retried by simply running the job again.
 """
 from __future__ import annotations
 
 import argparse
 import html
 import json
+import math
 import os
+import re
 import sqlite3
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, time as dtime
+from datetime import date, datetime, time as dtime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Mapping
 from zoneinfo import ZoneInfo
@@ -116,7 +128,12 @@ def atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
 def rsi(close: pd.Series, n: int = 14) -> pd.Series:
     d = close.diff()
     up, dn = _wilder(d.clip(lower=0), n), _wilder((-d).clip(lower=0), n)
-    return 100 - 100 / (1 + up / dn.replace(0, np.nan))
+    out = 100 - 100 / (1 + up / dn.replace(0, np.nan))
+    # No down moves in the window is RSI 100 (and no moves at all is neutral), not "missing":
+    # a NaN here silently switched off every momentum test for the strongest uptrends.
+    warm = up.notna() & dn.notna()
+    out = out.where(~(warm & (dn == 0)), np.where(up > 0, 100.0, 50.0))
+    return out
 
 
 def adx(df: pd.DataFrame, n: int = 14) -> pd.DataFrame:
@@ -235,6 +252,8 @@ class Decision:
     action: str                      # RAISE | HOLD | BREACH | SKIP
     reasons: list[str] = field(default_factory=list)
     metrics: dict[str, float] = field(default_factory=dict)
+    notice: str | None = None        # one-off heads-up shown in the alert (adoption, ladder-only)
+    source: str | None = None        # stored in place of the tier name, e.g. "LADDER"
 
     @property
     def moved(self) -> bool:
@@ -258,6 +277,82 @@ def sector_context(sector: pd.DataFrame | None, etf: str | None, stock: pd.DataF
     return Context(etf=etf, weak=weak, note=note, stock_vs_sector_10d=rs)
 
 
+def _tick(price: float) -> float:
+    return 0.01 if price >= 1 else 0.0001
+
+
+def _round_tick(x: float, tick: float) -> float:
+    return round(round(x / tick) * tick, 4)
+
+
+def _floor_tick(x: float, tick: float) -> float:
+    return round(math.floor(x / tick + 1e-9) * tick, 4)
+
+
+def last_session_date(now: datetime | None = None) -> date:
+    """Date of the most recent weekday whose 16:00 New York close has already passed.
+    Holidays are not modelled: a holiday has no bar, so an earlier 'since' date costs nothing."""
+    now = (now or datetime.now(NY)).astimezone(NY)
+    d = now.date()
+    if now.time() < dtime(16, 0):
+        d -= timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+
+def split_since(df: pd.DataFrame, start: pd.Timestamp | None) -> tuple[str, float] | None:
+    """First split on/after `start`.  Uses Yahoo's 'Stock Splits' column; only when that column
+    is absent does it fall back to a >2x one-day close jump (a real crash must never be
+    mistaken for a split, because a split SKIPs the position and hides a breach)."""
+    window = df if start is None else df[df.index >= start]
+    if "Stock Splits" in df.columns:
+        hit = window["Stock Splits"].fillna(0)
+        hit = hit[hit > 0]
+        return (hit.index[0].date().isoformat(), float(hit.iloc[0])) if len(hit) else None
+    r = (df["Close"] / df["Close"].shift(1)).loc[window.index]
+    bad = r[(r < 0.5) | (r > 2.0)]
+    return (bad.index[0].date().isoformat(), float(bad.iloc[0])) if len(bad) else None
+
+
+def _breach(df: pd.DataFrame, prev_stop: float, since: pd.Timestamp | None) -> tuple[float, str] | None:
+    """Lowest low on every bar the recorded stop was in force (after `since`; just the last bar
+    when nothing is known), so a session missed by a failed run still reports its breach."""
+    window = df.tail(1) if since is None else df[df.index > since]
+    if window.empty:
+        return None
+    low = float(window["Low"].min())
+    return (low, window["Low"].idxmin().date().isoformat()) if low <= prev_stop else None
+
+
+def _skip(ticker: str, df: pd.DataFrame, prev_stop: float, reason: str) -> Decision:
+    close = float(df["Close"].iloc[-1]) if len(df) else 0.0
+    return Decision(ticker, close, prev_stop, prev_stop, NORMAL, "SKIP", [reason])
+
+
+def _ladder_only(ticker, df, pos, prev_stop, settings, since) -> Decision:
+    """Fewer than min_bars of history: no structure to trust, so trail by the plain ATR ladder."""
+    close = float(df["Close"].iloc[-1])
+    a_now = float(atr(df).iloc[-1]) if len(df) > 14 else float("nan")
+    a = a_now if math.isfinite(a_now) and a_now > 0 else float(pos["atr"])
+    ladder, _ = ladder_stop(df, pos, settings)
+    tick = _tick(close)
+    ceiling = _floor_tick(close - RULES["tight_clearance_atr"] * a, tick)
+    new_stop = max(prev_stop, min(_round_tick(ladder, tick), ceiling))
+    reasons = [f"only {len(df)} bars of history - ATR ladder only"]
+    hit = _breach(df, prev_stop, since)
+    if hit:
+        action, new_stop = "BREACH", prev_stop
+        reasons.insert(0, f"low {hit[0]:.2f} on {hit[1]} touched stop {prev_stop:.2f}"
+                          f" (close {close:.2f}) - confirm fill at broker")
+    elif new_stop - prev_stop >= max(RULES["min_move_atr"] * a, RULES["min_move_pct"] / 100 * prev_stop):
+        action = "RAISE"
+    else:
+        action, new_stop = "HOLD", prev_stop
+    return Decision(ticker, close, prev_stop, new_stop, NORMAL, action, reasons,
+                    dict(atr=a, ladder=ladder), source="LADDER")
+
+
 def decide(
     ticker: str,
     df: pd.DataFrame,
@@ -265,11 +360,27 @@ def decide(
     prev_stop: float,
     settings: Mapping[str, float],
     ctx: Context | None = None,
+    *,
+    since: pd.Timestamp | None = None,
+    asof: pd.Timestamp | None = None,
 ) -> Decision:
+    """`since`: date of the last review of this position (bars after it are checked for a
+    breach).  `asof`: newest session date across the download; a ticker behind it is stale."""
     ctx = ctx or Context()
+    if len(df) == 0:
+        return _skip(ticker, df, prev_stop, "no price data")
+    if asof is not None and df.index[-1] < asof:
+        return _skip(ticker, df, prev_stop,
+                     f"stale data - last bar {df.index[-1].date()}, market data is at {asof.date()}")
+    sp = split_since(df, pd.Timestamp(str(pos["opened_at"])[:10]))
+    if sp:
+        return _skip(ticker, df, prev_stop,
+                     f"split detected ({sp[0]}) - entry price, ATR and stop are pre-split; "
+                     f"update the position and re-enter the stop")
+    if not float(df["Volume"].iloc[-1]) > 0:
+        return _skip(ticker, df, prev_stop, "last bar has no volume - data not settled")
     if len(df) < RULES["min_bars"]:
-        return Decision(ticker, float(df["Close"].iloc[-1]) if len(df) else 0.0, prev_stop,
-                        prev_stop, NORMAL, "SKIP", [f"only {len(df)} bars of history"])
+        return _ladder_only(ticker, df, pos, prev_stop, settings, since)
 
     close = float(df["Close"].iloc[-1])
     entry = float(pos["entry_price"])
@@ -376,15 +487,16 @@ def decide(
         cand = max(cand, close - RULES["tight_clearance_atr"] * a)
 
     # --- combine: ratchet, cap under price, noise filter -------------------------
-    ceiling = close - RULES["tight_clearance_atr"] * a
-    new_stop = max(prev_stop, min(max(cand, ladder), ceiling))
-    tick = 0.01 if close >= 1 else 0.0001
-    new_stop = round(round(new_stop / tick) * tick, 4)
+    # Round the target to the tick FIRST, then cap it at the tick-floored ceiling, so rounding
+    # can never lift the stop above the cap.  prev_stop is kept exactly as recorded.
+    tick = _tick(close)
+    ceiling = _floor_tick(close - RULES["tight_clearance_atr"] * a, tick)
+    new_stop = max(prev_stop, min(_round_tick(max(cand, ladder), tick), ceiling))
 
-    breached = float(df["Low"].iloc[-1]) <= prev_stop
-    if breached:
+    hit = _breach(df, prev_stop, since)
+    if hit:
         action = "BREACH"
-        reasons.insert(0, f"low {df['Low'].iloc[-1]:.2f} touched stop {prev_stop:.2f}"
+        reasons.insert(0, f"low {hit[0]:.2f} on {hit[1]} touched stop {prev_stop:.2f}"
                           f" (close {close:.2f}) - confirm fill at broker")
         new_stop = prev_stop
     elif new_stop - prev_stop >= max(RULES["min_move_atr"] * a,
@@ -462,28 +574,6 @@ def initial_stop(ticker: str, df: pd.DataFrame, entry: float, settings: Mapping[
     return out
 
 
-def seed_stop(db_path: str | Path, position_id: int, ticker: str, stop: float, source: str,
-              note: str | None = None) -> None:
-    """Record the stop chosen at entry as the 'previous stop' for the daily job, with the
-    reason it was chosen, so the Positions tab and Telegram read the same record."""
-    conn = open_state(db_path)
-    try:
-        now = datetime.now(NY)
-        conn.execute(
-            """INSERT INTO eod_stop_state (position_id, ticker, stop, tier, asof, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?)
-               ON CONFLICT(position_id) DO UPDATE SET stop=excluded.stop, tier=excluded.tier,
-                   asof=excluded.asof, updated_at=excluded.updated_at""",
-            (position_id, ticker, float(stop), source, now.date().isoformat(), now.isoformat(timespec="seconds")))
-        conn.execute(
-            """INSERT INTO eod_stop_log (asof, position_id, ticker, new_stop, tier, action, reasons)
-               VALUES (?, ?, ?, ?, ?, 'ENTRY', ?)""",
-            (now.date().isoformat(), position_id, ticker, float(stop), source, json.dumps([note or f"{source} stop chosen at entry"])))
-        conn.commit()
-    finally:
-        conn.close()
-
-
 def stop_info(db_path: str | Path) -> dict[int, dict[str, Any]]:
     """Live stop per position id: the single record the Positions tab and the Telegram job share.
     `stop_why` is the reason of the latest ENTRY/RAISE, i.e. why the stop sits where it does;
@@ -514,12 +604,23 @@ def stop_info(db_path: str | Path) -> dict[int, dict[str, Any]]:
 
 
 # ------------------------------------------------------------------------------ data
+BAR_FINAL_AFTER = dtime(20, 0)   # NY: before this a bar dated today may still be forming/settling
+OHLCV = ["Open", "High", "Low", "Close", "Volume"]
+
+
 def completed_bars(df: pd.DataFrame, now: datetime | None = None) -> pd.DataFrame:
-    """Drop today's bar while the US market is still open so no indicator sees a partial day."""
+    """Keep only finished, settled sessions.  Today's bar is dropped until 20:00 New York
+    (Yahoo's same-day volume is provisional until well after the close); a run the next
+    morning, the normal schedule, keeps the previous session's completed bar.  Missing volume
+    becomes 0 so it cannot poison the volume profile; the decision step refuses a last bar
+    whose volume is 0."""
     now = (now or datetime.now(NY)).astimezone(NY)
     df = df.dropna(subset=["Open", "High", "Low", "Close"]).copy()
     df.index = pd.DatetimeIndex(pd.to_datetime(df.index)).tz_localize(None)
-    if len(df) and df.index[-1].date() == now.date() and now.time() < dtime(16, 10):
+    df["Volume"] = df["Volume"].fillna(0)
+    if "Stock Splits" in df.columns:
+        df["Stock Splits"] = df["Stock Splits"].fillna(0)
+    if len(df) and df.index[-1].date() == now.date() and now.time() < BAR_FINAL_AFTER:
         df = df.iloc[:-1]
     return df
 
@@ -528,13 +629,14 @@ def download(symbols: list[str], downloader: Callable[..., pd.DataFrame] | None 
     fetch = downloader or (yf.download if yf else None)
     if fetch is None:
         raise RuntimeError("yfinance is not installed")
-    raw = fetch(symbols, period="2y", interval="1d", auto_adjust=False,
+    raw = fetch(symbols, period="2y", interval="1d", auto_adjust=False, actions=True,
                 group_by="ticker", progress=False, threads=True)
     out: dict[str, pd.DataFrame] = {}
     for s in symbols:
         try:
             sub = raw[s] if isinstance(raw.columns, pd.MultiIndex) else raw
-            out[s] = completed_bars(sub[["Open", "High", "Low", "Close", "Volume"]])
+            cols = OHLCV + (["Stock Splits"] if "Stock Splits" in sub.columns else [])
+            out[s] = completed_bars(sub[cols])
         except (KeyError, ValueError):
             continue
     return out
@@ -551,82 +653,147 @@ def sector_etf_for(ticker: str, cache_path: Path, overrides: Mapping[str, str]) 
         except Exception:
             pass
         cache[ticker] = SECTOR_ETF.get(sector or "", "")
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(json.dumps(cache, indent=2, sort_keys=True))
+        try:                                  # a read-only data/ must not abort the job
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cache_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(cache, indent=2, sort_keys=True))
+            os.replace(tmp, cache_path)
+        except OSError:
+            pass
     return cache[ticker] or None
 
 
 # ----------------------------------------------------------------------------- state
-STATE_DDL = """
-CREATE TABLE IF NOT EXISTS eod_stop_state (
-    position_id INTEGER PRIMARY KEY,
-    ticker TEXT NOT NULL,
-    stop REAL NOT NULL,
-    tier TEXT,
-    asof TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS eod_stop_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    asof TEXT NOT NULL,
-    position_id INTEGER NOT NULL,
-    ticker TEXT NOT NULL,
-    close REAL, prev_stop REAL, new_stop REAL,
-    tier TEXT, action TEXT, reasons TEXT
-);
-"""
+STATE_STATEMENTS = (
+    """CREATE TABLE IF NOT EXISTS eod_stop_state (
+        position_id INTEGER PRIMARY KEY,
+        ticker TEXT NOT NULL,
+        stop REAL NOT NULL,
+        tier TEXT,
+        asof TEXT NOT NULL,
+        updated_at TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS eod_stop_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        asof TEXT NOT NULL,
+        position_id INTEGER NOT NULL,
+        ticker TEXT NOT NULL,
+        close REAL, prev_stop REAL, new_stop REAL,
+        tier TEXT, action TEXT, reasons TEXT)""",
+    "CREATE INDEX IF NOT EXISTS idx_eod_stop_log_position ON eod_stop_log(position_id, id)",
+    "CREATE TABLE IF NOT EXISTS eod_run_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+)
+
+
+def ensure_schema(conn: sqlite3.Connection) -> None:
+    """One statement at a time (never executescript) so it is safe inside an open transaction."""
+    for stmt in STATE_STATEMENTS:
+        conn.execute(stmt)
 
 
 def open_state(db_path: str | Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
-    conn.executescript(STATE_DDL)
+    conn.execute("PRAGMA busy_timeout = 10000")
+    ensure_schema(conn)
+    conn.commit()
     return conn
 
 
+def load_state(conn: sqlite3.Connection, position_id: int) -> sqlite3.Row | None:
+    return conn.execute("SELECT stop, tier, asof FROM eod_stop_state WHERE position_id = ?",
+                        (position_id,)).fetchone()
+
+
 def load_prev(conn: sqlite3.Connection, position_id: int) -> float | None:
-    row = conn.execute("SELECT stop FROM eod_stop_state WHERE position_id = ?", (position_id,)).fetchone()
+    row = load_state(conn, position_id)
     return float(row["stop"]) if row else None
+
+
+def last_run_asof(conn: sqlite3.Connection) -> str | None:
+    row = conn.execute("SELECT value FROM eod_run_state WHERE key = 'last_asof'").fetchone()
+    return row["value"] if row else None
 
 
 def save_state(conn: sqlite3.Connection, position_id: int, d: Decision, asof: str) -> None:
     now = datetime.now(NY).isoformat(timespec="seconds")
+    tier = d.source or TIER_NAME[d.tier]
     conn.execute(
         """INSERT INTO eod_stop_state (position_id, ticker, stop, tier, asof, updated_at)
            VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT(position_id) DO UPDATE SET stop=excluded.stop, tier=excluded.tier,
                asof=excluded.asof, updated_at=excluded.updated_at""",
-        (position_id, d.ticker, d.new_stop, TIER_NAME[d.tier], asof, now))
+        (position_id, d.ticker, d.new_stop, tier, asof, now))
     conn.execute(
         """INSERT INTO eod_stop_log (asof, position_id, ticker, close, prev_stop, new_stop, tier, action, reasons)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (asof, position_id, d.ticker, d.close, d.prev_stop, d.new_stop, TIER_NAME[d.tier],
+        (asof, position_id, d.ticker, d.close, d.prev_stop, d.new_stop, tier,
          d.action, json.dumps(d.reasons)))
+
+
+def seed_stop_conn(conn: sqlite3.Connection, position_id: int, ticker: str, stop: float, source: str,
+                   note: str | None = None, now: datetime | None = None) -> None:
+    """Record the stop chosen at entry as the 'previous stop' for the daily job, with the
+    reason it was chosen, so the Positions tab and Telegram read the same record.  Runs on the
+    caller's connection so it joins the caller's transaction (no second writer, no lock).
+    `asof` is the last completed session: the stop is in force from the next one."""
+    now = (now or datetime.now(NY)).astimezone(NY)
+    asof = last_session_date(now).isoformat()
+    ensure_schema(conn)
+    conn.execute(
+        """INSERT INTO eod_stop_state (position_id, ticker, stop, tier, asof, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(position_id) DO UPDATE SET stop=excluded.stop, tier=excluded.tier,
+               asof=excluded.asof, updated_at=excluded.updated_at""",
+        (position_id, ticker, float(stop), source, asof, now.isoformat(timespec="seconds")))
+    conn.execute(
+        """INSERT INTO eod_stop_log (asof, position_id, ticker, new_stop, tier, action, reasons)
+           VALUES (?, ?, ?, ?, ?, 'ENTRY', ?)""",
+        (asof, position_id, ticker, float(stop), source, json.dumps([note or f"{source} stop chosen at entry"])))
+
+
+def seed_stop(db_path: str | Path, position_id: int, ticker: str, stop: float, source: str,
+              note: str | None = None) -> None:
+    conn = open_state(db_path)
+    try:
+        with conn:
+            seed_stop_conn(conn, position_id, ticker, stop, source, note)
+    finally:
+        conn.close()
+
+
+def purge_position(conn: sqlite3.Connection, position_id: int) -> None:
+    """Drop a closed/deleted position's stop record and history (same transaction as the delete)."""
+    ensure_schema(conn)
+    conn.execute("DELETE FROM eod_stop_state WHERE position_id = ?", (position_id,))
+    conn.execute("DELETE FROM eod_stop_log WHERE position_id = ?", (position_id,))
 
 
 # --------------------------------------------------------------------------- message
 def format_alert(decisions: list[Decision], asof: str, quiet_when_no_changes: bool = True) -> list[str]:
     """One consolidated Telegram HTML message holding only actionable items: stops to
-    raise and breaches.  HOLD is never mentioned.  With nothing actionable the result is
-    empty (silent) or a single quiet line, per quiet_when_no_changes.  Positions that could
-    not be evaluated are appended as one footnote so a data failure is not mistaken for
+    raise, breaches and one-off notices.  HOLD is never mentioned.  With nothing actionable the
+    result is empty (silent) or a single quiet line, per quiet_when_no_changes.  Positions that
+    could not be evaluated are appended as one footnote so a data failure is not mistaken for
     'nothing to do'.  Split only if the message would exceed Telegram's 4096 limit."""
     breaches = [d for d in decisions if d.action == "BREACH"]
     raises = [d for d in decisions if d.action == "RAISE"]
     skipped = [d for d in decisions if d.action == "SKIP"]
-    if not breaches and not raises and not skipped:
+    notices = [d for d in decisions if d.notice]
+    if not breaches and not raises and not skipped and not notices:
         return [] if quiet_when_no_changes else ["✅ EOD Check: No stop adjustments required today."]
 
     blocks = []
     for d in breaches:
         blocks.append(f"🚨 <b>{html.escape(d.ticker)}</b>  ${d.close:,.2f}\n"
-                      f"Stop ${d.prev_stop:,.2f} touched today\n"
+                      f"Stop ${d.prev_stop:,.2f} touched\n"
                       f"Why: {html.escape('; '.join(d.reasons))}")
     for d in sorted(raises, key=lambda x: x.ticker):
         chg = (d.new_stop / d.prev_stop - 1) * 100
-        blocks.append(f"🔼 <b>{html.escape(d.ticker)}</b>  ${d.close:,.2f}  [{TIER_NAME[d.tier]}]\n"
+        blocks.append(f"🔼 <b>{html.escape(d.ticker)}</b>  ${d.close:,.2f}  [{d.source or TIER_NAME[d.tier]}]\n"
                       f"Prev ${d.prev_stop:,.2f} → <b>New ${d.new_stop:,.2f}</b> ({chg:+.1f}%)\n"
                       f"Why: {html.escape('; '.join(d.reasons))}")
+    for d in sorted(notices, key=lambda x: x.ticker):
+        blocks.append(f"ℹ️ <b>{html.escape(d.ticker)}</b>: {html.escape(d.notice or '')}")
     if skipped:
         blocks.append("⚠️ Not evaluated: " + html.escape(", ".join(
             f"{d.ticker} ({'; '.join(d.reasons)})" for d in skipped)))
@@ -643,27 +810,89 @@ def format_alert(decisions: list[Decision], asof: str, quiet_when_no_changes: bo
     return messages
 
 
-def send_telegram(messages: list[str], token: str, chat_id: str) -> None:
+class TelegramError(RuntimeError):
+    pass
+
+
+def _retry_after(err: urllib.error.HTTPError) -> float:
+    try:
+        return float(err.headers.get("Retry-After"))
+    except (TypeError, ValueError, AttributeError):
+        pass
+    try:
+        return float(json.loads(err.read().decode()).get("parameters", {}).get("retry_after"))
+    except Exception:
+        return 5.0
+
+
+def send_telegram(messages: list[str], token: str, chat_id: str, *, opener: Callable[..., Any] = urllib.request.urlopen,
+                  sleep: Callable[[float], None] = time.sleep, attempts: int = 4) -> None:
+    """Send every message or raise TelegramError.  Retries network errors and 5xx with
+    exponential backoff, honours 429 Retry-After, and on a 400 (Telegram rejected the markup)
+    resends that message once as plain text.  Errors are re-raised without the request URL,
+    which contains the bot token."""
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    for m in messages:
-        body = urllib.parse.urlencode({"chat_id": chat_id, "text": m, "parse_mode": "HTML",
-                                       "disable_web_page_preview": "true"}).encode()
-        with urllib.request.urlopen(urllib.request.Request(url, data=body), timeout=20) as r:
+
+    def post(text: str, parse_mode: str | None) -> None:
+        params = {"chat_id": chat_id, "text": text, "disable_web_page_preview": "true"}
+        if parse_mode:
+            params["parse_mode"] = parse_mode
+        req = urllib.request.Request(url, data=urllib.parse.urlencode(params).encode())
+        with opener(req, timeout=20) as r:
             if r.status != 200:
-                raise RuntimeError(f"telegram HTTP {r.status}")
+                raise TelegramError(f"telegram HTTP {r.status}")
+
+    for m in messages:
+        mode: str | None = "HTML"
+        text = m
+        for attempt in range(1, attempts + 1):
+            try:
+                post(text, mode)
+                break
+            except urllib.error.HTTPError as err:
+                if err.code == 400 and mode:
+                    mode, text = None, html.unescape(re.sub(r"<[^>]+>", "", m))
+                    continue                      # same attempt budget, plain text this time
+                if err.code == 429:
+                    wait = min(_retry_after(err), 120.0)
+                elif err.code >= 500:
+                    wait = 2.0 ** attempt
+                else:
+                    raise TelegramError(f"telegram HTTP {err.code}") from None
+                failure = f"telegram HTTP {err.code}"
+            except TelegramError:
+                raise
+            except (urllib.error.URLError, TimeoutError, OSError) as err:
+                wait, failure = 2.0 ** attempt, f"telegram unreachable ({type(err).__name__})"
+            if attempt == attempts:
+                raise TelegramError(f"{failure} after {attempts} attempts") from None
+            sleep(wait)
 
 
 # -------------------------------------------------------------------------- pipeline
-def run(db_path: str | Path, *, dry_run: bool, overrides_stop: Mapping[str, float] | None = None,
-        downloader: Callable[..., pd.DataFrame] | None = None,
-        sector_lookup: Callable[[str], str | None] | None = None) -> tuple[list[Decision], str]:
+@dataclass
+class Evaluation:
+    decisions: list[Decision]
+    asof: str
+    pending: list[tuple[int, Decision]] = field(default_factory=list)   # to persist after the send
+    seeds: list[tuple[int, str, float]] = field(default_factory=list)   # --set-stop records
+    advance_asof: bool = False
+    note: str = ""
+
+
+def evaluate(db_path: str | Path, *, overrides_stop: Mapping[str, float] | None = None, force: bool = False,
+             dry_run: bool = False, downloader: Callable[..., pd.DataFrame] | None = None,
+             sector_lookup: Callable[[str], str | None] | None = None,
+             now: datetime | None = None) -> Evaluation:
+    """Compute every decision without writing anything."""
     from database import Database
 
+    now = (now or datetime.now(NY)).astimezone(NY)
     db = Database(db_path)
     settings = db.get_settings()["settings"]
-    positions = [p for p in db.list_active()]
+    positions = list(db.list_active())
     if not positions:
-        return [], datetime.now(NY).date().isoformat()
+        return Evaluation([], now.date().isoformat(), note="no active positions")
 
     cache = ROOT / "data" / "sector_cache.json"
     ov_file = ROOT / "data" / "sector_overrides.json"
@@ -672,61 +901,143 @@ def run(db_path: str | Path, *, dry_run: bool, overrides_stop: Mapping[str, floa
     etfs = {p["ticker"]: lookup(p["ticker"]) for p in positions}
     symbols = sorted({p["ticker"] for p in positions} | {e for e in etfs.values() if e} | {MARKET})
     bars = download(symbols, downloader)
+    last_bars = [b.index[-1] for b in bars.values() if len(b)]
+    if not last_bars:
+        raise RuntimeError("no market data downloaded")
+    asof_ts = max(last_bars)
+    asof = asof_ts.date().isoformat()
 
+    forced_stops = dict(overrides_stop or {})
     conn = open_state(db_path)
-    decisions: list[Decision] = []
-    asof = max((b.index[-1] for b in bars.values() if len(b)), default=pd.Timestamp.now()).date().isoformat()
-    for p in positions:
-        t = p["ticker"]
-        df = bars.get(t)
-        if df is None or df.empty:
-            decisions.append(Decision(t, 0.0, 0.0, 0.0, NORMAL, "SKIP", ["no price data"]))
-            continue
-        forced = (overrides_stop or {}).get(t)
-        if forced and not dry_run:
-            seed_stop(db_path, p["id"], t, forced, "MANUAL", "stop set manually at the broker (--set-stop)")
-        prev = forced or load_prev(conn, p["id"])
-        if prev is None:
-            prev = ladder_stop(df, p, settings)[0]
-        etf = etfs.get(t)
-        ctx = sector_context(bars.get(etf) if etf else None, etf, df)
-        d = decide(t, df, p, prev, settings, ctx)
-        decisions.append(d)
-        if not dry_run and d.action != "SKIP":
-            save_state(conn, p["id"], d, asof)
-    if not dry_run:
-        conn.commit()
-    conn.close()
-    return decisions, asof
+    try:
+        last = last_run_asof(conn)
+        if last and asof <= last and not (force or forced_stops or dry_run):
+            return Evaluation([], asof, note=f"no new completed session since {last} (market holiday?)")
+
+        ev = Evaluation([], asof)
+        for p in positions:
+            t = p["ticker"]
+            forced = forced_stops.get(t)
+            if forced:
+                ev.seeds.append((p["id"], t, float(forced)))
+            df = bars.get(t)
+            if df is None or df.empty:
+                ev.decisions.append(Decision(t, 0.0, forced or 0.0, forced or 0.0, NORMAL, "SKIP", ["no price data"]))
+                continue
+            state = load_state(conn, p["id"])
+            adopted = False
+            if forced:
+                prev, since = float(forced), pd.Timestamp(last_session_date(now))
+            elif state:
+                prev, since = float(state["stop"]), pd.Timestamp(state["asof"])
+            else:
+                prev, since, adopted = ladder_stop(df, p, settings)[0], None, True
+            etf = etfs.get(t)
+            ctx = sector_context(bars.get(etf) if etf else None, etf, df)
+            d = decide(t, df, p, prev, settings, ctx, since=since, asof=asof_ts)
+            notes = []
+            if adopted and d.action != "SKIP":
+                notes.append(f"no recorded stop - adopted the ATR-ladder stop ${prev:,.2f}; "
+                             f"make sure the broker order matches")
+            if d.source == "LADDER" and (state is None or state["tier"] != "LADDER"):
+                notes.append(f"only {len(df)} bars of history (<{int(RULES['min_bars'])}) - trailing by the "
+                             f"ATR ladder only until technical stops unlock")
+            d.notice = "; ".join(notes) or None
+            ev.decisions.append(d)
+            if d.action != "SKIP":
+                ev.pending.append((p["id"], d))
+        # A SKIP is retryable (data gap): keep the run open so a rerun is not gated off.
+        ev.advance_asof = not any(d.action == "SKIP" for d in ev.decisions)
+        return ev
+    finally:
+        conn.close()
+
+
+def persist(db_path: str | Path, ev: Evaluation) -> None:
+    """Write every state change in ONE transaction on ONE connection."""
+    conn = open_state(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for pid, ticker, stop in ev.seeds:
+                seed_stop_conn(conn, pid, ticker, stop, "MANUAL", "stop set manually at the broker (--set-stop)")
+            for pid, d in ev.pending:
+                save_state(conn, pid, d, ev.asof)
+            if ev.advance_asof:
+                conn.execute("""INSERT INTO eod_run_state (key, value) VALUES ('last_asof', ?)
+                                ON CONFLICT(key) DO UPDATE SET value = MAX(value, excluded.value)""", (ev.asof,))
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+    finally:
+        conn.close()
+
+
+def run(db_path: str | Path, *, dry_run: bool, overrides_stop: Mapping[str, float] | None = None,
+        force: bool = False, downloader: Callable[..., pd.DataFrame] | None = None,
+        sector_lookup: Callable[[str], str | None] | None = None,
+        send: Callable[[list[str]], None] | None = None, quiet: bool = True,
+        now: datetime | None = None) -> tuple[list[Decision], str]:
+    """compute -> send -> persist.  `send` must raise on failure; nothing is written to the
+    database until it returned, so a failed alert is re-sent by the next run instead of lost."""
+    ev = evaluate(db_path, overrides_stop=overrides_stop, force=force, dry_run=dry_run,
+                  downloader=downloader, sector_lookup=sector_lookup, now=now)
+    if dry_run:
+        return ev.decisions, ev.asof
+    if send and ev.decisions:
+        msgs = format_alert(ev.decisions, ev.asof, quiet)
+        if msgs:
+            send(msgs)
+    if ev.pending or ev.seeds or ev.advance_asof:
+        persist(db_path, ev)
+    return ev.decisions, ev.asof
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--db", default=os.environ.get("RISK_SIZER_DB_PATH", str(ROOT / "data" / "risk_sizer.db")))
     ap.add_argument("--dry-run", action="store_true", help="print the alert, send nothing, save no state")
+    ap.add_argument("--force", action="store_true", help="run even if no new session has completed")
     ap.add_argument("--set-stop", action="append", default=[], metavar="TICKER=PRICE",
                     help="record the stop actually placed at the broker (use once to sync)")
     ap.add_argument("--json", action="store_true", help="print decisions as JSON")
+    ap.add_argument("--notify-failure", action="store_true",
+                    help="send a 'job failed' Telegram message (used by the systemd OnFailure unit)")
     a = ap.parse_args(argv)
     sys.path.insert(0, str(ROOT))
-    manual = {k.upper(): float(v) for k, v in (s.split("=") for s in a.set_stop)}
-    decisions, asof = run(a.db, dry_run=a.dry_run, overrides_stop=manual)
-    if not decisions:
-        print("no active positions")
+    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
+    if a.notify_failure:
+        if not (token and chat):
+            print("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set", file=sys.stderr)
+            return 1
+        send_telegram(["🚨 <b>Risk Sizer EOD job FAILED</b> - no stop review ran.\n"
+                       "Check: journalctl -u risk-sizer-eod -n 50"], token, chat)
         return 0
+    manual = {k.strip().upper(): float(v) for k, v in (s.split("=") for s in a.set_stop)}
     quiet = os.environ.get("QUIET_WHEN_NO_CHANGES", "true").strip().lower() not in ("0", "false", "no", "off")
-    msgs = format_alert(decisions, asof, quiet)
+    printed: list[str] = []
+
+    def send(msgs: list[str]) -> None:
+        if token and chat:
+            send_telegram(msgs, token, chat)
+        else:
+            print("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set - printing instead", file=sys.stderr)
+            print("\n\n".join(msgs))
+        printed.extend(msgs)
+
+    decisions, asof = run(a.db, dry_run=a.dry_run, overrides_stop=manual, force=a.force,
+                          send=send, quiet=quiet)
+    if not decisions:
+        print("no active positions or no new session - nothing to do")
+        return 0
     if a.json:
         print(json.dumps([d.__dict__ for d in decisions], default=float, indent=2))
-    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
-    if not msgs:
+    if a.dry_run:
+        msgs = format_alert(decisions, asof, quiet)
+        print("\n\n".join(msgs) if msgs else "nothing actionable - no alert sent")
+    elif not printed:
         print("nothing actionable - no alert sent")
-    elif a.dry_run or not (token and chat):
-        if not a.dry_run:
-            print("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set - printing instead", file=sys.stderr)
-        print("\n\n".join(msgs))
-    else:
-        send_telegram(msgs, token, chat)
     return 0
 
 

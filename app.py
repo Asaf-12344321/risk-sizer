@@ -314,13 +314,16 @@ def create_position(request: ActiveCreate, _: Protected) -> dict[str, Any]:
     initial_stop = values.pop("initial_stop")
     stop_source = values.pop("stop_source").upper()
     stop_note = values.pop("stop_note")
+    seed = None
+    if initial_stop is not None:
+        # Same transaction as the INSERT: the position never exists without its stop record,
+        # and there is no second writer connection to collide with the EOD job.
+        def seed(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+            eod_stops.seed_stop_conn(conn, row["id"], row["ticker"], initial_stop, stop_source, stop_note)
     try:
-        created = db.create_active(values)
+        return db.create_active(values, after_insert=seed)
     except sqlite3.IntegrityError as exc:
         raise _conflict(exc) from exc
-    if initial_stop is not None:
-        eod_stops.seed_stop(db.path, created["id"], created["ticker"], initial_stop, stop_source, stop_note)
-    return created
 
 
 @app.get("/api/stop/suggest")
@@ -362,7 +365,7 @@ def update_position(item_id: int, request: ActiveUpdate, _: Protected) -> dict[s
 
 @app.delete("/api/positions/{item_id}", status_code=204)
 def delete_position(item_id: int, _: Protected) -> Response:
-    if not db.delete_active(item_id):
+    if not db.delete_active(item_id, after_delete=eod_stops.purge_position):
         raise HTTPException(status_code=404, detail="Active position not found")
     return Response(status_code=204)
 

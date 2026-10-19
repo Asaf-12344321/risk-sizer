@@ -109,6 +109,45 @@ class RiskApiTests(unittest.TestCase):
             "initial_stop": 100})
         self.assertEqual(bad.status_code, 422)
 
+    POSITION = {"ticker": "abc", "entry_price": 100, "atr": 4, "quantity": 10, "value_ils": 3650,
+                "currency": "USD", "initial_stop": 91.5, "stop_source": "manual"}
+
+    def _eod_rows(self, table):
+        import sqlite3
+        with sqlite3.connect(self.database.path) as conn:
+            return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+
+    def test_position_and_stop_seed_are_one_transaction(self):
+        with patch.object(app_module.eod_stops, "seed_stop_conn", side_effect=RuntimeError("seed failed")):
+            with self.assertRaises(RuntimeError):
+                self.client.post("/api/positions", headers=self.headers, json=self.POSITION)
+        self.assertEqual(self.database.list_active(), [], "position survived a failed stop seed")
+
+    def test_creating_a_position_waits_for_a_busy_writer(self):
+        import sqlite3, threading, time
+        started = threading.Event()
+
+        def hold_write_lock():
+            conn = sqlite3.connect(self.database.path, timeout=10)
+            conn.execute("BEGIN IMMEDIATE")
+            started.set()
+            time.sleep(1.5)
+            conn.rollback()
+            conn.close()
+        t = threading.Thread(target=hold_write_lock)
+        t.start()
+        started.wait()
+        created = self.client.post("/api/positions", headers=self.headers, json=self.POSITION)
+        t.join()
+        self.assertEqual(created.status_code, 201, created.text)
+        self.assertEqual(self._eod_rows("eod_stop_state"), 1)
+
+    def test_deleting_a_position_removes_its_stop_record_and_history(self):
+        created = self.client.post("/api/positions", headers=self.headers, json=self.POSITION).json()
+        self.assertEqual((self._eod_rows("eod_stop_state"), self._eod_rows("eod_stop_log")), (1, 1))
+        self.assertEqual(self.client.delete(f"/api/positions/{created['id']}", headers=self.headers).status_code, 204)
+        self.assertEqual((self._eod_rows("eod_stop_state"), self._eod_rows("eod_stop_log")), (0, 0))
+
     def test_stop_suggest_endpoint(self):
         import numpy as np, pandas as pd
         dates = pd.bdate_range("2025-06-02", periods=300)

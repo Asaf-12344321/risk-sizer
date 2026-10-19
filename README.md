@@ -195,6 +195,17 @@ If the nearest support is more than *Extended-from-support warn* (default 22.5%)
 
 Saving a position sends the chosen stop to the server, which records it as the starting stop for the daily `eod_stops.py` job, so no `--set-stop` is needed for new trades.
 
+### Daily stop review (`eod_stops.py`)
+
+Runs from `deploy/risk-sizer-eod.timer` at **01:00 New York, Tue-Sat** (the morning after each session, about 07:00-08:00 Israel time). Broker stops only matter for the next session, and by then Yahoo's volume and split data are settled.
+
+- **Send first, save second.** The Telegram message (retried with backoff, `Retry-After` honoured, plain-text fallback if the markup is rejected) must be accepted before any stop is written. A failed run changes nothing, so the next run re-sends the alert. `OnFailure=` pings Telegram if the job itself crashes.
+- **Holidays and missed days.** No new completed session means no run. Breaches are checked against every bar since the position's last review, so a missed night is still caught. A ticker whose last bar is behind the others is reported as stale, not judged.
+- **Splits.** A split since the position was opened makes the stored entry, ATR and stop meaningless, so the position is reported as `split detected` and skipped. Fix the entry price/ATR/`opened_at` in the position (or re-add it), then `--set-stop TICKER=PRICE`.
+- **Short history.** Under 120 bars the job trails by the plain ATR ladder and says so once.
+- **Unseeded positions.** The first run adopts the ATR-ladder stop and tells you once, so you can confirm the broker order matches.
+- `--dry-run` computes and prints without saving; `--force` runs even when no new session has completed.
+
 ### Continuous crash assumption
 
 Risk Sizer derives a crash assumption continuously from ATR%. It interpolates between eight configurable anchors instead of assigning a manual Quality/Growth/Speculative tier.

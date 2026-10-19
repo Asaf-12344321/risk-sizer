@@ -10,7 +10,7 @@ import sqlite3
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Callable, Iterator, Mapping
 
 
 DEFAULT_SETTINGS: dict[str, float] = {
@@ -183,7 +183,13 @@ class Database:
             ).fetchall()
         return self._rows(rows)
 
-    def create_active(self, values: Mapping[str, Any]) -> dict[str, Any]:
+    def create_active(
+        self,
+        values: Mapping[str, Any],
+        after_insert: Callable[[sqlite3.Connection, dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
+        """`after_insert(connection, row)` runs inside the same transaction as the INSERT, so
+        related records (e.g. the EOD stop seed) are created atomically with the position."""
         now = _now()
         with self.connect() as connection:
             cursor = connection.execute(
@@ -204,6 +210,8 @@ class Database:
             row = connection.execute(
                 "SELECT * FROM active_positions WHERE id = ?", (cursor.lastrowid,)
             ).fetchone()
+            if after_insert is not None:
+                after_insert(connection, dict(row))
         return dict(row)
 
     def update_active(self, item_id: int, values: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -214,8 +222,10 @@ class Database:
         )
         return self._update("active_positions", item_id, values, fields)
 
-    def delete_active(self, item_id: int) -> bool:
-        return self._delete("active_positions", item_id)
+    def delete_active(
+        self, item_id: int, after_delete: Callable[[sqlite3.Connection, int], None] | None = None
+    ) -> bool:
+        return self._delete("active_positions", item_id, after_delete)
 
     def _update(
         self, table: str, item_id: int, values: Mapping[str, Any], fields: tuple[str, ...]
@@ -241,9 +251,14 @@ class Database:
             ).fetchone()
         return dict(row)
 
-    def _delete(self, table: str, item_id: int) -> bool:
+    def _delete(
+        self, table: str, item_id: int,
+        after_delete: Callable[[sqlite3.Connection, int], None] | None = None,
+    ) -> bool:
         with self.connect() as connection:
             cursor = connection.execute(f"DELETE FROM {table} WHERE id = ?", (item_id,))
+            if cursor.rowcount > 0 and after_delete is not None:
+                after_delete(connection, item_id)
         return cursor.rowcount > 0
 
     def get_settings(self) -> dict[str, Any]:
