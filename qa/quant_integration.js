@@ -19,14 +19,11 @@ const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
        !Object.prototype.hasOwnProperty.call(approved.w.__riskRequests[0], 'max_daily_var_ils'),
      JSON.stringify(approved.w.__riskRequests[0] || {}));
   ck('approved verdict is shown in green state',
-     approved.$('riskGate').dataset.state === 'approved' &&
-       approved.$('riskVerdict').textContent === 'APPROVED');
-  ck('incremental 99% VaR is rendered in ILS',
-     /1,000/.test(approved.$('riskIncrementalVar').textContent),
-     approved.$('riskIncrementalVar').textContent);
-  ck('server-calculated portfolio heat is rendered',
-     approved.$('riskPortfolioHeat').textContent === '1 / 5R',
-     approved.$('riskPortfolioHeat').textContent);
+    approved.$('riskGate').dataset.state === 'approved' &&
+       approved.$('riskVerdict').textContent === 'GOOD TO GO');
+  ck('risk gate gives a plain-language approval and keeps calculations hidden',
+     /Good to go/.test(approved.$('riskReasons').textContent) && approved.$('riskMetrics').hidden,
+     approved.$('riskReasons').textContent);
   ck('Track remains disabled until the matching risk request is approved',
      approved.$('addPosBtn').disabled === false);
 
@@ -45,6 +42,14 @@ const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
   ck('Settings navigation opens the SQLite-backed settings modal',
      approved.$('settingsPanel').open === true &&
        approved.$('tab-settings').getAttribute('aria-selected') === 'true');
+  ck('Settings exposes only the four owner-facing limits',
+     !approved.$('cfg-capital').closest('[hidden]') &&
+       !approved.$('cfg-riskabs').closest('[hidden]') &&
+       !approved.$('cfg-maxpct').closest('[hidden]') &&
+       !approved.$('cfg-maxdailyvar').closest('[hidden]') &&
+       approved.$('cfg-riskpct').closest('[hidden]') &&
+       approved.$('cfg-trailmult').closest('[hidden]'),
+     'technical safeguards remain internal');
   approved.set('cfg-maxriskonr', '7');
   await wait(300);
   ck('Risk-On budget changes persist through /api/settings',
@@ -86,15 +91,24 @@ const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
   rejected.set('in-ticker', 'HOT');
   await wait(850);
   ck('rejected verdict is shown in red state',
-     rejected.$('riskGate').dataset.state === 'rejected' &&
-       rejected.$('riskVerdict').textContent === 'REJECTED');
-  ck('specific correlation/VaR reasons are visible',
-     /Correlation Warning/.test(rejected.$('riskReasons').textContent) &&
-       /VaR REJECTION/.test(rejected.$('riskReasons').textContent));
+    rejected.$('riskGate').dataset.state === 'rejected' &&
+       rejected.$('riskVerdict').textContent === "DON'T ADD");
+  ck('rejected trade gets a plain-language reason instead of quantitative jargon',
+     /too similar/.test(rejected.$('riskReasons').textContent) &&
+       /bad day too expensive/.test(rejected.$('riskReasons').textContent) &&
+       !/VaR|rho|Correlation Warning/.test(rejected.$('riskReasons').textContent));
   ck('rejected trade cannot be tracked', rejected.$('addPosBtn').disabled === true);
 
-  ck('browser source contains no client persistence API',
-     !approved.w.document.documentElement.innerHTML.includes(['local', 'Storage'].join('')));
+  const source = approved.w.document.documentElement.innerHTML;
+  const storageCalls = [...source.matchAll(/localStorage\.(?:getItem|setItem|removeItem)\(([^)]*)\)/g)];
+  ck('browser persistence is limited to the API credential',
+     storageCalls.length > 0 && storageCalls.every(match => /^API_KEY_STORE\b/.test(match[1])));
+  ck('native stop alerts use an installable web app and a service worker',
+     /rel="manifest" href="\/manifest\.webmanifest"/.test(source) &&
+       /serviceWorker\.register\("\/service-worker\.js"/.test(source) &&
+       /Enable alerts/.test(source));
+  ck('stop-alert permission never leaves an inactive Enable button on screen',
+     /enableStopAlerts"\)\.hidden = enabled !== false/.test(source));
 
   report('QUANTITATIVE RISK INTEGRATION');
 })();

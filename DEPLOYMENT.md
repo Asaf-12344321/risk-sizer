@@ -28,6 +28,15 @@ sudo systemctl enable --now risk-sizer
 sudo systemctl status risk-sizer
 ```
 
+### Direct stop alerts
+
+Generate one VAPID key pair and place its public key, private key, and a contact subject
+in the root-readable environment file as `RISK_SIZER_VAPID_PUBLIC_KEY`,
+`RISK_SIZER_VAPID_PRIVATE_KEY`, and `RISK_SIZER_VAPID_SUBJECT`. The private key must
+never be committed, copied into a browser, or placed in GitHub Actions secrets. It is
+needed only by the application server to send Web Push after a finalized stop move.
+The browser receives only the public key when the owner enables alerts.
+
 The service intentionally uses one Uvicorn worker. SQLite supports concurrent readers
 and serialized writes, but multiple application processes add no value for this
 single-user workload. Put Caddy or Nginx in front of `127.0.0.1:8000` and expose only

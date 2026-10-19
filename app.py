@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import math
 import os
 import sqlite3
@@ -10,6 +11,7 @@ import time
 from datetime import date
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlparse
 
 import pandas as pd
 import yfinance as yf
@@ -22,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 import eod_stops
 from database import DEFAULT_SETTINGS, Database
 from quant_risk_engine import QuantitativeRiskEngine
+from stop_engine import build_policy_snapshot, har_parkinson_shadow, replay_post_close_stop
 
 
 ROOT = Path(__file__).resolve().parent
@@ -201,6 +204,42 @@ class TradeEvaluationRequest(BaseModel):
     _currency = field_validator("new_ticker_currency")(_normalise_currency)
 
 
+class PostCloseRequest(BaseModel):
+    """The caller supplies the finalized exchange session, never an intraday timestamp."""
+
+    as_of_session: date
+
+
+class PushSubscriptionKeys(BaseModel):
+    p256dh: str = Field(min_length=16, max_length=1024)
+    auth: str = Field(min_length=8, max_length=1024)
+
+
+class PushSubscriptionRequest(BaseModel):
+    endpoint: str = Field(min_length=12, max_length=4096)
+    keys: PushSubscriptionKeys
+
+    @field_validator("endpoint")
+    @classmethod
+    def validate_endpoint(cls, value: str) -> str:
+        parsed = urlparse(value)
+        if parsed.scheme != "https" or not parsed.netloc:
+            raise ValueError("push endpoint must be a secure HTTPS URL")
+        return value
+
+
+class PushSubscriptionDelete(BaseModel):
+    endpoint: str = Field(min_length=12, max_length=4096)
+
+    @field_validator("endpoint")
+    @classmethod
+    def validate_endpoint(cls, value: str) -> str:
+        parsed = urlparse(value)
+        if parsed.scheme != "https" or not parsed.netloc:
+            raise ValueError("push endpoint must be a secure HTTPS URL")
+        return value
+
+
 class CachedDownloader:
     """Process-local TTL cache so repeated UI checks reuse the same history."""
 
@@ -218,8 +257,12 @@ class CachedDownloader:
             if cached and now - cached[0] <= self.ttl_seconds:
                 return cached[1].copy()
         result = yf.download(tickers, **kwargs)
-        with self._lock:
-            self._cache[key] = (now, result.copy())
+        # Do not turn a transient provider failure into a 15-minute outage. Partial
+        # batch frames are still useful because the risk engine retries absent symbols
+        # individually; wholly empty responses should be attempted again next time.
+        if result is not None and not result.empty:
+            with self._lock:
+                self._cache[key] = (now, result.copy())
         return result
 
 
@@ -235,10 +278,132 @@ def require_api_key(x_api_key: Annotated[str | None, Header()] = None) -> None:
 
 Protected = Annotated[None, Depends(require_api_key)]
 
+
+def _push_config() -> dict[str, str] | None:
+    """Return only a complete, explicitly configured Web Push identity.
+
+    The private key is never sent to a browser.  Leaving any setting absent simply
+    leaves the display control disabled; it must never make the stop engine fail.
+    """
+    private_key = os.environ.get("RISK_SIZER_VAPID_PRIVATE_KEY", "").strip()
+    public_key = os.environ.get("RISK_SIZER_VAPID_PUBLIC_KEY", "").strip()
+    subject = os.environ.get("RISK_SIZER_VAPID_SUBJECT", "").strip()
+    if not all((private_key, public_key, subject)):
+        return None
+    return {"private_key": private_key, "public_key": public_key, "subject": subject}
+
+
+def _deliver_web_push(payload: dict[str, Any]) -> dict[str, int]:
+    """Deliver a visible push to each registered device, never affecting stops.
+
+    A browser can invalidate an endpoint when the app is removed.  404/410 are
+    expected lifecycle events, so remove only that dead endpoint and keep all other
+    subscriptions.  Other delivery failures are counted for diagnostics but cannot
+    make a finalized stop replay fail.
+    """
+    config = _push_config()
+    if config is None:
+        return {"sent": 0, "expired": 0, "failed": 0}
+    from pywebpush import WebPushException, webpush
+
+    summary = {"sent": 0, "expired": 0, "failed": 0}
+    for subscription in db.list_push_subscriptions():
+        try:
+            webpush(
+                subscription_info=subscription,
+                data=json.dumps(payload, separators=(",", ":")),
+                vapid_private_key=config["private_key"],
+                vapid_claims={"sub": config["subject"]},
+                ttl=60 * 60 * 12,
+                timeout=10,
+            )
+            summary["sent"] += 1
+        except WebPushException as exc:
+            response = getattr(exc, "response", None)
+            if getattr(response, "status_code", None) in {404, 410}:
+                db.delete_push_subscription(subscription["endpoint"])
+                summary["expired"] += 1
+            else:
+                summary["failed"] += 1
+        except Exception:
+            # A notification provider outage is not permission to alter a broker stop
+            # or to fail the scheduled post-close workflow.
+            summary["failed"] += 1
+    return summary
+
+
+def _send_stop_move_alert(position: dict[str, Any], stop: dict[str, Any]) -> dict[str, int]:
+    if not stop.get("actionable_alert_needed"):
+        return {"sent": 0, "expired": 0, "failed": 0}
+    name = position.get("display_name") or position["ticker"]
+    stop_price = float(stop["current_stop_price"])
+    return _deliver_web_push({
+        "title": "Risk Sizer",
+        "body": f"{name}: move stop to {stop_price:.2f}",
+        "tag": f"risk-sizer-stop-{position['id']}",
+        "url": "/",
+    })
+
 db = Database(DATABASE_PATH)
 db.initialize()
 market_data = CachedDownloader()
 app = FastAPI(title="Risk Sizer", version="6.0")
+
+
+def _daily_ohlc(ticker: str, as_of_session: date) -> pd.DataFrame:
+    """Return final adjusted daily OHLC through the requested session or fail closed."""
+    raw = market_data(
+        ticker, period="6y", interval="1d", auto_adjust=True, progress=False,
+        group_by="ticker", threads=False,
+    )
+    if raw is None or raw.empty:
+        raise RuntimeError(f"{ticker}: no daily OHLC returned")
+    if isinstance(raw.columns, pd.MultiIndex):
+        if ticker in raw.columns.get_level_values(0):
+            raw = raw[ticker]
+        else:
+            raw = raw.xs(ticker, axis=1, level=-1)
+    columns = {str(column).lower(): column for column in raw.columns}
+    required = {"open", "high", "low", "close"}
+    if not required.issubset(columns):
+        raise RuntimeError(f"{ticker}: daily OHLC is incomplete")
+    output = pd.DataFrame({name: pd.to_numeric(raw[column], errors="coerce") for name, column in columns.items() if name in required})
+    output.index = pd.to_datetime(output.index, errors="raise").tz_localize(None).normalize()
+    output = output.sort_index().loc[lambda frame: frame.index <= pd.Timestamp(as_of_session)]
+    if output.empty or output.index[-1] != pd.Timestamp(as_of_session):
+        raise RuntimeError(f"{ticker}: requested session {as_of_session.isoformat()} is not finalized")
+    return output
+
+
+def _snapshot_missing_positions() -> None:
+    """One-time explicit migration: freeze today’s persisted policy for legacy rows."""
+    settings = db.get_settings()["settings"]
+    for position in db.list_active():
+        if position.get("policy_snapshot") is None:
+            db.set_active_policy_snapshot(position["id"], build_policy_snapshot(position["atr"], settings))
+
+
+def _replay_post_close(position: dict[str, Any], as_of_session: date) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Persist one position's finalized EOD stop and reference-only HAR shadow record."""
+    ohlc = _daily_ohlc(position["ticker"], as_of_session)
+    held = ohlc.loc[ohlc.index >= pd.Timestamp(position["opened_at"])]
+    if held.empty:
+        raise RuntimeError("no finalized bars are available after the entry date")
+    bars = [
+        {"session": str(session.date()), "open": float(row.open), "high": float(row.high),
+         "low": float(row.low), "close": float(row.close)}
+        for session, row in held.iterrows()
+    ]
+    previous = db.latest_stop_update(position["id"])
+    previous_stop = previous["payload"]["current_stop_price"] if previous else None
+    stop = replay_post_close_stop(
+        entry_price=float(position["entry_price"]), policy_snapshot=position["policy_snapshot"],
+        bars=bars, previous_confirmed_stop_price=previous_stop,
+    )
+    shadow = har_parkinson_shadow(ohlc, as_of_session=as_of_session)
+    db.append_stop_update(position["id"], stop, shadow["source_hash"])
+    db.append_har_shadow_record(position["id"], shadow)
+    return stop, shadow
 
 cors_origins = [origin.strip() for origin in os.environ.get(
     "RISK_SIZER_CORS_ORIGINS",
@@ -258,9 +423,59 @@ def index() -> FileResponse:
     return FileResponse(ROOT / "index.html")
 
 
+@app.get("/manifest.webmanifest", include_in_schema=False)
+def web_manifest() -> FileResponse:
+    return FileResponse(ROOT / "manifest.webmanifest", media_type="application/manifest+json")
+
+
+@app.get("/service-worker.js", include_in_schema=False)
+def service_worker() -> FileResponse:
+    return FileResponse(ROOT / "service-worker.js", media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/risk-sizer-icon.svg", include_in_schema=False)
+def app_icon() -> FileResponse:
+    return FileResponse(ROOT / "risk-sizer-icon.svg", media_type="image/svg+xml")
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "storage": "sqlite"}
+
+
+@app.get("/api/notifications/config")
+def notification_config(_: Protected) -> dict[str, Any]:
+    config = _push_config()
+    return {"enabled": config is not None, "public_key": config["public_key"] if config else None}
+
+
+@app.post("/api/notifications/subscribe", status_code=201)
+def subscribe_notifications(request: PushSubscriptionRequest, _: Protected) -> dict[str, bool]:
+    if _push_config() is None:
+        raise HTTPException(status_code=503, detail="Stop alerts are not configured yet")
+    db.upsert_push_subscription(request.model_dump())
+    return {"subscribed": True}
+
+
+@app.delete("/api/notifications/subscribe", status_code=204)
+def unsubscribe_notifications(request: PushSubscriptionDelete, _: Protected) -> Response:
+    db.delete_push_subscription(request.endpoint)
+    return Response(status_code=204)
+
+
+@app.post("/api/notifications/test")
+def test_notification(_: Protected) -> dict[str, int]:
+    if _push_config() is None:
+        raise HTTPException(status_code=503, detail="Stop alerts are not configured yet")
+    if not db.list_push_subscriptions():
+        raise HTTPException(status_code=409, detail="Enable stop alerts on this phone first")
+    return _deliver_web_push({
+        "title": "Risk Sizer",
+        "body": "Alerts are on. You will be notified when a stop needs to move.",
+        "tag": "risk-sizer-test",
+        "url": "/",
+    })
 
 
 def _conflict(exc: sqlite3.IntegrityError) -> HTTPException:
@@ -300,6 +515,7 @@ def delete_core(item_id: int, _: Protected) -> Response:
 
 @app.get("/api/positions")
 def list_positions(_: Protected) -> list[dict[str, Any]]:
+    _snapshot_missing_positions()
     rows = db.list_active()
     info = eod_stops.stop_info(db.path)
     for row in rows:
@@ -311,6 +527,10 @@ def list_positions(_: Protected) -> list[dict[str, Any]]:
 def create_position(request: ActiveCreate, _: Protected) -> dict[str, Any]:
     values = request.model_dump()
     values["opened_at"] = values["opened_at"].isoformat()
+    # The browser does not send a policy. The server freezes its current persisted
+    # settings together with the entered ATR, so a later Settings edit cannot rewrite
+    # this position's live stop rule.
+    values["policy_snapshot"] = build_policy_snapshot(values["atr"], db.get_settings()["settings"])
     initial_stop = values.pop("initial_stop")
     stop_source = values.pop("stop_source").upper()
     stop_note = values.pop("stop_note")
@@ -352,6 +572,8 @@ async def suggest_stop(ticker: str, entry_price: float, _: Protected) -> dict[st
 @app.put("/api/positions/{item_id}")
 def update_position(item_id: int, request: ActiveUpdate, _: Protected) -> dict[str, Any]:
     values = request.model_dump(exclude_unset=True)
+    if {"entry_price", "atr"}.intersection(values):
+        raise HTTPException(status_code=409, detail="entry price and entry ATR are immutable after position creation")
     if isinstance(values.get("opened_at"), date):
         values["opened_at"] = values["opened_at"].isoformat()
     try:
@@ -361,6 +583,78 @@ def update_position(item_id: int, request: ActiveUpdate, _: Protected) -> dict[s
     if item is None:
         raise HTTPException(status_code=404, detail="Active position not found")
     return item
+
+
+@app.get("/api/positions/shadow")
+def list_position_shadows(_: Protected) -> dict[str, Any]:
+    """Reference-only records for the display card; they never reach a risk gate."""
+    return {str(position_id): record for position_id, record in db.latest_har_shadow_records().items()}
+
+
+@app.get("/api/positions/stops")
+def list_position_stops(_: Protected) -> dict[str, Any]:
+    """Latest frozen-policy EOD replay for comparison with the browser tracker."""
+    return {str(position["id"]): record["payload"] for position in db.list_active()
+            if (record := db.latest_stop_update(position["id"])) is not None}
+
+
+@app.post("/api/positions/post-close")
+def process_post_close_positions(request: PostCloseRequest, _: Protected) -> dict[str, Any]:
+    """Idempotently replay every open position after a finalized exchange session.
+
+    A non-trading session is reported as ``not_finalized`` rather than silently using a
+    prior close.  The scheduled caller can therefore distinguish a market holiday from
+    a genuine provider or data error while the stop engine always fails closed.
+    """
+    _snapshot_missing_positions()
+    processed: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    notifications = {"sent": 0, "expired": 0, "failed": 0}
+    for position in db.list_active():
+        try:
+            stop, _ = _replay_post_close(position, request.as_of_session)
+            delivery = _send_stop_move_alert(position, stop)
+            for key, value in delivery.items():
+                notifications[key] += value
+            processed.append({
+                "position_id": position["id"], "ticker": position["ticker"],
+                "current_stop_price": stop["current_stop_price"],
+                "actionable_alert_needed": stop["actionable_alert_needed"],
+            })
+        except (RuntimeError, ValueError) as exc:
+            message = str(exc)
+            failures.append({
+                "position_id": position["id"], "ticker": position["ticker"],
+                "code": "not_finalized" if "is not finalized" in message else "replay_error",
+                "detail": message,
+            })
+    return {
+        "as_of_session": request.as_of_session.isoformat(),
+        "processed": processed,
+        "failures": failures,
+        "notifications": notifications,
+        "sizing_or_var_inputs_changed": False,
+    }
+
+
+@app.post("/api/positions/{item_id}/post-close")
+def process_post_close_position(item_id: int, request: PostCloseRequest, _: Protected) -> dict[str, Any]:
+    """Run one finalized-session replay plus isolated shadow volatility calculation."""
+    _snapshot_missing_positions()
+    position = db.get_active(item_id)
+    if position is None:
+        raise HTTPException(status_code=404, detail="Active position not found")
+    try:
+        stop, shadow = _replay_post_close(position, request.as_of_session)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "position_id": item_id,
+        "stop_update": stop,
+        "har_parkinson_shadow": shadow,
+        "shadow_reference_only": True,
+        "sizing_or_var_inputs_changed": False,
+    }
 
 
 @app.delete("/api/positions/{item_id}", status_code=204)

@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
+import pandas as pd
 from fastapi.testclient import TestClient
 
 import app as app_module
@@ -36,6 +38,55 @@ class RiskApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/health").status_code, 200)
         self.assertEqual(self.client.get("/api/core").status_code, 401)
 
+    def test_native_stop_alert_subscription_and_test_delivery(self):
+        # The browser only receives the public VAPID key. The private key stays in the
+        # process environment and is consumed solely by the server-side sender.
+        configured = {
+            "RISK_SIZER_VAPID_PRIVATE_KEY": "private-test-key",
+            "RISK_SIZER_VAPID_PUBLIC_KEY": "public-test-key",
+            "RISK_SIZER_VAPID_SUBJECT": "https://risk-sizer.test",
+        }
+        with patch.dict(os.environ, configured, clear=False):
+            config = self.client.get("/api/notifications/config", headers=self.headers)
+            self.assertEqual(config.status_code, 200, config.text)
+            self.assertEqual(config.json(), {"enabled": True, "public_key": "public-test-key"})
+            invalid = self.client.post("/api/notifications/subscribe", headers=self.headers, json={
+                "endpoint": "http://not-secure.test/push", "keys": {"p256dh": "a" * 20, "auth": "b" * 12},
+            })
+            self.assertEqual(invalid.status_code, 422)
+            subscription = {
+                "endpoint": "https://push.example.test/subscription-1",
+                "keys": {"p256dh": "a" * 20, "auth": "b" * 12},
+            }
+            created = self.client.post("/api/notifications/subscribe", headers=self.headers, json=subscription)
+            self.assertEqual(created.status_code, 201, created.text)
+            self.assertEqual(len(self.database.list_push_subscriptions()), 1)
+            with patch.object(app_module, "_deliver_web_push", return_value={"sent": 1, "expired": 0, "failed": 0}) as send:
+                test = self.client.post("/api/notifications/test", headers=self.headers)
+            self.assertEqual(test.status_code, 200, test.text)
+            self.assertEqual(test.json()["sent"], 1)
+            self.assertEqual(send.call_args.args[0]["title"], "Risk Sizer")
+            deleted = self.client.request(
+                "DELETE", "/api/notifications/subscribe", headers=self.headers,
+                json={"endpoint": subscription["endpoint"]},
+            )
+            self.assertEqual(deleted.status_code, 204, deleted.text)
+            self.assertEqual(self.database.list_push_subscriptions(), [])
+
+    def test_stop_move_alert_only_sends_for_actionable_instruction(self):
+        position = {"id": 7, "ticker": "ASTS", "display_name": "AST SpaceMobile"}
+        with patch.object(app_module, "_deliver_web_push", return_value={"sent": 1, "expired": 0, "failed": 0}) as send:
+            quiet = app_module._send_stop_move_alert(position, {
+                "actionable_alert_needed": False, "current_stop_price": 42.04,
+            })
+            moved = app_module._send_stop_move_alert(position, {
+                "actionable_alert_needed": True, "current_stop_price": 44.25,
+            })
+        self.assertEqual(quiet["sent"], 0)
+        self.assertEqual(moved["sent"], 1)
+        self.assertEqual(send.call_count, 1)
+        self.assertEqual(send.call_args.args[0]["body"], "AST SpaceMobile: move stop to 44.25")
+
     def test_cors_preflight_allows_configured_mobile_origin_contract(self):
         response = self.client.options(
             "/api/positions",
@@ -67,7 +118,11 @@ class RiskApiTests(unittest.TestCase):
         })
         self.assertEqual(position.status_code, 201, position.text)
         self.assertTrue(position.json()["legacy"])
+        self.assertEqual(position.json()["policy_snapshot"]["entry_atr"], 3.0)
+        self.assertEqual(position.json()["policy_snapshot"]["trailmult"], 3.5)
         position_id = position.json()["id"]
+        immutable = self.client.put(f"/api/positions/{position_id}", headers=self.headers, json={"atr": 4})
+        self.assertEqual(immutable.status_code, 409)
         changed = self.client.put(
             f"/api/positions/{position_id}", headers=self.headers,
             json={"risk_status": "ARMED_ZERO_RISK"},
@@ -163,6 +218,44 @@ class RiskApiTests(unittest.TestCase):
         body = r.json()
         self.assertIn("extended", body)
         self.assertTrue(body["stop"] is None or body["stop"] < close[-1])
+
+    def test_post_close_endpoint_logs_stop_and_reference_only_har_shadow(self):
+        position = self.client.post("/api/positions", headers=self.headers, json={
+            "ticker": "COREA", "entry_price": 100, "atr": 3, "quantity": 100,
+            "value_ils": 10_000, "currency": "ILS", "opened_at": "2025-01-02",
+        }).json()
+        dates = pd.bdate_range("2025-01-02", periods=380)
+        prices = np.linspace(100, 150, len(dates))
+        bars = pd.DataFrame({"open": prices, "high": prices * 1.02,
+                             "low": prices * 0.98, "close": prices}, index=dates)
+        with patch.object(app_module, "_daily_ohlc", return_value=bars):
+            response = self.client.post(
+                f"/api/positions/{position['id']}/post-close", headers=self.headers,
+                json={"as_of_session": dates[-1].date().isoformat()},
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertTrue(body["shadow_reference_only"])
+        self.assertFalse(body["sizing_or_var_inputs_changed"])
+        self.assertIn("current_stop_price", body["stop_update"])
+        self.assertIn("delta_ticks", body["stop_update"])
+        self.assertIn("21", body["har_parkinson_shadow"]["forecasts"])
+        shadows = self.client.get("/api/positions/shadow", headers=self.headers)
+        self.assertIn(str(position["id"]), shadows.json())
+        latest_stop = self.client.get("/api/positions/stops", headers=self.headers)
+        self.assertEqual(latest_stop.status_code, 200, latest_stop.text)
+        self.assertEqual(latest_stop.json()[str(position["id"])]["current_stop_price"], body["stop_update"]["current_stop_price"])
+
+        # The scheduler calls the batch endpoint.  Replaying the same finalized session
+        # is idempotent and exposes a position-level result for operational logging.
+        with patch.object(app_module, "_daily_ohlc", return_value=bars):
+            batch = self.client.post(
+                "/api/positions/post-close", headers=self.headers,
+                json={"as_of_session": dates[-1].date().isoformat()},
+            )
+        self.assertEqual(batch.status_code, 200, batch.text)
+        self.assertEqual(batch.json()["processed"][0]["position_id"], position["id"])
+        self.assertFalse(batch.json()["sizing_or_var_inputs_changed"])
 
     def test_risk_evaluation_reads_portfolio_from_database(self):
         self.database.update_settings({"maxdailyvar": 1_000_000, "maxriskonr": 5})

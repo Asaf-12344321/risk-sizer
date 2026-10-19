@@ -1,0 +1,52 @@
+name: Run post-close stop engine
+
+# 22:15 UTC is after the regular US close in both EST and EDT.  The API rejects a
+# session that has not finalized, so this workflow never turns an intraday price into
+# a broker-stop instruction.
+on:
+  schedule:
+    - cron: "15 22 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      as_of_session:
+        description: "Finalized exchange session (YYYY-MM-DD); defaults to today UTC"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: post-close-stop-engine
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RISK_SIZER_API_URL: ${{ secrets.RISK_SIZER_API_URL }}
+      RISK_SIZER_API_KEY: ${{ secrets.RISK_SIZER_API_KEY }}
+      REQUESTED_SESSION: ${{ inputs.as_of_session }}
+    steps:
+      - name: Replay frozen policies against finalized daily bars
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$RISK_SIZER_API_URL" || { echo "RISK_SIZER_API_URL secret is missing"; exit 1; }
+          test -n "$RISK_SIZER_API_KEY" || { echo "RISK_SIZER_API_KEY secret is missing"; exit 1; }
+          session="${REQUESTED_SESSION:-$(date -u +%F)}"
+          [[ "$session" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "invalid session: $session"; exit 1; }
+          response="$(curl --fail-with-body --retry 3 --retry-all-errors --connect-timeout 15 \
+            -H "X-API-Key: $RISK_SIZER_API_KEY" -H 'Content-Type: application/json' \
+            --data "{\"as_of_session\":\"$session\"}" \
+            "$RISK_SIZER_API_URL/api/positions/post-close")"
+          echo "$response" | jq '{as_of_session, processed, failures}'
+          unexpected="$(echo "$response" | jq '[.failures[] | select(.code != "not_finalized")] | length')"
+          if [ "$unexpected" -ne 0 ]; then
+            echo "One or more positions could not be replayed. No stop was guessed."
+            exit 1
+          fi
+          if [ "$(echo "$response" | jq '.processed | length')" -eq 0 ]; then
+            echo "No finalized US session available; no stops changed."
+          fi

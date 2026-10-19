@@ -103,6 +103,7 @@ class Database:
                     risk_status TEXT NOT NULL DEFAULT 'RISK_ON'
                         CHECK(risk_status IN ('RISK_ON', 'ARMED_ZERO_RISK')),
                     rung INTEGER NOT NULL DEFAULT 0 CHECK(rung >= 0),
+                    policy_snapshot TEXT,
                     opened_at TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -113,6 +114,40 @@ class Database:
                     settings_json TEXT NOT NULL,
                     setup_complete INTEGER NOT NULL DEFAULT 0
                         CHECK(setup_complete IN (0, 1)),
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS post_close_stop_updates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    position_id INTEGER NOT NULL,
+                    as_of_session TEXT NOT NULL,
+                    engine_version TEXT NOT NULL,
+                    source_hash TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(position_id, as_of_session, engine_version)
+                );
+
+                CREATE TABLE IF NOT EXISTS har_parkinson_shadow_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    position_id INTEGER NOT NULL,
+                    as_of_session TEXT NOT NULL,
+                    model_version TEXT NOT NULL,
+                    source_hash TEXT NOT NULL,
+                    model_hash TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(position_id, as_of_session, model_version)
+                );
+
+                -- A subscription is an opaque browser-issued endpoint plus public
+                -- encryption material. It grants delivery only; it cannot read or
+                -- change any Risk Sizer data.
+                CREATE TABLE IF NOT EXISTS push_subscriptions (
+                    endpoint TEXT PRIMARY KEY,
+                    p256dh TEXT NOT NULL,
+                    auth TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
                 """
@@ -134,6 +169,8 @@ class Database:
                     "ALTER TABLE active_positions ADD COLUMN legacy INTEGER NOT NULL DEFAULT 0 "
                     "CHECK(legacy IN (0, 1))"
                 )
+            if "policy_snapshot" not in active_columns:
+                connection.execute("ALTER TABLE active_positions ADD COLUMN policy_snapshot TEXT")
             connection.execute(
                 """INSERT OR IGNORE INTO app_settings
                    (id, settings_json, setup_complete, updated_at)
@@ -143,7 +180,11 @@ class Database:
 
     @staticmethod
     def _rows(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
-        return [dict(row) for row in rows]
+        output = [dict(row) for row in rows]
+        for row in output:
+            if "policy_snapshot" in row and row["policy_snapshot"]:
+                row["policy_snapshot"] = json.loads(row["policy_snapshot"])
+        return output
 
     def list_core(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
@@ -167,7 +208,7 @@ class Database:
             row = connection.execute(
                 "SELECT * FROM core_portfolio WHERE id = ?", (cursor.lastrowid,)
             ).fetchone()
-        return dict(row)
+        return self._rows([row])[0]
 
     def update_core(self, item_id: int, values: Mapping[str, Any]) -> dict[str, Any] | None:
         fields = ("ticker", "value_ils", "currency", "fx_ticker", "display_name")
@@ -183,6 +224,14 @@ class Database:
             ).fetchall()
         return self._rows(rows)
 
+    def get_active(self, item_id: int) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM active_positions WHERE id = ?", (item_id,)).fetchone()
+        return self._rows([row])[0] if row is not None else None
+
+    def set_active_policy_snapshot(self, item_id: int, snapshot: Mapping[str, Any]) -> dict[str, Any] | None:
+        return self._update("active_positions", item_id, {"policy_snapshot": json.dumps(snapshot, sort_keys=True)}, ("policy_snapshot",))
+
     def create_active(
         self,
         values: Mapping[str, Any],
@@ -190,20 +239,28 @@ class Database:
     ) -> dict[str, Any]:
         """`after_insert(connection, row)` runs inside the same transaction as the INSERT, so
         related records (e.g. the EOD stop seed) are created atomically with the position."""
+        # API creation always supplies a server-captured snapshot.  This fallback
+        # preserves the repository's direct seeding/test API while still freezing the
+        # default policy at creation rather than reading it at replay time.
+        snapshot = values.get("policy_snapshot")
+        if snapshot is None:
+            from stop_engine import build_policy_snapshot
+            snapshot = build_policy_snapshot(float(values["atr"]), DEFAULT_SETTINGS)
         now = _now()
         with self.connect() as connection:
             cursor = connection.execute(
                 """INSERT INTO active_positions
                    (ticker, entry_price, atr, quantity, value_ils, currency,
-                    fx_to_ils, fx_ticker, display_name, legacy, risk_status, rung, opened_at,
-                    created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    fx_to_ils, fx_ticker, display_name, legacy, risk_status, rung, policy_snapshot,
+                    opened_at, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     values["ticker"], values["entry_price"], values["atr"],
                     values["quantity"], values["value_ils"], values["currency"],
                     values.get("fx_to_ils", 1), values.get("fx_ticker"),
                     values.get("display_name"), int(bool(values.get("legacy", False))),
                     values.get("risk_status", "RISK_ON"), values.get("rung", 0),
+                    json.dumps(snapshot, sort_keys=True),
                     values["opened_at"], now, now,
                 ),
             )
@@ -211,16 +268,89 @@ class Database:
                 "SELECT * FROM active_positions WHERE id = ?", (cursor.lastrowid,)
             ).fetchone()
             if after_insert is not None:
-                after_insert(connection, dict(row))
-        return dict(row)
+                after_insert(connection, self._rows([row])[0])
+        return self._rows([row])[0]
 
     def update_active(self, item_id: int, values: Mapping[str, Any]) -> dict[str, Any] | None:
         fields = (
-            "ticker", "entry_price", "atr", "quantity", "value_ils", "currency",
+            "ticker", "quantity", "value_ils", "currency",
             "fx_to_ils", "fx_ticker", "display_name", "legacy", "risk_status", "rung",
             "opened_at",
         )
         return self._update("active_positions", item_id, values, fields)
+
+    def latest_stop_update(self, position_id: int) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT * FROM post_close_stop_updates WHERE position_id = ?
+                   ORDER BY as_of_session DESC, id DESC LIMIT 1""",
+                (position_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        output = dict(row)
+        output["payload"] = json.loads(output.pop("payload_json"))
+        return output
+
+    def append_stop_update(self, position_id: int, payload: Mapping[str, Any], source_hash: str) -> dict[str, Any]:
+        now = _now()
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT OR REPLACE INTO post_close_stop_updates
+                   (position_id, as_of_session, engine_version, source_hash, payload_json, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (position_id, payload["as_of_session"], payload["engine_version"], source_hash,
+                 json.dumps(payload, sort_keys=True), now),
+            )
+        return self.latest_stop_update(position_id) or {}
+
+    def append_har_shadow_record(self, position_id: int, payload: Mapping[str, Any]) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT OR REPLACE INTO har_parkinson_shadow_records
+                   (position_id, as_of_session, model_version, source_hash, model_hash, payload_json, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (position_id, payload["as_of_session"], payload["model_version"], payload["source_hash"],
+                 payload["model_hash"], json.dumps(payload, sort_keys=True), _now()),
+            )
+
+    def latest_har_shadow_records(self) -> dict[int, dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT record.position_id, record.payload_json FROM har_parkinson_shadow_records AS record
+                   INNER JOIN (
+                       SELECT position_id, MAX(id) AS id
+                       FROM har_parkinson_shadow_records GROUP BY position_id
+                   ) AS latest ON latest.id = record.id"""
+            ).fetchall()
+        return {int(row["position_id"]): json.loads(row["payload_json"]) for row in rows}
+
+    def list_push_subscriptions(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT endpoint, p256dh, auth FROM push_subscriptions ORDER BY created_at"
+            ).fetchall()
+        return [
+            {"endpoint": row["endpoint"], "keys": {"p256dh": row["p256dh"], "auth": row["auth"]}}
+            for row in rows
+        ]
+
+    def upsert_push_subscription(self, subscription: Mapping[str, Any]) -> None:
+        now = _now()
+        keys = subscription["keys"]
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO push_subscriptions (endpoint, p256dh, auth, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(endpoint) DO UPDATE SET
+                       p256dh = excluded.p256dh, auth = excluded.auth, updated_at = excluded.updated_at""",
+                (subscription["endpoint"], keys["p256dh"], keys["auth"], now, now),
+            )
+
+    def delete_push_subscription(self, endpoint: str) -> bool:
+        with self.connect() as connection:
+            cursor = connection.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
+        return cursor.rowcount > 0
 
     def delete_active(
         self, item_id: int, after_delete: Callable[[sqlite3.Connection, int], None] | None = None
@@ -236,7 +366,7 @@ class Database:
                 row = connection.execute(
                     f"SELECT * FROM {table} WHERE id = ?", (item_id,)
                 ).fetchone()
-            return dict(row) if row else None
+            return self._rows([row])[0] if row else None
         changes["updated_at"] = _now()
         assignments = ", ".join(f"{key} = ?" for key in changes)
         parameters = [*changes.values(), item_id]
@@ -249,7 +379,7 @@ class Database:
             row = connection.execute(
                 f"SELECT * FROM {table} WHERE id = ?", (item_id,)
             ).fetchone()
-        return dict(row)
+        return self._rows([row])[0]
 
     def _delete(
         self, table: str, item_id: int,
