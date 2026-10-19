@@ -555,6 +555,8 @@ async def suggest_stop(ticker: str, entry_price: float, _: Protected) -> dict[st
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not entry_price > 0:
         raise HTTPException(status_code=422, detail="entry_price must be positive")
+    if eod_stops.is_excluded(symbol):
+        raise HTTPException(status_code=422, detail="Tel Aviv (.TA) tickers are not supported by the stop engine")
     settings = (await run_in_threadpool(db.get_settings))["settings"]
 
     def compute() -> dict[str, Any]:

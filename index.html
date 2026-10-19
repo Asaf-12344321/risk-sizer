@@ -2876,7 +2876,7 @@
 
   function stopSourceLabel(src) {
     var map = { STRUCTURAL: "technical stop set at entry", MANUAL: "your chart stop", ATR: "ATR stop set at entry",
-                ENTRY: "stop set at entry", LOOSE: "daily review (loose trail)",
+                ENTRY: "stop set at entry", BASELINE: "starting stop from the price at adoption", LADDER: "ATR ladder (short history)", LOOSE: "daily review (loose trail)",
                 NORMAL: "daily review (support trail)", TIGHT: "daily review (tight trail)" };
     return map[src] || src || "recorded stop";
   }
