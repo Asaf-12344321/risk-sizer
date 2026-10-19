@@ -454,12 +454,14 @@ class Pipeline(unittest.TestCase):
         self.assertGreater(entry_ladder, close, "fixture must start with a ladder stop above the market")
         decisions, _ = self.go({"*": falling})
         d = decisions[0]
-        self.assertNotEqual(d.action, "BREACH")
+        self.assertIn(d.action, ("ENTRY", "HOLD"))               # a starting stop, never a "raise" or breach
         self.assertLess(d.new_stop, close)
         self.assertGreater(d.new_stop, 0)
         self.assertEqual(self.state()[0][2], "BASELINE")
         self.assertIn(f"DOWN ${d.new_stop:,.2f}*", self.sent[0])
         self.assertNotIn("BREACH", self.sent[0])
+        self.assertNotIn("to raise", self.sent[0].replace("0 to raise", ""))
+        self.assertNotIn("🔼", self.sent[0])
         self.sent.clear()
         again, _ = self.go({"*": falling}, force=True)           # nothing new: quiet, still no breach
         self.assertEqual(again[0].action, "HOLD")
