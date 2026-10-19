@@ -22,7 +22,8 @@ Decision flow (see RULES below for the numbers):
      support.  It never sets a stop price by itself.
   4. new stop = max(previous stop, ATR-ladder floor, tier candidate), capped
      below the last close, and only reported as a move if it rises by at least
-     MIN_MOVE_ATR x ATR.
+     max(0.5 x ATR, 1.5% of the current stop).  Smaller steps are not saved, so
+     they accumulate until one clears the bar.
 
 Prices are unadjusted (auto_adjust=False) because broker stops are entered in
 real prices.  ATR is Wilder's over the full history, as in fetch_data.py.
@@ -78,7 +79,8 @@ RULES: dict[str, float] = {
     "exhaustion_min_gain_atr": 2.0,  # exhaustion only matters once well in profit
     "chandelier_extra_tight_atr": 2.0,
     "tight_clearance_atr": 0.75,
-    "min_move_atr": 0.25,       # smaller raises are noise, reported as HOLD
+    "min_move_atr": 0.5,        # a raise must clear BOTH this many ATR ...
+    "min_move_pct": 1.5,        # ... and this % of the current stop, else it is HOLD
 }
 
 LOOSE, NORMAL, TIGHT = 0, 1, 2
@@ -383,7 +385,8 @@ def decide(
         reasons.insert(0, f"low {df['Low'].iloc[-1]:.2f} touched stop {prev_stop:.2f}"
                           f" (close {close:.2f}) - confirm fill at broker")
         new_stop = prev_stop
-    elif new_stop - prev_stop >= RULES["min_move_atr"] * a:
+    elif new_stop - prev_stop >= max(RULES["min_move_atr"] * a,
+                                     RULES["min_move_pct"] / 100 * prev_stop):
         action = "RAISE"
         if s1 and tier >= NORMAL and abs(new_stop - (s1.lo - buf)) < 0.02:
             reasons.insert(0, f"trailing below support {s1.lo:.2f} "
@@ -500,38 +503,40 @@ def save_state(conn: sqlite3.Connection, position_id: int, d: Decision, asof: st
 
 
 # --------------------------------------------------------------------------- message
-ICON = {"RAISE": "🔼", "HOLD": "⏸", "BREACH": "🚨", "SKIP": "⚠️"}
+def format_alert(decisions: list[Decision], asof: str, quiet_when_no_changes: bool = True) -> list[str]:
+    """One consolidated Telegram HTML message holding only actionable items: stops to
+    raise and breaches.  HOLD is never mentioned.  With nothing actionable the result is
+    empty (silent) or a single quiet line, per quiet_when_no_changes.  Positions that could
+    not be evaluated are appended as one footnote so a data failure is not mistaken for
+    'nothing to do'.  Split only if the message would exceed Telegram's 4096 limit."""
+    breaches = [d for d in decisions if d.action == "BREACH"]
+    raises = [d for d in decisions if d.action == "RAISE"]
+    skipped = [d for d in decisions if d.action == "SKIP"]
+    if not breaches and not raises and not skipped:
+        return [] if quiet_when_no_changes else ["✅ EOD Check: No stop adjustments required today."]
 
-
-def format_alert(decisions: list[Decision], asof: str) -> list[str]:
-    """Telegram HTML messages, each under the 4096-char limit."""
-    head = f"<b>EOD stops · {html.escape(asof)}</b>"
-    moved = sum(d.moved for d in decisions)
-    breach = sum(d.action == "BREACH" for d in decisions)
-    head += f"\n{len(decisions)} positions · {moved} to raise" + (f" · <b>{breach} BREACH</b>" if breach else "")
-    order = {"BREACH": 0, "RAISE": 1, "HOLD": 2, "SKIP": 3}
     blocks = []
-    for d in sorted(decisions, key=lambda x: (order[x.action], x.ticker)):
-        t = html.escape(d.ticker)
-        if d.action == "SKIP":
-            blocks.append(f"{ICON['SKIP']} <b>{t}</b> skipped: {html.escape('; '.join(d.reasons))}")
-            continue
-        chg = (d.new_stop / d.prev_stop - 1) * 100 if d.prev_stop else 0
-        line = f"{ICON[d.action]} <b>{t}</b>  ${d.close:,.2f}  [{TIER_NAME[d.tier]}]\n"
-        if d.action == "RAISE":
-            line += f"Prev stop ${d.prev_stop:,.2f} → <b>New ${d.new_stop:,.2f}</b> ({chg:+.1f}%)\n"
-        elif d.action == "BREACH":
-            line += f"Stop ${d.prev_stop:,.2f} was touched today\n"
-        else:
-            line += f"Prev stop ${d.prev_stop:,.2f} → New ${d.new_stop:,.2f} (unchanged)\n"
-        line += "Why: " + html.escape("; ".join(d.reasons))
-        blocks.append(line)
+    for d in breaches:
+        blocks.append(f"🚨 <b>{html.escape(d.ticker)}</b>  ${d.close:,.2f}\n"
+                      f"Stop ${d.prev_stop:,.2f} touched today\n"
+                      f"Why: {html.escape('; '.join(d.reasons))}")
+    for d in sorted(raises, key=lambda x: x.ticker):
+        chg = (d.new_stop / d.prev_stop - 1) * 100
+        blocks.append(f"🔼 <b>{html.escape(d.ticker)}</b>  ${d.close:,.2f}  [{TIER_NAME[d.tier]}]\n"
+                      f"Prev ${d.prev_stop:,.2f} → <b>New ${d.new_stop:,.2f}</b> ({chg:+.1f}%)\n"
+                      f"Why: {html.escape('; '.join(d.reasons))}")
+    if skipped:
+        blocks.append("⚠️ Not evaluated: " + html.escape(", ".join(
+            f"{d.ticker} ({'; '.join(d.reasons)})" for d in skipped)))
+
+    head = (f"<b>EOD stops · {html.escape(asof)}</b>\n"
+            f"{len(raises)} to raise" + (f" · <b>{len(breaches)} BREACH</b>" if breaches else ""))
     messages, cur = [], head
-    for b in blocks:
-        if len(cur) + len(b) + 2 > 3900:
+    for blk in blocks:
+        if len(cur) + len(blk) + 2 > 3900:
             messages.append(cur)
             cur = ""
-        cur += ("\n\n" if cur else "") + b
+        cur += ("\n\n" if cur else "") + blk
     messages.append(cur)
     return messages
 
@@ -604,11 +609,14 @@ def main(argv: list[str] | None = None) -> int:
     if not decisions:
         print("no active positions")
         return 0
-    msgs = format_alert(decisions, asof)
+    quiet = os.environ.get("QUIET_WHEN_NO_CHANGES", "true").strip().lower() not in ("0", "false", "no", "off")
+    msgs = format_alert(decisions, asof, quiet)
     if a.json:
         print(json.dumps([d.__dict__ for d in decisions], default=float, indent=2))
     token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
-    if a.dry_run or not (token and chat):
+    if not msgs:
+        print("nothing actionable - no alert sent")
+    elif a.dry_run or not (token and chat):
         if not a.dry_run:
             print("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set - printing instead", file=sys.stderr)
         print("\n\n".join(msgs))

@@ -103,18 +103,55 @@ class DecisionTests(unittest.TestCase):
 
 
 class AlertTests(unittest.TestCase):
-    def test_chunks_under_telegram_limit(self):
-        ds = [e.Decision(f"T{i}", 50.0, 40.0, 45.0, e.NORMAL, "RAISE",
-                         ["trailing below support 44.00 (3 touches)", "x" * 120]) for i in range(80)]
+    @staticmethod
+    def dec(tk, action, prev=40.0, new=45.0):
+        return e.Decision(tk, 50.0, prev, new, e.NORMAL, action, ["trailing below support 44.00"])
+
+    def test_only_actionable_in_one_message(self):
+        ds = [self.dec("UP", "RAISE"), self.dec("SIT", "HOLD", new=40.0), self.dec("BAD", "BREACH", new=40.0)]
         msgs = e.format_alert(ds, "2026-10-16")
-        self.assertGreater(len(msgs), 1)
-        self.assertTrue(all(len(m) < 4096 for m in msgs))
-        self.assertIn("Prev stop $40.00", msgs[0])
+        self.assertEqual(len(msgs), 1)
+        self.assertIn("UP", msgs[0])
+        self.assertIn("BAD", msgs[0])
+        self.assertNotIn("SIT", msgs[0])
+        self.assertLess(msgs[0].index("BAD"), msgs[0].index("UP"))   # breach first
+        self.assertIn("Prev $40.00", msgs[0])
         self.assertIn("New $45.00", msgs[0])
 
+    def test_silent_or_quiet_line_when_nothing_to_do(self):
+        ds = [self.dec("SIT", "HOLD", new=40.0)]
+        self.assertEqual(e.format_alert(ds, "d"), [])
+        self.assertEqual(e.format_alert(ds, "d", quiet_when_no_changes=False),
+                         ["✅ EOD Check: No stop adjustments required today."])
+
+    def test_skip_is_not_silent(self):
+        d = e.Decision("NODATA", 0, 0, 0, e.NORMAL, "SKIP", ["no price data"])
+        self.assertIn("NODATA", e.format_alert([d], "d")[0])
+
+    def test_chunks_under_telegram_limit(self):
+        ds = [self.dec(f"T{i}", "RAISE") for i in range(80)]
+        msgs = e.format_alert(ds, "d")
+        self.assertGreater(len(msgs), 1)
+        self.assertTrue(all(len(m) < 4096 for m in msgs))
+
     def test_html_escaped(self):
-        d = e.Decision("A&B", 1.0, 1.0, 1.0, e.NORMAL, "HOLD", ["-DI > +DI"])
+        d = e.Decision("A&B", 1.0, 1.0, 2.0, e.NORMAL, "RAISE", ["-DI > +DI"])
         self.assertIn("&gt;", e.format_alert([d], "d")[0])
+
+
+class ThresholdTests(unittest.TestCase):
+    def test_raise_needs_half_atr_and_one_and_half_percent(self):
+        df = bars()
+        pos = position(df)
+        st = dict(DEFAULT_SETTINGS)
+        prev = e.ladder_stop(df, pos, st)[0]
+        for cut in range(150, 300, 5):
+            d = e.decide("X", df.iloc[:cut], pos, prev, st)
+            if d.action == "RAISE":
+                step = d.new_stop - prev
+                self.assertGreaterEqual(step + 0.01, 0.5 * d.metrics["atr"])
+                self.assertGreaterEqual(step + 0.01, 0.015 * prev)
+                prev = d.new_stop
 
 
 if __name__ == "__main__":
