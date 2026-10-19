@@ -436,6 +436,8 @@
   }
   .position-stop span, .position-state span { display: block; color: var(--text-dim); font-size: 12px; }
   .position-stop strong { color: var(--accent); font: 700 28px/1 var(--font-mono); }
+  .stop-up { color: var(--good); font-weight: 700; }
+  .position-stop .stop-up { display: inline; margin-left: 8px; font-size: 14px; }
   .position-state { padding: 2px 2px 0; font-size: 14px; }
   .position-state strong { display: block; margin-bottom: 2px; }
   .position-state.danger strong { color: var(--bad); }
@@ -2614,7 +2616,7 @@
       // The daily Telegram job's recorded stop (eod_stop_state).
       srvStop: row.stop > 0 ? Number(row.stop) : null, stopSource: row.stop_source || null,
       stopAsof: row.stop_asof || null, stopWhy: row.stop_why || null,
-      stopLast: row.stop_last_action || null
+      stopLast: row.stop_last_action || null, stopPrev: row.stop_prev > 0 ? Number(row.stop_prev) : null
     };
   }
 
@@ -2809,12 +2811,15 @@
         + '<button class="ghost-btn" type="button" data-act="edit" data-i="' + i + '">Edit</button>'
         + '<button class="danger-ghost" type="button" data-act="close" data-i="' + i + '">Delete</button>'
         + "</div></div>"
-        + '<div class="position-stop"><span>Current stop</span><strong>' + positionPx(shownStop) + "</strong></div>";
+        + '<div class="position-stop"><span>Current stop</span><strong>' + positionPx(shownStop) + "</strong>"
+        + (recorded && p.stopLast === "RAISE" && p.stopPrev !== null
+            ? '<span class="stop-up">▲ up from ' + positionPx(p.stopPrev) + "</span>" : "") + "</div>";
 
       if (hit) {
         out += '<div class="position-state danger"><strong>Stop hit — close this position.</strong><span>Do not wait for another signal.</span></div>';
       } else if (recorded ? p.stopLast === "RAISE" : eod && eod.actionable_alert_needed) {
-        out += '<div class="position-state good"><strong>Move your broker stop to ' + px(shownStop) + '.</strong><span>This is today’s after-close update.</span></div>';
+        out += '<div class="position-state good"><strong><span class="stop-up">▲</span> Move your broker stop up to ' + px(shownStop) + '.</strong><span>'
+          + (recorded && p.stopWhy ? esc(p.stopWhy) : "This is today’s after-close update.") + "</span></div>";
       } else {
         out += '<div class="position-state"><strong>All set.</strong><span>'
           + ((recorded || eod) ? "Updated after market close." : "Updates after market close.") + "</span></div>";
@@ -2828,7 +2833,7 @@
             + positionPx(nextStep.stop) + '</b>.'
           : 'Next: ladder complete; keep the stop at <b>' + positionPx(shownStop) + '</b>.')
         + '<br><span class="eod-status">EOD status: '
-        + (recorded ? (p.stopLast || "recorded").toLowerCase() + (p.stopAsof ? " · " + esc(p.stopAsof) : "")
+        + (recorded ? ({ RAISE: "stop moved up", HOLD: "no change", BREACH: "stop reached", ENTRY: "starting stop" }[p.stopLast] || "recorded") + (p.stopAsof ? " · " + esc(p.stopAsof) : "")
                     : eod ? "completed" : "waiting")
         + "</span></div>";
 

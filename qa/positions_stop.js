@@ -38,7 +38,8 @@ const wait = (ms) => new Promise(r => setTimeout(r, ms));
   // The recorded stop wins over the post-close engine and the browser ladder, everywhere on the card.
   const d = boot({ positions: [
       { id: 1, ticker: 'REC', entry_price: 100, atr: 5, quantity: 10, value_ils: 5000, currency: 'ILS',
-        opened_at: '2026-09-01', stop: 112.5, stop_source: 'NORMAL', stop_asof: '2026-10-16', stop_last_action: 'RAISE' },
+        opened_at: '2026-09-01', stop: 112.5, stop_source: 'NORMAL', stop_asof: '2026-10-16', stop_last_action: 'RAISE',
+        stop_prev: 100, stop_why: 'Following the price up: the stop trails a comfortable distance below its highest close ($130.00).' },
       { id: 2, ticker: 'NEW', entry_price: 100, atr: 5, quantity: 10, value_ils: 5000, currency: 'ILS',
         opened_at: '2026-09-01' }],
     stops: { 1: { current_stop_price: 99, actionable_alert_needed: false, position_exit_detected: true },
@@ -52,7 +53,10 @@ const wait = (ms) => new Promise(r => setTimeout(r, ms));
   ck('recorded stop is shown even when the post-close engine disagrees', stopOf(rec) === '₪112.50', stopOf(rec));
   ck('post-close engine exit flag cannot contradict the recorded stop', !/Stop hit/.test(rec));
   ck('a RAISE from the daily job is presented as the move-your-broker-stop action',
-     /Move your broker stop to 112\.50/.test(rec));
+     /Move your broker stop up to 112\.50/.test(rec));
+  ck('a raised stop shows a green up-arrow with the previous stop', /stop-up">▲ up from ₪100\.00/.test(rec) || /stop-up">▲ up from/.test(rec), rec.slice(0, 400));
+  ck('the plain-language reason is shown with the raise', /Following the price up/.test(rec), rec.slice(0, 600));
+  ck('a position that did not move has no green arrow', !/stop-up/.test(fresh));
   ck('no ladder guidance next to a recorded stop', !/Next: at/.test(rec) && /only moves when the daily review/.test(rec));
   ck('position with no record falls back to the post-close engine stop', stopOf(fresh) === '₪97.25', stopOf(fresh));
 

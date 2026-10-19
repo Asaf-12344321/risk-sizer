@@ -29,7 +29,7 @@ function boot({ capital = D_CAPITAL, maxspec = D_MAXSPEC, riskabs = D_RISK,
     risk_status: p.risk_status || 'RISK_ON', rung: p.rung || 0,
     display_name: p.display_name || '', legacy: Boolean(p.legacy),
     stop: p.stop, stop_source: p.stop_source, stop_asof: p.stop_asof,
-    stop_why: p.stop_why, stop_last_action: p.stop_last_action,
+    stop_why: p.stop_why, stop_last_action: p.stop_last_action, stop_prev: p.stop_prev,
     opened_at: p.opened_at || p.added || new Date().toISOString().slice(0, 10),
     policy_snapshot: p.policy_snapshot || null
   }));

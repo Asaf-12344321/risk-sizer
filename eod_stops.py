@@ -278,6 +278,19 @@ def sector_context(sector: pd.DataFrame | None, etf: str | None, stock: pd.DataF
     return Context(etf=etf, weak=weak, note=note, stock_vs_sector_10d=rs)
 
 
+def _p(x: float) -> str:
+    return f"${x:,.2f}" if x >= 1 else f"${x:,.4f}"
+
+
+def _d(iso: str) -> str:
+    return datetime.fromisoformat(str(iso)[:10]).strftime("%b %-d")
+
+
+def breach_reason(low: float, day: str, stop: float) -> str:
+    return (f"On {_d(day)} it traded down to {_p(low)}, at or below your stop of {_p(stop)}. "
+            f"Check whether your broker already sold it.")
+
+
 def is_excluded(ticker: str) -> bool:
     """Tel Aviv (.TA) tickers are outside this engine: Yahoo quotes them in agorot, so entry
     prices, ATR and stops are not comparable with the shekel figures kept in the database."""
@@ -361,12 +374,12 @@ def _ladder_only(ticker, df, pos, prev_stop, settings, since) -> Decision:
     tick = _tick(close)
     ceiling = _floor_tick(close - RULES["tight_clearance_atr"] * a, tick)
     new_stop = max(prev_stop, min(_round_tick(ladder, tick), ceiling))
-    reasons = [f"only {len(df)} bars of history - ATR ladder only"]
+    reasons = ["Too new to read chart levels (under 120 days of history), so the stop just follows "
+               "a simple distance rule."]
     hit = _breach(df, prev_stop, since)
     if hit:
         action, new_stop = "BREACH", prev_stop
-        reasons.insert(0, f"low {hit[0]:.2f} on {hit[1]} touched stop {prev_stop:.2f}"
-                          f" (close {close:.2f}) - confirm fill at broker")
+        reasons.insert(0, breach_reason(hit[0], hit[1], prev_stop))
     elif new_stop - prev_stop >= max(RULES["min_move_atr"] * a, RULES["min_move_pct"] / 100 * prev_stop):
         action = "RAISE"
     else:
@@ -390,17 +403,18 @@ def decide(
     breach).  `asof`: newest session date across the download; a ticker behind it is stale."""
     ctx = ctx or Context()
     if len(df) == 0:
-        return _skip(ticker, df, prev_stop, "no price data")
+        return _skip(ticker, df, prev_stop, "Couldn't get price data for it today.")
     if asof is not None and df.index[-1] < asof:
         return _skip(ticker, df, prev_stop,
-                     f"stale data - last bar {df.index[-1].date()}, market data is at {asof.date()}")
+                     f"Its latest price is from {_d(df.index[-1].date().isoformat())}, older than the rest of the "
+                     f"market, so I skipped it.")
     sp = split_since(df, pd.Timestamp(str(pos["opened_at"])[:10]))
     if sp:
         return _skip(ticker, df, prev_stop,
-                     f"split detected ({sp[0]}) - entry price, ATR and stop are pre-split; "
-                     f"update the position and re-enter the stop")
+                     f"It had a stock split on {_d(sp[0])}, so your saved prices no longer match. "
+                     f"Update the position and set the stop again.")
     if not float(df["Volume"].iloc[-1]) > 0:
-        return _skip(ticker, df, prev_stop, "last bar has no volume - data not settled")
+        return _skip(ticker, df, prev_stop, "Today's trading data isn't complete yet, so I skipped it.")
     if len(df) < RULES["min_bars"]:
         return _ladder_only(ticker, df, pos, prev_stop, settings, since)
 
@@ -448,10 +462,10 @@ def decide(
               and ax["adx"].iloc[-1] < ax["adx"].iloc[-4])
     if downtrend:
         score += 2
-        reasons.append(f"downtrend (ADX {adx_now:.0f}, -DI {mdi:.0f} > +DI {pdi:.0f})")
+        reasons.append("It's in a clear downtrend, so the stop stays close.")
     if peaked:
         score += 1
-        reasons.append(f"trend fading (ADX {adx_now:.0f} off {adx_recent_max:.0f} peak)")
+        reasons.append("The uptrend is losing steam.")
 
     gain_atr = (close - entry) / a
     hot_recently = float(rs_series.tail(5).max()) >= RULES["rsi_hot"]
@@ -462,15 +476,14 @@ def decide(
            and float(rs_series.tail(20).max()) > 65)
     if gain_atr >= RULES["exhaustion_min_gain_atr"] and ((hot_recently and cooled) or div):
         score += 1
-        reasons.append("momentum exhaustion (RSI " + ("divergence" if div else
-                       f"rolled over from {float(rs_series.tail(5).max()):.0f}") + ")")
+        reasons.append("It ran up a lot and the buying push is fading.")
 
     last10 = df.tail(10)
     dist_days = int(((last10["Close"] < df["Close"].shift(1).tail(10))
                      & (last10["Volume"] > RULES["dist_vol_ratio"] * avg_vol)).sum()) if avg_vol > 0 else 0
     if dist_days >= RULES["dist_days_trigger"]:
         score += 1
-        reasons.append(f"{dist_days} distribution days in 10")
+        reasons.append(f"There were {dist_days} heavy-selling days in the last 10.")
 
     confirmed_break = bool(s1 and close < s1.lo and vol_ratio >= RULES["break_vol_ratio"])
     broken_zone = next((z for z in sorted(zones, key=lambda z: z.hi, reverse=True)
@@ -478,7 +491,7 @@ def decide(
                         and z.lo <= close * 1.03), None)
     if broken_zone and vol_ratio >= RULES["break_vol_ratio"]:
         confirmed_break = True
-        reasons.append(f"close under support {broken_zone.lo:.2f} on {vol_ratio:.1f}x volume")
+        reasons.append(f"It closed below a price floor near {_p(broken_zone.lo)} on heavy selling.")
         score += 2
 
     tier = LOOSE if (score == 0 and trend_strong) else NORMAL if score <= 1 else TIGHT
@@ -489,20 +502,20 @@ def decide(
     oversold_hold = rsi_now < RULES["rsi_oversold"] and near_support and not confirmed_break
     if oversold_hold:
         tier = min(tier, NORMAL)
-        reasons.append(f"RSI {rsi_now:.0f} oversold on support - no tightening")
+        reasons.append("It's been beaten down and is sitting on support, so I'm not tightening yet.")
 
     # --- sector: at most one notch tighter, never looser -------------------------
     idio_strength = bool(close > ema20 and rsi_now > 50
                          and ctx.stock_vs_sector_10d is not None and ctx.stock_vs_sector_10d > 0.02)
     if ctx.weak and not oversold_hold and tier < TIGHT:
         if idio_strength:
-            reasons.append(f"sector weak ({ctx.etf}) but stock outperforming - ignored")
+            reasons.append(f"Its sector ({ctx.etf}) is weak, but this stock is holding up better, so no change.")
         else:
             tier += 1
-            reasons.append(f"{ctx.note} - tightened one notch")
+            reasons.append(f"Its sector ({ctx.etf}) has been sliding for several days, so the stop is a bit tighter.")
 
     if tier == LOOSE and not reasons:
-        reasons.append(f"strong uptrend (ADX {adx_now:.0f}), room given")
+        reasons.append("Strong, steady uptrend, so it gets room to move.")
 
     cand = {LOOSE: cand_loose, NORMAL: cand_normal, TIGHT: cand_tight}[tier]
     if confirmed_break:
@@ -518,29 +531,29 @@ def decide(
     hit = _breach(df, prev_stop, since)
     if hit:
         action = "BREACH"
-        reasons.insert(0, f"low {hit[0]:.2f} on {hit[1]} touched stop {prev_stop:.2f}"
-                          f" (close {close:.2f}) - confirm fill at broker")
+        reasons.insert(0, breach_reason(hit[0], hit[1], prev_stop))
         new_stop = prev_stop
     elif new_stop - prev_stop >= max(RULES["min_move_atr"] * a,
                                      RULES["min_move_pct"] / 100 * prev_stop):
         action = "RAISE"
         if s1 and tier >= NORMAL and abs(new_stop - (s1.lo - buf)) < 0.02:
-            reasons.insert(0, f"trailing below support {s1.lo:.2f} "
-                              f"({s1.touches} touch{'es' if s1.touches != 1 else ''}"
-                              f"{', volume node' if s1.hvn else ''})")
+            reasons.insert(0, f"The stop now sits just under a support level near {_p(s1.lo)}, a price where it "
+                              f"has bounced {s1.touches} time{'s' if s1.touches != 1 else ''}"
+                              f"{' and where lots of shares changed hands' if s1.hvn else ''}.")
         elif s2 and tier == LOOSE and abs(new_stop - (s2.lo - buf)) < 0.02:
-            reasons.insert(0, f"trailing below major support {s2.lo:.2f}")
+            reasons.insert(0, f"The stop now sits just under a major support level near {_p(s2.lo)}.")
         elif tier == TIGHT and abs(new_stop - (hh_close - RULES["chandelier_extra_tight_atr"] * a)) < 0.02:
-            reasons.insert(0, f"tight trail {RULES['chandelier_extra_tight_atr']:.0f} ATR under high close {hh_close:.2f}")
+            reasons.insert(0, f"Locking in gains: the stop follows close behind its recent high close of {_p(hh_close)}.")
         else:
-            reasons.insert(0, f"{settings['trailmult']:.1f} ATR trail under high close {hh_close:.2f}")
+            reasons.insert(0, f"Following the price up: the stop trails a comfortable distance below its "
+                              f"highest close ({_p(hh_close)}).")
     else:
         action = "HOLD"
         new_stop = prev_stop
         if not reasons or tier == LOOSE:
-            reasons.insert(0, "no qualified level above current stop")
+            reasons.insert(0, "No solid support level higher up yet, so the stop stays where it is.")
         if s1:
-            reasons.append(f"next support {s1.lo:.2f}")
+            reasons.append(f"Next support to watch: {_p(s1.lo)}.")
 
     metrics = dict(atr=a, rsi=rsi_now, adx=adx_now, pdi=pdi, mdi=mdi, vol_ratio=vol_ratio,
                    poc=poc, ladder=ladder, dist_days=dist_days)
@@ -558,7 +571,7 @@ def initial_stop(ticker: str, df: pd.DataFrame, entry: float, settings: Mapping[
     poor risk/reward entry.  Returns stop=None when no qualified support exists."""
     if len(df) < RULES["min_bars"]:
         return {"ticker": ticker, "stop": None, "no_support": True, "extended": False,
-                "reasons": [f"only {len(df)} bars of history"], "justification": "not enough price history"}
+                "reasons": ["Not enough price history yet."], "justification": "Not enough price history yet."}
     a = float(atr(df).iloc[-1])
     ax = adx(df)
     adx_now, pdi, mdi = (float(ax[c].iloc[-1]) for c in ("adx", "pdi", "mdi"))
@@ -579,20 +592,23 @@ def initial_stop(ticker: str, df: pd.DataFrame, entry: float, settings: Mapping[
                            "asof": df.index[-1].date().isoformat()}
     ext_limit = float(settings.get("extendedpct", 22.5))
     if chosen is None:
-        out.update(stop=None, no_support=True, extended=True, reasons=["no qualified support below entry"],
-                   justification="No valid structural support below this price.")
+        out.update(stop=None, no_support=True, extended=True, reasons=["No solid support level below this price."],
+                   justification="No solid support level below this price.")
         return out
     stop = round(chosen.lo - buf, 4 if entry < 1 else 2)
     support_gap = (entry - chosen.hi) / entry * 100
-    reasons = [f"below support {chosen.lo:.2f}-{chosen.hi:.2f} ({chosen.touches} touch"
-               f"{'es' if chosen.touches != 1 else ''}{', volume node' if chosen.hvn else ''})",
-               f"{regime}, ADX {adx_now:.0f}", f"stop {(entry - stop) / a:.1f} ATR from entry"]
+    mood = {"uptrend": "It's in a steady uptrend.", "downtrend": "It's been falling.",
+            "range/weak trend": "It's moving sideways without a clear trend."}[regime]
+    reasons = [f"Just under a support level around {_p(chosen.lo)}-{_p(chosen.hi)} that held "
+               f"{chosen.touches} time{'s' if chosen.touches != 1 else ''}"
+               f"{' (lots of shares traded there)' if chosen.hvn else ''}.",
+               mood, f"The stop is about {(entry - stop) / entry * 100:.0f}% below your entry."]
     if downtrend:
-        reasons.append("falling market structure - support may not hold")
+        reasons.append("Because it is falling, that support may not hold.")
     out.update(stop=stop, no_support=False, extended=support_gap > ext_limit, support_lo=chosen.lo,
                support_hi=chosen.hi, touches=chosen.touches, hvn=chosen.hvn,
                support_gap_pct=support_gap, distance_pct=(entry - stop) / entry * 100,
-               reasons=reasons, justification="; ".join(reasons))
+               reasons=reasons, justification=" ".join(reasons))
     return out
 
 
@@ -609,17 +625,18 @@ def stop_info(db_path: str | Path) -> dict[int, dict[str, Any]]:
             info[r["position_id"]] = {"stop": r["stop"], "stop_source": r["tier"],
                                       "stop_asof": r["asof"], "stop_updated_at": r["updated_at"],
                                       "stop_why": None, "stop_last_action": None}
-        for r in conn.execute("""SELECT position_id, action, reasons, asof FROM eod_stop_log
+        for r in conn.execute("""SELECT position_id, action, reasons, asof, prev_stop FROM eod_stop_log
                                  WHERE id IN (SELECT MAX(id) FROM eod_stop_log GROUP BY position_id)"""):
             if r["position_id"] in info:
                 info[r["position_id"]]["stop_last_action"] = r["action"]
+                info[r["position_id"]]["stop_prev"] = r["prev_stop"] if r["action"] == "RAISE" else None
                 info[r["position_id"]]["stop_last_asof"] = r["asof"]
         for r in conn.execute("""SELECT position_id, reasons FROM eod_stop_log
                                  WHERE id IN (SELECT MAX(id) FROM eod_stop_log
                                               WHERE action IN ('ENTRY', 'RAISE') GROUP BY position_id)"""):
             if r["position_id"] in info:
                 try:
-                    info[r["position_id"]]["stop_why"] = "; ".join(json.loads(r["reasons"] or "[]"))
+                    info[r["position_id"]]["stop_why"] = " ".join(json.loads(r["reasons"] or "[]"))
                 except ValueError:
                     pass
         return info
@@ -810,14 +827,14 @@ def format_alert(decisions: list[Decision], asof: str, quiet_when_no_changes: bo
 
     blocks = []
     for d in breaches:
-        blocks.append(f"🚨 <b>{html.escape(d.ticker)}</b>  ${d.close:,.2f}\n"
-                      f"Stop ${d.prev_stop:,.2f} touched\n"
-                      f"Why: {html.escape('; '.join(d.reasons))}")
+        blocks.append(f"🚨 <b>{html.escape(d.ticker)}</b>  {_p(d.close)}\n"
+                      f"Your stop of {_p(d.prev_stop)} was reached\n"
+                      f"Why: {html.escape(' '.join(d.reasons))}")
     for d in sorted(raises, key=lambda x: x.ticker):
         chg = (d.new_stop / d.prev_stop - 1) * 100
-        blocks.append(f"🔼 <b>{html.escape(d.ticker)}</b>  ${d.close:,.2f}  [{d.source or TIER_NAME[d.tier]}]\n"
-                      f"Prev ${d.prev_stop:,.2f} → <b>New ${d.new_stop:,.2f}</b> ({chg:+.1f}%)\n"
-                      f"Why: {html.escape('; '.join(d.reasons))}")
+        blocks.append(f"🟢⬆️ <b>{html.escape(d.ticker)}</b>  {_p(d.close)}\n"
+                      f"Move your stop up: {_p(d.prev_stop)} → <b>{_p(d.new_stop)}</b> ({chg:+.1f}%)\n"
+                      f"Why: {html.escape(' '.join(d.reasons))}")
     start = [d.notice for d in sorted(notices, key=lambda x: x.ticker) if d.notice_kind == "start"]
     if start:
         line = "ℹ️ Starting stops, confirm the broker order matches: " + html.escape(" · ".join(start))
@@ -826,14 +843,15 @@ def format_alert(decisions: list[Decision], asof: str, quiet_when_no_changes: bo
         blocks.append(line)
     ladder = [d.notice for d in sorted(notices, key=lambda x: x.ticker) if d.notice_kind == "ladder"]
     if ladder:
-        blocks.append(f"ℹ️ Under {int(RULES['min_bars'])} bars of history, trailing by the ATR ladder only: "
-                      + html.escape(" · ".join(ladder)))
+        blocks.append(f"ℹ️ Too new to read chart levels (under {int(RULES['min_bars'])} days of history), "
+                      f"so the stop follows a simple distance rule: " + html.escape(" · ".join(ladder)))
     if skipped:
-        blocks.append("⚠️ Not evaluated: " + html.escape(", ".join(
-            f"{d.ticker} ({'; '.join(d.reasons)})" for d in skipped)))
+        blocks.append("⚠️ Skipped: " + html.escape("  ".join(
+            f"{d.ticker}: {' '.join(d.reasons)}" for d in skipped)))
 
     head = (f"<b>EOD stops · {html.escape(asof)}</b>\n"
-            f"{len(raises)} to raise" + (f" · <b>{len(breaches)} BREACH</b>" if breaches else ""))
+            f"{len(raises)} stop{'s' if len(raises) != 1 else ''} to move up"
+            + (f" · <b>{len(breaches)} reached</b>" if breaches else ""))
     messages, cur = [], head
     for blk in blocks:
         if len(cur) + len(blk) + 2 > 3900:
@@ -983,7 +1001,7 @@ def evaluate(db_path: str | Path, *, overrides_stop: Mapping[str, float] | None 
                 if baseline:
                     d.source = d.source or "BASELINE"
             elif d.source == "LADDER" and (state is None or state["tier"] != "LADDER"):
-                d.notice, d.notice_kind = f"{t} ({len(df)} bars)", "ladder"
+                d.notice, d.notice_kind = f"{t} ({len(df)} days)", "ladder"
             ev.decisions.append(d)
             if d.action != "SKIP":
                 ev.pending.append((p["id"], d))
