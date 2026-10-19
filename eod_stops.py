@@ -77,7 +77,8 @@ RULES: dict[str, float] = {
     "pivot_reaction_bars": 12,  # ... this many bars: filters wiggles that never attracted buyers
     "min_touch_gap": 5,         # bars between two touches of a zone for them to count as two
     "min_zone_touches": 2,      # a zone needs this many separate bounces ...
-    "single_touch_reaction_atr": 3.0,  # ... or ONE bounce of this size that also sits on a volume node
+    "major_bounce_atr": 4.0,    # ... or ONE bounce this big (a major swing low) ...
+    "node_bounce_atr": 2.5,     # ... or one bounce this big that also sits on a volume node
     "support_max_distance_atr": 10,    # support further than this below the close is not "nearby"
     "support_clearance_atr": 1.0,   # a zone must sit this far below the close
     "stop_buffer_atr": 0.3,     # stop goes this far under the zone low ...
@@ -164,10 +165,12 @@ class Zone:
 
     @property
     def qualified(self) -> bool:
-        """A real floor: bounced at least twice, or once hard while sitting on a volume node.
+        """A real floor: bounced at least twice (a fresh retest that is holding counts), or
+        once with a major swing (4+ ATR), or once with a decent swing on a volume node.
         Anything weaker is a wiggle, not support, and must never anchor a stop."""
         return (self.touches >= RULES["min_zone_touches"]
-                or (self.hvn and self.reaction >= RULES["single_touch_reaction_atr"]))
+                or self.reaction >= RULES["major_bounce_atr"]
+                or (self.hvn and self.reaction >= RULES["node_bounce_atr"]))
 
 
 def volume_profile(df: pd.DataFrame, atr_now: float) -> tuple[np.ndarray, np.ndarray, float]:
@@ -230,6 +233,14 @@ def support_zones(df: pd.DataFrame, atr_now: float, hvn: np.ndarray) -> list[Zon
             if i - last >= RULES["min_touch_gap"]:
                 counted, last = counted + 1, i
         z.touches = counted
+    # A fresh retest cannot be a confirmed swing low yet (needs pivot_k bars after it), but a floor
+    # the last few bars came back down to and held IS evidence: count it as a touch.
+    recent_low = float(low[-(k + 1):].min())
+    newest = len(low) - 1
+    for z, idxs in zip(zones, bars_of):
+        if (newest - max(idxs) >= RULES["min_touch_gap"] and recent_low >= z.lo - 0.1 * atr_now
+                and recent_low <= z.hi + RULES["zone_merge_atr"] * atr_now):
+            z.touches += 1
     pad = RULES["zone_merge_atr"] * atr_now
     for z in zones:
         z.hvn = bool(len(hvn) and ((hvn >= z.lo - pad) & (hvn <= z.hi + pad)).any())
@@ -312,6 +323,14 @@ def _p(x: float) -> str:
 
 def _d(iso: str) -> str:
     return datetime.fromisoformat(str(iso)[:10]).strftime("%b %-d")
+
+
+def _bounced(z: Zone) -> str:
+    return f"bounced {z.touches} times" if z.touches >= 2 else "bounced sharply"
+
+
+def _span(z: Zone) -> str:
+    return _p(z.lo) if abs(z.hi - z.lo) < 1e-9 else f"{_p(z.lo)}-{_p(z.hi)}"
 
 
 def breach_reason(low: float, day: str, stop: float) -> str:
@@ -575,8 +594,7 @@ def decide(
         action = "RAISE"
         if s1 and tier >= NORMAL and abs(new_stop - stop_under(s1, a, close)) < 0.02:
             reasons.insert(0, f"The stop now sits just under a support level near {_p(s1.lo)}, a price where it "
-                              f"has bounced {s1.touches} time{'s' if s1.touches != 1 else ''}"
-                              f"{' and where lots of shares changed hands' if s1.hvn else ''}.")
+                              f"has {_bounced(s1)}{' and where lots of shares changed hands' if s1.hvn else ''}.")
         elif s2 and tier == LOOSE and abs(new_stop - stop_under(s2, a, close)) < 0.02:
             reasons.insert(0, f"The stop now sits just under a major support level near {_p(s2.lo)}.")
         elif tier == TIGHT and abs(new_stop - (hh_close - RULES["chandelier_extra_tight_atr"] * a)) < 0.02:
@@ -642,8 +660,7 @@ def initial_stop(ticker: str, df: pd.DataFrame, entry: float, settings: Mapping[
     support_gap = (entry - chosen.hi) / entry * 100
     mood = {"uptrend": "It's in a steady uptrend.", "downtrend": "It's been falling.",
             "range/weak trend": "It's moving sideways without a clear trend."}[regime]
-    reasons = [f"Just under a support level around {_p(chosen.lo)}-{_p(chosen.hi)} that held "
-               f"{chosen.touches} time{'s' if chosen.touches != 1 else ''}"
+    reasons = [f"Just under a support level around {_span(chosen)} where the price {_bounced(chosen)}"
                f"{' (lots of shares traded there)' if chosen.hvn else ''}.",
                mood, f"The stop is about {(entry - stop) / entry * 100:.0f}% below your entry."]
     if downtrend:
