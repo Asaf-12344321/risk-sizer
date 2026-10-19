@@ -221,15 +221,30 @@ class SupportQualityTests(unittest.TestCase):
         self.assertTrue(out["no_support"] and out["extended"])
 
     def test_two_lows_a_few_bars_apart_are_one_touch_not_two(self):
-        df = flat_range(dips=(100, 104), dip_low=90.0)
+        df = flat_range(dips=(100, 104), dip_low=97.0)
+        a = float(e.atr(df).iloc[-1])
+        zs = [z for z in e.support_zones(df, a, np.array([])) if z.lo == 97.0]
+        self.assertEqual([z.touches for z in zs], [1])             # one wiggle, not two bounces
         self.assertEqual(self.zones(df), [])
 
-    def test_single_bounce_without_a_volume_node_is_not_enough(self):
-        self.assertEqual(self.zones(flat_range(dips=(120,), dip_low=90.0)), [])
-        lone = e.Zone(90.0, 90.0, 1, hvn=True, reaction=4.0)
-        self.assertTrue(lone.qualified)                          # one hard bounce ON a volume node is
+    def test_one_modest_bounce_is_not_enough_but_a_major_swing_is(self):
+        self.assertEqual(self.zones(flat_range(dips=(120,), dip_low=97.0)), [])      # ~3 ATR, no volume node
+        major = self.zones(flat_range(dips=(120,), dip_low=90.0))                    # ~10 ATR swing low
+        self.assertEqual([z.lo for z in major], [90.0])
+        self.assertTrue(e.Zone(90.0, 90.0, 1, hvn=True, reaction=3.0).qualified)     # decent bounce ON a volume node
         self.assertFalse(e.Zone(90.0, 90.0, 1, hvn=True, reaction=2.0).qualified)
-        self.assertFalse(e.Zone(90.0, 90.0, 1, hvn=False, reaction=9.0).qualified)
+        self.assertFalse(e.Zone(90.0, 90.0, 1, hvn=False, reaction=3.9).qualified)
+        self.assertTrue(e.Zone(90.0, 90.0, 1, hvn=False, reaction=4.0).qualified)
+
+    def test_a_fresh_retest_that_holds_counts_as_a_second_touch(self):
+        df = flat_range(dips=(100,), dip_low=97.0)                # one confirmed ~3 ATR swing: not enough alone
+        self.assertEqual(self.zones(df), [])
+        df.iloc[-2, df.columns.get_loc("Low")] = 97.3             # price comes back down to it and holds
+        df.iloc[-2, df.columns.get_loc("Close")] = 99.0
+        self.assertEqual([z.lo for z in self.zones(df)], [97.0])
+        broke = df.copy()
+        broke.iloc[-2, broke.columns.get_loc("Low")] = 95.0       # ...but if it breaks through, no support
+        self.assertEqual(self.zones(broke), [])
 
     def test_old_lows_are_stale(self):
         df = flat_range(n=300, dips=(40, 70), dip_low=90.0)     # both older than the 140-bar window
