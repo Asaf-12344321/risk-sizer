@@ -71,11 +71,17 @@ NY = ZoneInfo("America/New_York")
 RULES: dict[str, float] = {
     "min_bars": 120,            # need this much history or the position is skipped
     "pivot_k": 3,               # bars each side that confirm a swing low
-    "sr_lookback": 160,         # bars scanned for swing lows
+    "sr_lookback": 140,         # bars scanned for swing lows (~7 months): older lows are stale
     "zone_merge_atr": 0.5,      # swing lows closer than this form one zone
-    "min_zone_score": 2,        # touches + 2 x HVN-overlap needed to trust a zone
+    "pivot_reaction_atr": 1.5,  # a swing low only counts if price bounced this far (ATR) within ...
+    "pivot_reaction_bars": 12,  # ... this many bars: filters wiggles that never attracted buyers
+    "min_touch_gap": 5,         # bars between two touches of a zone for them to count as two
+    "min_zone_touches": 2,      # a zone needs this many separate bounces ...
+    "single_touch_reaction_atr": 3.0,  # ... or ONE bounce of this size that also sits on a volume node
+    "support_max_distance_atr": 10,    # support further than this below the close is not "nearby"
     "support_clearance_atr": 1.0,   # a zone must sit this far below the close
-    "stop_buffer_atr": 0.3,     # stop goes this far under the zone low
+    "stop_buffer_atr": 0.3,     # stop goes this far under the zone low ...
+    "stop_buffer_pct": 0.5,     # ... or this % of it, whichever is larger
     "vp_lookback": 120,
     "vp_bin_atr": 0.25,
     "hvn_ratio": 1.5,           # bin volume / median bin volume to be a node
@@ -154,10 +160,14 @@ class Zone:
     hi: float
     touches: int
     hvn: bool = False
+    reaction: float = 0.0     # biggest bounce off this zone, in ATR
 
     @property
-    def score(self) -> int:
-        return self.touches + 2 * int(self.hvn)
+    def qualified(self) -> bool:
+        """A real floor: bounced at least twice, or once hard while sitting on a volume node.
+        Anything weaker is a wiggle, not support, and must never anchor a stop."""
+        return (self.touches >= RULES["min_zone_touches"]
+                or (self.hvn and self.reaction >= RULES["single_touch_reaction_atr"]))
 
 
 def volume_profile(df: pd.DataFrame, atr_now: float) -> tuple[np.ndarray, np.ndarray, float]:
@@ -184,24 +194,42 @@ def volume_profile(df: pd.DataFrame, atr_now: float) -> tuple[np.ndarray, np.nda
 
 def support_zones(df: pd.DataFrame, atr_now: float, hvn: np.ndarray) -> list[Zone]:
     """Cluster confirmed swing lows into zones.  A swing low needs pivot_k lower-or-equal
-    bars on each side, so the newest candidate is pivot_k bars old: nothing repaints."""
+    bars on each side, so the newest candidate is pivot_k bars old: nothing repaints.  It
+    must also have been *defended*: price rallied at least pivot_reaction_atr within
+    pivot_reaction_bars, otherwise it is a quiet wiggle and is ignored.  Two lows of one
+    zone only count as separate touches when min_touch_gap bars apart."""
     k = int(RULES["pivot_k"])
-    low = df["Low"].tail(int(RULES["sr_lookback"])).to_numpy()
-    pivots: list[float] = []
+    d = df.tail(int(RULES["sr_lookback"]))
+    low, high = d["Low"].to_numpy(), d["High"].to_numpy()
+    pivots: list[list[float]] = []                   # [price, bar index, reaction in ATR]
     last_i = -10**9
     for i in range(k, len(low) - k):
         if low[i] == low[i - k:i + k + 1].min():
+            react = float(high[i + 1:i + 1 + int(RULES["pivot_reaction_bars"])].max() - low[i]) / atr_now \
+                if atr_now > 0 else 0.0
             if i - last_i <= k and pivots:           # plateau: keep the lower low only
-                pivots[-1] = min(pivots[-1], low[i])
+                if low[i] < pivots[-1][0]:
+                    pivots[-1][0] = float(low[i])
+                pivots[-1][2] = max(pivots[-1][2], react)
             else:
-                pivots.append(float(low[i]))
+                pivots.append([float(low[i]), i, react])
             last_i = i
+    pivots = [p for p in pivots if p[2] >= RULES["pivot_reaction_atr"]]
     zones: list[Zone] = []
-    for price in sorted(pivots):
+    bars_of: list[list[int]] = []
+    for price, idx, react in sorted(pivots):
         if zones and price - zones[-1].lo <= RULES["zone_merge_atr"] * atr_now:
-            zones[-1].hi, zones[-1].touches = price, zones[-1].touches + 1
+            zones[-1].hi, zones[-1].reaction = price, max(zones[-1].reaction, react)
+            bars_of[-1].append(int(idx))
         else:
-            zones.append(Zone(price, price, 1))
+            zones.append(Zone(price, price, 1, reaction=react))
+            bars_of.append([int(idx)])
+    for z, idxs in zip(zones, bars_of):              # separate bounces only, not one wiggle counted twice
+        counted, last = 0, -10**9
+        for i in sorted(idxs):
+            if i - last >= RULES["min_touch_gap"]:
+                counted, last = counted + 1, i
+        z.touches = counted
     pad = RULES["zone_merge_atr"] * atr_now
     for z in zones:
         z.hvn = bool(len(hvn) and ((hvn >= z.lo - pad) & (hvn <= z.hi + pad)).any())
@@ -298,18 +326,27 @@ def is_excluded(ticker: str) -> bool:
 
 
 def baseline_stop(ticker: str, df: pd.DataFrame, pos: Mapping[str, Any],
-                  settings: Mapping[str, float]) -> float:
+                  settings: Mapping[str, float]) -> tuple[float, bool]:
     """Starting stop from TODAY's price, for a position whose entry-based ladder stop is already
     above the market (so it is meaningless).  Structural support if a qualified one sits far
     enough below the close, else the ATR stop at the configured multiple and bounds."""
     close = float(df["Close"].iloc[-1])
     found = initial_stop(ticker, df, close, settings).get("stop")
     if found and 0 < found < close:
-        return float(found)
+        return float(found), True
     a_now = float(atr(df).iloc[-1]) if len(df) > 14 else float("nan")
     a = a_now if math.isfinite(a_now) and a_now > 0 else float(pos["atr"])
     dist = min(max(settings["initmult"] * a / close, settings["minstop"] / 100), settings["maxstop"] / 100)
-    return round(close * (1 - dist), 4 if close < 1 else 2)
+    return round(close * (1 - dist), 4 if close < 1 else 2), False
+
+
+def stop_under(zone: Zone, atr_now: float, price: float) -> float:
+    """THE one place a support-based stop is priced: strictly below the zone's lowest low, by at
+    least max(0.3 ATR, 0.5%) and never less than one tick, so ordinary noise at the floor cannot
+    trigger it and it only fires if the floor genuinely breaks."""
+    tick = _tick(price)
+    buffer = max(RULES["stop_buffer_atr"] * atr_now, RULES["stop_buffer_pct"] / 100 * zone.lo)
+    return _floor_tick(min(zone.lo - buffer, zone.lo - tick), tick)
 
 
 def _tick(price: float) -> float:
@@ -438,11 +475,11 @@ def decide(
     # --- structure candidates --------------------------------------------------
     usable = sorted(
         (z for z in zones
-         if z.score >= RULES["min_zone_score"]
-         and z.hi <= close - RULES["support_clearance_atr"] * a),
+         if z.qualified
+         and z.hi <= close - RULES["support_clearance_atr"] * a
+         and z.hi >= close - RULES["support_max_distance_atr"] * a),
         key=lambda z: z.hi, reverse=True,
     )
-    buf = RULES["stop_buffer_atr"] * a
     s1 = usable[0] if usable else None
     s2 = usable[1] if len(usable) > 1 else None
     ladder, armed = ladder_stop(df, pos, settings)
@@ -450,8 +487,8 @@ def decide(
     hh_close = max(float(since_entry.max()) if len(since_entry) else close, entry)
     chandelier = hh_close - settings["trailmult"] * a if armed else -np.inf
 
-    cand_loose = max(chandelier, s2.lo - buf if s2 else -np.inf)
-    cand_normal = max(cand_loose, s1.lo - buf if s1 else -np.inf)
+    cand_loose = max(chandelier, stop_under(s2, a, close) if s2 else -np.inf)
+    cand_normal = max(cand_loose, stop_under(s1, a, close) if s1 else -np.inf)
     cand_tight = max(cand_normal, hh_close - RULES["chandelier_extra_tight_atr"] * a)
 
     # --- tier from technicals ----------------------------------------------------
@@ -487,7 +524,7 @@ def decide(
 
     confirmed_break = bool(s1 and close < s1.lo and vol_ratio >= RULES["break_vol_ratio"])
     broken_zone = next((z for z in sorted(zones, key=lambda z: z.hi, reverse=True)
-                        if z.score >= RULES["min_zone_score"] and z.lo > close
+                        if z.qualified and z.lo > close
                         and z.lo <= close * 1.03), None)
     if broken_zone and vol_ratio >= RULES["break_vol_ratio"]:
         confirmed_break = True
@@ -498,7 +535,7 @@ def decide(
 
     # oversold on support: do not sell the low unless support actually broke on volume
     near_support = bool(s1 and close - s1.hi <= 1.5 * a) or bool(
-        zones and any(z.lo - a <= close <= z.hi + 1.5 * a for z in zones if z.score >= 2))
+        zones and any(z.lo - a <= close <= z.hi + 1.5 * a for z in zones if z.qualified))
     oversold_hold = rsi_now < RULES["rsi_oversold"] and near_support and not confirmed_break
     if oversold_hold:
         tier = min(tier, NORMAL)
@@ -536,11 +573,11 @@ def decide(
     elif new_stop - prev_stop >= max(RULES["min_move_atr"] * a,
                                      RULES["min_move_pct"] / 100 * prev_stop):
         action = "RAISE"
-        if s1 and tier >= NORMAL and abs(new_stop - (s1.lo - buf)) < 0.02:
+        if s1 and tier >= NORMAL and abs(new_stop - stop_under(s1, a, close)) < 0.02:
             reasons.insert(0, f"The stop now sits just under a support level near {_p(s1.lo)}, a price where it "
                               f"has bounced {s1.touches} time{'s' if s1.touches != 1 else ''}"
                               f"{' and where lots of shares changed hands' if s1.hvn else ''}.")
-        elif s2 and tier == LOOSE and abs(new_stop - (s2.lo - buf)) < 0.02:
+        elif s2 and tier == LOOSE and abs(new_stop - stop_under(s2, a, close)) < 0.02:
             reasons.insert(0, f"The stop now sits just under a major support level near {_p(s2.lo)}.")
         elif tier == TIGHT and abs(new_stop - (hh_close - RULES["chandelier_extra_tight_atr"] * a)) < 0.02:
             reasons.insert(0, f"Locking in gains: the stop follows close behind its recent high close of {_p(hh_close)}.")
@@ -552,9 +589,14 @@ def decide(
         new_stop = prev_stop
         if not reasons or tier == LOOSE:
             reasons.insert(0, "No solid support level higher up yet, so the stop stays where it is.")
-        if s1:
+        if s1 and new_stop > s1.hi:
+            reasons.append(f"The stop sits above the nearest support ({_p(s1.lo)}), so it triggers before that "
+                           f"level is even tested.")
+        elif s1:
             reasons.append(f"Next support to watch: {_p(s1.lo)}.")
 
+    if s1 is None and action != "BREACH":
+        reasons.append("No clear support level nearby, so the stop is just a distance below the price.")
     metrics = dict(atr=a, rsi=rsi_now, adx=adx_now, pdi=pdi, mdi=mdi, vol_ratio=vol_ratio,
                    poc=poc, ladder=ladder, dist_days=dist_days)
     return Decision(ticker, close, prev_stop, new_stop, tier, action, reasons, metrics)
@@ -582,11 +624,11 @@ def initial_stop(ticker: str, df: pd.DataFrame, entry: float, settings: Mapping[
     min_atr = RULES["entry_min_atr_trend"] if trend_strong else RULES["entry_min_atr_chop"]
 
     hvn, _, poc = volume_profile(df, a)
+    last_close = float(df["Close"].iloc[-1])
     zones = [z for z in support_zones(df, a, hvn)
-             if z.score >= RULES["min_zone_score"] and z.hi < entry]
+             if z.qualified and z.hi < min(entry, last_close)]      # a floor price already fell through is not support
     zones.sort(key=lambda z: z.hi, reverse=True)
-    buf = RULES["stop_buffer_atr"] * a
-    chosen = next((z for z in zones if entry - (z.lo - buf) >= min_atr * a), None)
+    chosen = next((z for z in zones if entry - stop_under(z, a, entry) >= min_atr * a), None)
     out: dict[str, Any] = {"ticker": ticker, "entry": entry, "atr": a, "adx": adx_now, "rsi": rsi_now,
                            "regime": regime, "poc": poc, "last_close": float(df["Close"].iloc[-1]),
                            "asof": df.index[-1].date().isoformat()}
@@ -595,7 +637,8 @@ def initial_stop(ticker: str, df: pd.DataFrame, entry: float, settings: Mapping[
         out.update(stop=None, no_support=True, extended=True, reasons=["No solid support level below this price."],
                    justification="No solid support level below this price.")
         return out
-    stop = round(chosen.lo - buf, 4 if entry < 1 else 2)
+    stop = stop_under(chosen, a, entry)
+    assert stop < chosen.lo, "a support-based stop must sit below the support"
     support_gap = (entry - chosen.hi) / entry * 100
     mood = {"uptrend": "It's in a steady uptrend.", "downtrend": "It's been falling.",
             "range/weak trend": "It's moving sideways without a clear trend."}[regime]
@@ -605,7 +648,8 @@ def initial_stop(ticker: str, df: pd.DataFrame, entry: float, settings: Mapping[
                mood, f"The stop is about {(entry - stop) / entry * 100:.0f}% below your entry."]
     if downtrend:
         reasons.append("Because it is falling, that support may not hold.")
-    out.update(stop=stop, no_support=False, extended=support_gap > ext_limit, support_lo=chosen.lo,
+    out.update(stop=stop, no_support=False, extended=(support_gap > ext_limit
+                                       or entry - chosen.hi > RULES["support_max_distance_atr"] * a), support_lo=chosen.lo,
                support_hi=chosen.hi, touches=chosen.touches, hvn=chosen.hvn,
                support_gap_pct=support_gap, distance_pct=(entry - stop) / entry * 100,
                reasons=reasons, justification=" ".join(reasons))
@@ -839,7 +883,9 @@ def format_alert(decisions: list[Decision], asof: str, quiet_when_no_changes: bo
     if start:
         line = "ℹ️ Starting stops, confirm the broker order matches: " + html.escape(" · ".join(start))
         if any(n.endswith("*") for n in start):
-            line += html.escape("  (* set from today's price: the entry-based stop was already above it)")
+            line += html.escape("  (* just under a support level; your entry-based stop was already above the price)")
+        if any(n.endswith("†") for n in start):
+            line += html.escape("  († no clear support nearby, so it is just a distance below today's price)")
         blocks.append(line)
     ladder = [d.notice for d in sorted(notices, key=lambda x: x.ticker) if d.notice_kind == "ladder"]
     if ladder:
@@ -978,6 +1024,7 @@ def evaluate(db_path: str | Path, *, overrides_stop: Mapping[str, float] | None 
                 continue
             state = load_state(conn, p["id"])
             adopted = baseline = False
+            mark = ""
             if forced:
                 prev, since = float(forced), pd.Timestamp(last_session_date(now))
             elif state:
@@ -990,14 +1037,15 @@ def evaluate(db_path: str | Path, *, overrides_stop: Mapping[str, float] | None 
                 since = df.index[-1]
                 prev = ladder_stop(df, p, settings)[0]
                 if prev >= float(df["Close"].iloc[-1]):
-                    prev, baseline = baseline_stop(t, df, p, settings), True
+                    (prev, backed), baseline = baseline_stop(t, df, p, settings), True
+                    mark = "*" if backed else "†"
             etf = etfs.get(t)
             ctx = sector_context(bars.get(etf) if etf else None, etf, df)
             d = decide(t, df, p, prev, settings, ctx, since=since, asof=asof_ts)
             if adopted and d.action == "RAISE":
                 d.action = "ENTRY"      # the first recorded stop is a starting stop, not a raise from a stop nobody placed
             if adopted and d.action != "SKIP":
-                d.notice, d.notice_kind = f"{t} ${d.new_stop:,.2f}" + ("*" if baseline else ""), "start"
+                d.notice, d.notice_kind = f"{t} ${d.new_stop:,.2f}{mark}", "start"
                 if baseline:
                     d.source = d.source or "BASELINE"
             elif d.source == "LADDER" and (state is None or state["tier"] != "LADDER"):

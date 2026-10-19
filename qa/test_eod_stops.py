@@ -44,7 +44,7 @@ class IndicatorTests(unittest.TestCase):
         df = bars(200, drift=0.0, vol=0.004)
         df["Low"] = 100.0 + np.sin(np.arange(200) / 5) * 0  # flat base, then plant pivots
         df["High"], df["Close"], df["Open"] = 102.0, 101.0, 101.0
-        for i in (60, 120):
+        for i in (110, 170):
             df.iloc[i, df.columns.get_loc("Low")] = 90.0
         zones = e.support_zones(df, atr_now=2.0, hvn=np.array([]))
         z = next(z for z in zones if z.lo == 90.0)
@@ -189,6 +189,113 @@ class DecisionTests(unittest.TestCase):
         self.assertLess(d.new_stop, d.close)
 
 
+def flat_range(n=200, dips=(), dip_low=99.2, floor_vol=1e6):
+    """Quiet range 99.5-100.5 with optional single-bar dips down to `dip_low`."""
+    idx = pd.bdate_range(end="2026-07-17", periods=n)
+    df = pd.DataFrame({"Open": 100.0, "High": 100.5, "Low": 99.5, "Close": 100.0, "Volume": floor_vol}, index=idx)
+    for i in dips:
+        df.iloc[i, df.columns.get_loc("Low")] = dip_low
+        df.iloc[i, df.columns.get_loc("Close")] = dip_low + 0.2
+    return df
+
+
+class SupportQualityTests(unittest.TestCase):
+    """The stop must sit BELOW a real floor, and a floor must be real."""
+    ST = dict(DEFAULT_SETTINGS)
+
+    def zones(self, df):
+        a = float(e.atr(df).iloc[-1])
+        return [z for z in e.support_zones(df, a, np.array([])) if z.qualified]
+
+    def test_two_real_bounces_make_a_qualified_floor(self):
+        df = flat_range(dips=(100, 140), dip_low=90.0)
+        z = self.zones(df)
+        self.assertEqual(len(z), 1)
+        self.assertEqual((z[0].lo, z[0].touches), (90.0, 2))
+
+    def test_shallow_wiggles_are_not_support(self):
+        df = flat_range(dips=(100, 140), dip_low=99.2)          # dips bounce back under 1.5 ATR
+        self.assertEqual(self.zones(df), [])
+        out = e.initial_stop("X", df, 100.0, self.ST)
+        self.assertIsNone(out["stop"])
+        self.assertTrue(out["no_support"] and out["extended"])
+
+    def test_two_lows_a_few_bars_apart_are_one_touch_not_two(self):
+        df = flat_range(dips=(100, 104), dip_low=90.0)
+        self.assertEqual(self.zones(df), [])
+
+    def test_single_bounce_without_a_volume_node_is_not_enough(self):
+        self.assertEqual(self.zones(flat_range(dips=(120,), dip_low=90.0)), [])
+        lone = e.Zone(90.0, 90.0, 1, hvn=True, reaction=4.0)
+        self.assertTrue(lone.qualified)                          # one hard bounce ON a volume node is
+        self.assertFalse(e.Zone(90.0, 90.0, 1, hvn=True, reaction=2.0).qualified)
+        self.assertFalse(e.Zone(90.0, 90.0, 1, hvn=False, reaction=9.0).qualified)
+
+    def test_old_lows_are_stale(self):
+        df = flat_range(n=300, dips=(40, 70), dip_low=90.0)     # both older than the 140-bar window
+        self.assertEqual(self.zones(df), [])
+
+    def test_a_floor_price_already_broken_is_not_support(self):
+        df = flat_range(dips=(100, 140), dip_low=90.0)
+        out = e.initial_stop("X", df, 85.0, self.ST)            # entry below the old floor
+        self.assertIsNone(out["stop"])
+
+    def test_support_far_away_is_flagged_extended(self):
+        near = e.initial_stop("X", flat_range(dips=(100, 140), dip_low=97.0), 100.0, self.ST)
+        far = e.initial_stop("X", flat_range(dips=(100, 140), dip_low=70.0), 100.0, self.ST)
+        self.assertIsNotNone(far["stop"])
+        self.assertTrue(far["extended"])
+        if near["stop"] is not None:
+            self.assertFalse(near["extended"])
+
+    def test_stop_is_always_below_the_floor_with_a_real_buffer(self):
+        found = 0
+        for floor in (90.0, 96.0, 80.0):
+            df = flat_range(dips=(100, 140), dip_low=floor)
+            a = float(e.atr(df).iloc[-1])
+            out = e.initial_stop("X", df, 100.0, self.ST)
+            if out["stop"] is None:
+                continue
+            found += 1
+            lo = out["support_lo"]
+            buffer = max(0.3 * a, 0.005 * lo)
+            self.assertLessEqual(out["stop"], lo - buffer + 1e-9, f"floor {floor}")
+            self.assertLess(out["stop"], lo)
+        self.assertGreaterEqual(found, 2)
+
+    def test_stop_below_floor_on_random_markets(self):
+        found = 0
+        for seed in range(40):
+            df = bars(drift=0.0005, vol=0.02, seed=seed, end="2026-07-17")
+            out = e.initial_stop("X", df, float(df["Close"].iloc[-1]), self.ST)
+            if out["stop"] is None:
+                continue
+            found += 1
+            a = out["atr"]
+            self.assertLessEqual(out["stop"], out["support_lo"] - max(0.3 * a, 0.005 * out["support_lo"]) + 1e-9)
+        self.assertGreater(found, 3)
+
+    def test_penny_stock_buffer_is_still_below_the_floor(self):
+        z = e.Zone(0.2800, 0.2850, 3)
+        s = e.stop_under(z, 0.0004, 0.30)
+        self.assertLess(s, 0.2800)
+        self.assertLessEqual(s, 0.28 - 0.005 * 0.28 + 1e-9)
+
+    def test_decide_says_so_when_the_stop_sits_above_support(self):
+        df = flat_range(dips=(100, 140), dip_low=92.0)
+        pos = dict(entry_price=100.0, atr=1.0, opened_at=str(df.index[-30].date()), risk_status="RISK_ON", rung=0)
+        d = e.decide("X", df, pos, 98.5, self.ST)
+        self.assertEqual(d.action, "HOLD")
+        self.assertTrue(any("above the nearest support" in r for r in d.reasons), d.reasons)
+
+    def test_no_support_is_stated_not_invented(self):
+        df = flat_range(dips=(100, 140), dip_low=99.2)
+        pos = dict(entry_price=100.0, atr=1.0, opened_at=str(df.index[-30].date()), risk_status="RISK_ON", rung=0)
+        d = e.decide("X", df, pos, 90.0, self.ST)
+        self.assertIn("No clear support level nearby", " ".join(d.reasons))
+        self.assertNotIn("just under a support level", " ".join(d.reasons))
+
+
 class AlertTests(unittest.TestCase):
     @staticmethod
     def dec(tk, action, prev=40.0, new=45.0):
@@ -245,9 +352,9 @@ class InitialStopTests(unittest.TestCase):
 
     def test_extended_limit_is_a_setting(self):
         df = bars(drift=0.002, seed=5)
-        entry = float(df["Close"].iloc[-1]) * 1.3
+        entry = float(df["Close"].iloc[-1])
         loose = e.initial_stop("X", df, entry, dict(DEFAULT_SETTINGS, extendedpct=90))
-        tight = e.initial_stop("X", df, entry, dict(DEFAULT_SETTINGS, extendedpct=5))
+        tight = e.initial_stop("X", df, entry, dict(DEFAULT_SETTINGS, extendedpct=0.5))
         self.assertIsNotNone(loose["stop"])
         self.assertFalse(loose["extended"])
         self.assertTrue(tight["extended"])
@@ -459,7 +566,7 @@ class Pipeline(unittest.TestCase):
         self.assertLess(d.new_stop, close)
         self.assertGreater(d.new_stop, 0)
         self.assertEqual(self.state()[0][2], "BASELINE")
-        self.assertIn(f"DOWN ${d.new_stop:,.2f}*", self.sent[0])
+        self.assertRegex(self.sent[0], rf"DOWN \${d.new_stop:,.2f}[*†]")
         self.assertNotIn("BREACH", self.sent[0])
         self.assertNotIn("to raise", self.sent[0].replace("0 to raise", ""))
         self.assertNotIn("🔼", self.sent[0])
