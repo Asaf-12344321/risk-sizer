@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Risk Sizer EOD stop review after the US close
+
+[Timer]
+# New York time, so US daylight-saving changes need no edit.  Yahoo's daily bar is
+# final by 16:30; holidays simply produce an unchanged "HOLD" message.
+OnCalendar=Mon..Fri 16:30 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

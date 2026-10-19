@@ -1,0 +1,17 @@
+[Unit]
+Description=Risk Sizer end-of-day stop review (Telegram alert)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=risk-sizer
+Group=risk-sizer
+WorkingDirectory=/opt/risk-sizer
+EnvironmentFile=/etc/risk-sizer.env
+ExecStart=/opt/risk-sizer/.venv/bin/python eod_stops.py
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# data/ holds the sector cache; the DB lives in /var/lib/risk-sizer
+ReadWritePaths=/var/lib/risk-sizer /opt/risk-sizer/data
