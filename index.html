@@ -2783,12 +2783,15 @@
       var browserStop = live ? live.stop : rungs[idx].stop;
       var eod = positionStopUpdates[String(p.id)];
       var eodStop = eod ? Number(eod.current_stop_price) : NaN;
-      // Order: post-close engine > the Telegram job's recorded stop > browser ladder.
-      var shownStop = isFinite(eodStop) ? eodStop : (p.srvStop !== null ? p.srvStop : browserStop);
-      // The recorded stop is only breached by the latest bar: earlier lows happened while it was lower.
-      var lastBar = p.srvStop !== null ? (barsCache[p.tick] || []).slice(-1)[0] : null;
-      var recordedHit = !!(lastBar && lastBar[2] <= p.srvStop);
-      var hit = (eod && eod.position_exit_detected) || recordedHit || (live && live.hit);
+      // Single source of truth: the daily EOD job's recorded stop (eod_stop_state), the same
+      // number its Telegram alert carries. Only a position with no record yet falls back to
+      // the post-close engine, then to the browser ATR ladder.
+      var recorded = p.srvStop !== null;
+      var shownStop = recorded ? p.srvStop : (isFinite(eodStop) ? eodStop : browserStop);
+      // A recorded stop is only breached by the latest bar: earlier lows happened while it was lower.
+      var lastBar = recorded ? (barsCache[p.tick] || []).slice(-1)[0] : null;
+      var hit = recorded ? !!(lastBar && lastBar[2] <= p.srvStop)
+                         : (eod && eod.position_exit_detected) || (live && live.hit);
       // EOD determines the authoritative current stop, but the deterministic ladder
       // remains useful while an EOD job is pending. Show the first rung that would
       // actually raise today's stop rather than hiding guidance behind EOD state.
@@ -2810,19 +2813,23 @@
 
       if (hit) {
         out += '<div class="position-state danger"><strong>Stop hit — close this position.</strong><span>Do not wait for another signal.</span></div>';
-      } else if (eod && eod.actionable_alert_needed) {
+      } else if (recorded ? p.stopLast === "RAISE" : eod && eod.actionable_alert_needed) {
         out += '<div class="position-state good"><strong>Move your broker stop to ' + px(shownStop) + '.</strong><span>This is today’s after-close update.</span></div>';
       } else {
         out += '<div class="position-state"><strong>All set.</strong><span>'
-          + (eod ? "Updated after market close." : "Updates after market close.") + "</span></div>";
+          + ((recorded || eod) ? "Updated after market close." : "Updates after market close.") + "</span></div>";
       }
 
       out += '<div class="pos-next">'
-        + (nextStep
+        + (recorded
+          ? 'Keep the stop at <b>' + positionPx(shownStop) + '</b>. It only moves when the daily review sends a raise.'
+          : nextStep
           ? 'Next: at <b>' + positionPx(nextStep.px) + '</b>, move stop to <b>'
             + positionPx(nextStep.stop) + '</b>.'
           : 'Next: ladder complete; keep the stop at <b>' + positionPx(shownStop) + '</b>.')
-        + '<br><span class="eod-status">EOD status: ' + (eod ? "completed" : "waiting")
+        + '<br><span class="eod-status">EOD status: '
+        + (recorded ? (p.stopLast || "recorded").toLowerCase() + (p.stopAsof ? " · " + esc(p.stopAsof) : "")
+                    : eod ? "completed" : "waiting")
         + "</span></div>";
 
       if (!(p.value_ils > 0)) {

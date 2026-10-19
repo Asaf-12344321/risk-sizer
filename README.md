@@ -217,6 +217,7 @@ Runs from `deploy/risk-sizer-eod.timer` at **01:00 New York, Tue-Sat** (the morn
 - **Splits.** A split since the position was opened makes the stored entry, ATR and stop meaningless, so the position is reported as `split detected` and skipped. Fix the entry price/ATR/`opened_at` in the position (or re-add it), then `--set-stop TICKER=PRICE`.
 - **Short history.** Under 120 bars the job trails by the plain ATR ladder and says so once.
 - **Unseeded positions.** The first run adopts the ATR-ladder stop and tells you once, so you can confirm the broker order matches.
+- **Source of truth.** The Positions tab and `/api/positions` show this job's recorded stop (`eod_stop_state`), the same number the Telegram alert carries. Only a position with no record yet falls back to the post-close engine, then to the browser ATR ladder.
 - `--dry-run` computes and prints without saving; `--force` runs even when no new session has completed.
 
 ### Continuous crash assumption

@@ -35,6 +35,27 @@ const wait = (ms) => new Promise(r => setTimeout(r, ms));
   await wait(400);
   ck('stop above old lows but latest bar clear: no breach warning', !/Stop hit/.test(c.$('posList').textContent),
      c.$('posList').textContent.slice(0, 300));
+  // The recorded stop wins over the post-close engine and the browser ladder, everywhere on the card.
+  const d = boot({ positions: [
+      { id: 1, ticker: 'REC', entry_price: 100, atr: 5, quantity: 10, value_ils: 5000, currency: 'ILS',
+        opened_at: '2026-09-01', stop: 112.5, stop_source: 'NORMAL', stop_asof: '2026-10-16', stop_last_action: 'RAISE' },
+      { id: 2, ticker: 'NEW', entry_price: 100, atr: 5, quantity: 10, value_ils: 5000, currency: 'ILS',
+        opened_at: '2026-09-01' }],
+    stops: { 1: { current_stop_price: 99, actionable_alert_needed: false, position_exit_detected: true },
+             2: { current_stop_price: 97.25, actionable_alert_needed: false } } });
+  await wait(300);
+  d.w.document.getElementById('tab-pos').dispatchEvent(new d.w.Event('click', { bubbles: true }));
+  await wait(400);
+  const cards = d.$('posList').innerHTML.split('<div class="pos">').slice(1);
+  const rec = cards.find(c => /REC/.test(c)), fresh = cards.find(c => /NEW/.test(c));
+  const stopOf = c => (/Current stop<\/span><strong>([^<]+)</.exec(c) || [])[1];
+  ck('recorded stop is shown even when the post-close engine disagrees', stopOf(rec) === '₪112.50', stopOf(rec));
+  ck('post-close engine exit flag cannot contradict the recorded stop', !/Stop hit/.test(rec));
+  ck('a RAISE from the daily job is presented as the move-your-broker-stop action',
+     /Move your broker stop to 112\.50/.test(rec));
+  ck('no ladder guidance next to a recorded stop', !/Next: at/.test(rec) && /only moves when the daily review/.test(rec));
+  ck('position with no record falls back to the post-close engine stop', stopOf(fresh) === '₪97.25', stopOf(fresh));
+
   report('positions_stop');
   process.exit(0);
 })();
