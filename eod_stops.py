@@ -75,6 +75,7 @@ RULES: dict[str, float] = {
     "zone_merge_atr": 0.5,      # swing lows closer than this form one zone
     "pivot_reaction_atr": 1.5,  # a swing low only counts if price bounced this far (ATR) within ...
     "pivot_reaction_bars": 12,  # ... this many bars: filters wiggles that never attracted buyers
+    "recent_floor_bars": 60,    # when >=2 separate touches are this recent, they alone define the floor
     "min_touch_gap": 5,         # bars between two touches of a zone for them to count as two
     "min_zone_touches": 2,      # a zone needs this many separate bounces ...
     "major_bounce_atr": 4.0,    # ... or ONE bounce this big (a major swing low) ...
@@ -220,19 +221,28 @@ def support_zones(df: pd.DataFrame, atr_now: float, hvn: np.ndarray) -> list[Zon
     pivots = [p for p in pivots if p[2] >= RULES["pivot_reaction_atr"]]
     zones: list[Zone] = []
     bars_of: list[list[int]] = []
+    prices_of: list[list[float]] = []
     for price, idx, react in sorted(pivots):
         if zones and price - zones[-1].lo <= RULES["zone_merge_atr"] * atr_now:
             zones[-1].hi, zones[-1].reaction = price, max(zones[-1].reaction, react)
             bars_of[-1].append(int(idx))
+            prices_of[-1].append(price)
         else:
             zones.append(Zone(price, price, 1, reaction=react))
             bars_of.append([int(idx)])
-    for z, idxs in zip(zones, bars_of):              # separate bounces only, not one wiggle counted twice
+            prices_of.append([price])
+    cutoff = len(low) - int(RULES["recent_floor_bars"])
+    for z, idxs, prices in zip(zones, bars_of, prices_of):   # separate bounces only, not one wiggle counted twice
         counted, last = 0, -10**9
         for i in sorted(idxs):
             if i - last >= RULES["min_touch_gap"]:
                 counted, last = counted + 1, i
         z.touches = counted
+        # A floor that has been defended again and again RECENTLY is defined by those recent lows;
+        # one old, deeper wick (months ago) must not drag the stop far below where buyers keep stepping in.
+        recent = sorted((p, i) for p, i in zip(prices, idxs) if i >= cutoff)
+        if len({i // int(RULES["min_touch_gap"]) for _, i in recent}) >= 2:
+            z.lo, z.hi = recent[0][0], recent[-1][0]
     # A fresh retest cannot be a confirmed swing low yet (needs pivot_k bars after it), but a floor
     # the last few bars came back down to and held IS evidence: count it as a touch.
     recent_low = float(low[-(k + 1):].min())
@@ -613,7 +623,9 @@ def decide(
         elif s1:
             reasons.append(f"Next support to watch: {_p(s1.lo)}.")
 
-    if s1 is None and action != "BREACH":
+    if action == "BREACH":
+        reasons = reasons[:1]            # the breach is the whole story; trend commentary only confuses it
+    elif s1 is None:
         reasons.append("No clear support level nearby, so the stop is just a distance below the price.")
     metrics = dict(atr=a, rsi=rsi_now, adx=adx_now, pdi=pdi, mdi=mdi, vol_ratio=vol_ratio,
                    poc=poc, ladder=ladder, dist_days=dist_days)

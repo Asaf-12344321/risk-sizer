@@ -263,6 +263,33 @@ class SupportQualityTests(unittest.TestCase):
         if near["stop"] is not None:
             self.assertFalse(near["extended"])
 
+    def test_recent_touches_define_the_floor_not_one_old_deeper_wick(self):
+        df = flat_range()
+        for i, low in ((70, 96.6), (150, 97.0), (185, 96.9)):     # one old wick, two recent defences
+            df.iloc[i, df.columns.get_loc("Low")] = low
+            df.iloc[i, df.columns.get_loc("Close")] = low + 0.2
+        z = self.zones(df)
+        self.assertEqual(len(z), 1)
+        self.assertEqual((z[0].lo, z[0].hi), (96.9, 97.0))        # NOT 96.6 from months ago
+        self.assertEqual(z[0].touches, 3)                          # the old touch still counts as evidence
+        stop = e.initial_stop("X", df, 100.0, self.ST)["stop"]
+        self.assertTrue(stop is None or stop < 96.9)
+
+    def test_floor_with_only_old_touches_keeps_its_lowest_low(self):
+        df = flat_range()
+        for i, low in ((70, 96.6), (100, 97.0)):
+            df.iloc[i, df.columns.get_loc("Low")] = low
+            df.iloc[i, df.columns.get_loc("Close")] = low + 0.2
+        z = self.zones(df)
+        self.assertEqual([x.lo for x in z], [96.6])
+
+    def test_a_breach_message_contains_only_the_breach(self):
+        df = flat_range(dips=(100, 140), dip_low=90.0)
+        pos = dict(entry_price=100.0, atr=1.0, opened_at=str(df.index[-30].date()), risk_status="RISK_ON", rung=0)
+        d = e.decide("X", df, pos, 99.7, self.ST, since=df.index[-3])
+        self.assertEqual(d.action, "BREACH")
+        self.assertEqual(len(d.reasons), 1)
+
     def test_stop_is_always_below_the_floor_with_a_real_buffer(self):
         found = 0
         for floor in (90.0, 96.0, 80.0):
