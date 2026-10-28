@@ -19,7 +19,7 @@ const D_MAXSPEC = +(process.env.QA_MAXSPEC || 6000);
 const D_RISK    = +(process.env.QA_RISK    || 1300);
 
 function boot({ capital = D_CAPITAL, maxspec = D_MAXSPEC, riskabs = D_RISK,
-                quotes = QUOTES, positions = null, bars = {}, shadows = {}, stops = {}, riskResponse = null } = {}) {
+                quotes = QUOTES, positions = null, bars = {}, shadows = {}, stops = {}, riskResponse = null, holdPreview = {} } = {}) {
   const feed = fs.existsSync(quotes) ? fs.readFileSync(quotes, 'utf8') : null;
   const barsFixture = bars;
   const serverPositions = (positions || []).map((p, i) => ({
@@ -30,6 +30,7 @@ function boot({ capital = D_CAPITAL, maxspec = D_MAXSPEC, riskabs = D_RISK,
     display_name: p.display_name || '', legacy: Boolean(p.legacy),
     stop: p.stop, stop_source: p.stop_source, stop_asof: p.stop_asof,
     stop_why: p.stop_why, stop_last_action: p.stop_last_action, stop_prev: p.stop_prev,
+    held_since: p.held_since, hold_count: p.hold_count,
     opened_at: p.opened_at || p.added || new Date().toISOString().slice(0, 10),
     policy_snapshot: p.policy_snapshot || null
   }));
@@ -72,6 +73,8 @@ function boot({ capital = D_CAPITAL, maxspec = D_MAXSPEC, riskabs = D_RISK,
         }
         if (/\/api\/positions\/shadow$/.test(url)) return response(shadows);
         if (/\/api\/positions\/stops$/.test(url)) return response(stops);
+        if (/\/api\/positions\/\d+\/hold-preview$/.test(url)) return response(holdPreview);
+        if (/\/api\/positions\/\d+\/hold$/.test(url) && method === 'POST') { (w.__holdRequests = w.__holdRequests || []).push(JSON.parse(options.body)); return response({ ok: true }); }
         if (/\/api\/positions(?:\/\d+)?$/.test(url)) {
           if (method === 'GET') return response(w.__serverPositions);
           const body = options.body ? JSON.parse(options.body) : {};

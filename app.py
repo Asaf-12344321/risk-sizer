@@ -6,6 +6,7 @@ import json
 import math
 import os
 import sqlite3
+from contextlib import closing
 import threading
 import time
 from datetime import date
@@ -544,6 +545,70 @@ def create_position(request: ActiveCreate, _: Protected) -> dict[str, Any]:
         return db.create_active(values, after_insert=seed)
     except sqlite3.IntegrityError as exc:
         raise _conflict(exc) from exc
+
+
+def _position_or_404(item_id: int) -> dict[str, Any]:
+    position = db.get_active(item_id)
+    if position is None:
+        raise HTTPException(status_code=404, detail="Active position not found")
+    if eod_stops.is_excluded(position["ticker"]):
+        raise HTTPException(status_code=422, detail="Tel Aviv (.TA) tickers are not covered by the stop engine")
+    return position
+
+
+def _hold_numbers(position: dict[str, Any], preview: dict[str, Any]) -> dict[str, Any]:
+    """Shekel cost of holding on: what could still be lost from today's price to the new stop (or the
+    whole position when there is no stop), and what is already lost versus the entry price."""
+    qty, fx = float(position["quantity"]), float(position.get("fx_to_ils") or 1)
+    price, entry = float(preview["price"]), float(position["entry_price"])
+    stop = preview["new_stop"]
+    return {"extra_risk_ils": round((price - stop) * qty * fx, 2) if stop else round(price * qty * fx, 2),
+            "loss_so_far_ils": round((entry - price) * qty * fx, 2),
+            "position_value_ils": round(price * qty * fx, 2)}
+
+
+@app.get("/api/positions/{item_id}/hold-preview")
+async def hold_preview(item_id: int, _: Protected) -> dict[str, Any]:
+    """What 'holding on purpose' would do, with its cost, before the owner confirms."""
+    position = await run_in_threadpool(_position_or_404, item_id)
+    settings = (await run_in_threadpool(db.get_settings))["settings"]
+
+    def compute() -> dict[str, Any]:
+        preview = eod_stops.hold_preview(position, settings, market_data)
+        with closing(sqlite3.connect(db.path)) as conn:
+            eod_stops.ensure_schema(conn)
+            prior = conn.execute("SELECT COUNT(*) FROM eod_holds WHERE position_id = ?", (item_id,)).fetchone()[0]
+        return {**preview, **_hold_numbers(position, preview), "prior_holds": prior,
+                "reasons_allowed": eod_stops.HOLD_REASONS}
+    try:
+        return await run_in_threadpool(compute)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+class HoldRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str
+    note: str | None = Field(default=None, max_length=300)
+    confirm_ticker: str | None = Field(default=None, max_length=16)
+
+
+@app.post("/api/positions/{item_id}/hold")
+async def hold_on_purpose(item_id: int, request: HoldRequest, _: Protected) -> dict[str, Any]:
+    """Record 'I am holding on purpose' and re-base the stop on the chart from today's price."""
+    position = await run_in_threadpool(_position_or_404, item_id)
+    settings = (await run_in_threadpool(db.get_settings))["settings"]
+
+    def apply() -> dict[str, Any]:
+        preview = eod_stops.hold_preview(position, settings, market_data)   # recomputed: never trust the client
+        return eod_stops.record_hold(db.path, position, request.reason, request.note, preview,
+                                     request.confirm_ticker)
+    try:
+        return await run_in_threadpool(apply)
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/api/stop/suggest")

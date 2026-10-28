@@ -210,14 +210,20 @@ Saving a position sends the chosen stop to the server, which records it as the s
 
 ### Daily stop review (`eod_stops.py`)
 
-Runs from `deploy/risk-sizer-eod.timer` at **01:00 New York, Tue-Sat** (the morning after each session, about 07:00-08:00 Israel time). Broker stops only matter for the next session, and by then Yahoo's volume and split data are settled.
+Runs from `deploy/risk-sizer-eod.timer` at **01:00 New York, Tue-Sat** (the morning after each session, about 07:00-08:00 Israel time).
 
-- **Send first, save second.** The Telegram message (retried with backoff, `Retry-After` honoured, plain-text fallback if the markup is rejected) must be accepted before any stop is written. A failed run changes nothing, so the next run re-sends the alert. `OnFailure=` pings Telegram if the job itself crashes.
-- **Holidays and missed days.** No new completed session means no run. Breaches are checked against every bar since the position's last review, so a missed night is still caught. A ticker whose last bar is behind the others is reported as stale, not judged.
-- **Splits.** A split since the position was opened makes the stored entry, ATR and stop meaningless, so the position is reported as `split detected` and skipped. Fix the entry price/ATR/`opened_at` in the position (or re-add it), then `--set-stop TICKER=PRICE`.
-- **Support must be real, and the stop sits under it.** A swing low only counts if price bounced at least 1.5 ATR off it within 12 bars. A zone needs two separate bounces (at least 5 bars apart), or one major swing low (a 4+ ATR bounce), or a 2.5+ ATR bounce that also sits on a volume node. A fresh retest that is holding counts as a touch. Lows older than about 7 months, or more than 10 ATR below the price, are ignored. The stop is always priced below the zone's lowest low by at least 0.3 ATR or 0.5% (whichever is larger). With no qualified support the tool says so and falls back to a plain distance rule, and the calculator shows "Extended from support".
-- **Short history.** Under 120 bars the job trails by the plain ATR ladder and says so once.
-- **Unseeded positions.** The first run adopts the ATR-ladder stop and tells you once, so you can confirm the broker order matches.
+**A stop exists only where the chart says so.** There is no ATR ladder, no trail from the entry price and no "price minus N ATR" anywhere in the job.
+
+- **Proven supports (all three count):** a confirmed *swing low* that price defended (two separate bounces, or one 4+ ATR swing, or 2.5+ ATR on a volume node); a *volume node* (the VRVP/high-volume level) that price held on at least two separate visits; and *former resistance* that price broke above (two closes), never lost since, and retested or that sits on a volume node. Overlapping ones merge into one zone. Lows older than about 7 months, floors price already fell through, and levels more than 10 normal days below the price are ignored.
+- **Which level:** the stop goes just under the NEAREST proven support that sits at least a *cushion* below the price. The cushion is 1.5 normal days of movement in a clean uptrend and 2 otherwise, where a "normal day" is the largest of ATR, the last 5 days' range and a high-low (Parkinson) estimate. Trend, momentum and sector weakness shift the cushion by a quarter day, which only changes *which level* is used. The stop is priced below the zone's lowest low by at least 0.3 ATR or 0.5%.
+- **No proven support within reach means no stop.** The position is flagged "No chart support below, manual decision required" (once, then a weekly reminder) and the Positions card shows "No chart stop".
+- **Ratchet:** a chart stop only rises, when a higher proven support forms. Closing through it is a BREACH: the support broke.
+- **Holding on purpose:** on a breached or no-support position, *I'm holding on purpose* shows the cost in shekels, asks why, and re-bases the stop on the chart from today's price (or on nothing, if there is no support). It is the one time a recorded stop may go down. A second hold on the same position needs the ticker typed. The daily message adds a one-line scorecard (price when you decided vs now).
+- **Earlier distance-based stops** (tiers, ladder, ATR) are replaced once by chart stops the first time the new job runs; the alert says what each one replaces.
+- **Send first, save second.** The Telegram message (retried with backoff, `Retry-After` honoured, plain-text fallback) must be accepted before any stop is written. `OnFailure=` pings Telegram if the job crashes.
+- **Holidays and missed days.** No new completed session means no run. Breaches are checked on every bar since the last review. A ticker whose last bar is behind the others is reported as stale.
+- **Splits.** A split since the position was opened makes the stored prices meaningless, so the position is reported and skipped until you update it and re-enter the stop.
+- **Short history.** Under 120 days of history there is no chart support to read, so the position is flagged rather than given a distance stop.
 - **Source of truth.** The Positions tab and `/api/positions` show this job's recorded stop (`eod_stop_state`), the same number the Telegram alert carries. Only a position with no record yet falls back to the post-close engine, then to the browser ATR ladder.
 - `--dry-run` computes and prints without saving; `--force` runs even when no new session has completed.
 

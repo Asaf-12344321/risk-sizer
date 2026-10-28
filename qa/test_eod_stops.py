@@ -1,4 +1,5 @@
 import io
+import re
 import sqlite3
 import tempfile
 import time
@@ -82,59 +83,11 @@ class DecisionTests(unittest.TestCase):
         self.pos = position(self.df)
         self.st = dict(DEFAULT_SETTINGS)
 
-    def test_stop_never_moves_down(self):
-        for cut in range(150, 300, 7):
-            sub = self.df.iloc[:cut]
-            pos = position(sub, 40)
-            prev = e.ladder_stop(sub, pos, self.st)[0]
-            for k in range(0, 20):
-                d = e.decide("X", self.df.iloc[:cut + k], pos, prev, self.st)
-                self.assertGreaterEqual(d.new_stop, prev)
-                prev = d.new_stop
-
-    def test_raise_stays_below_price_even_after_tick_rounding(self):
-        raises = 0
-        for cut in range(150, 300, 10):
-            sub = self.df.iloc[:cut]
-            prev = float(sub["Close"].iloc[-1]) * 0.5            # far below: forces a RAISE
-            d = e.decide("X", sub, position(sub, 40), prev, self.st)
-            self.assertEqual(d.action, "RAISE", f"cut {cut}")
-            raises += 1
-            cap = e._floor_tick(d.close - e.RULES["tight_clearance_atr"] * d.metrics["atr"], e._tick(d.close))
-            self.assertLessEqual(d.new_stop, cap + 1e-9)
-        self.assertGreater(raises, 0)
-
-    def test_sector_tightens_at_most_one_notch_and_never_loosens(self):
-        prev = e.ladder_stop(self.df, self.pos, self.st)[0]
-        base = e.decide("X", self.df, self.pos, prev, self.st, e.Context())
-        weak = e.decide("X", self.df, self.pos, prev, self.st,
-                        e.Context("XLK", True, "XLK weak", stock_vs_sector_10d=-0.05))
-        self.assertIn(weak.tier - base.tier, (0, 1))
-        self.assertGreaterEqual(weak.new_stop, base.new_stop)
-
-    def test_idiosyncratic_strength_ignores_sector(self):
-        df = bars(drift=0.004, seed=11)           # strong steady climber
-        pos = position(df)
-        prev = e.ladder_stop(df, pos, self.st)[0]
-        base = e.decide("X", df, pos, prev, self.st, e.Context())
-        weak = e.decide("X", df, pos, prev, self.st,
-                        e.Context("XLK", True, "XLK weak", stock_vs_sector_10d=0.10))
-        self.assertEqual(weak.tier, base.tier)
-
     def test_breach_reported_and_stop_kept(self):
         prev = float(self.df["Low"].iloc[-1]) + 1.0
         d = e.decide("X", self.df, self.pos, prev, self.st)
         self.assertEqual(d.action, "BREACH")
         self.assertEqual(d.new_stop, prev)
-
-    def test_short_history_falls_back_to_the_atr_ladder(self):
-        sub = self.df.iloc[:60]
-        pos = position(sub, 30)
-        d = e.decide("X", sub, pos, float(sub["Close"].iloc[-1]) * 0.5, self.st)
-        self.assertEqual(d.source, "LADDER")
-        self.assertIn(d.action, ("RAISE", "HOLD"))
-        self.assertGreaterEqual(d.new_stop, d.prev_stop)
-        self.assertLess(d.new_stop, d.close)
 
     def test_breach_on_a_missed_session_is_still_reported(self):
         df = self.df.copy()
@@ -181,12 +134,6 @@ class DecisionTests(unittest.TestCase):
         d = e.decide("X", df, self.pos, float(self.df["Close"].iloc[-1]) * 0.8, self.st)
         self.assertEqual(d.action, "BREACH")
 
-    def test_all_time_high_with_no_support_below_does_not_crash(self):
-        df = bars(drift=0.01, vol=0.004, seed=9)                # relentless climb, price far above every node
-        pos = position(df, 60)
-        d = e.decide("X", df, pos, float(df["Close"].iloc[-60]) * 0.8, self.st)
-        self.assertIn(d.action, ("RAISE", "HOLD"))
-        self.assertLess(d.new_stop, d.close)
 
 
 def flat_range(n=200, dips=(), dip_low=99.2, floor_vol=1e6):
@@ -322,21 +269,6 @@ class SupportQualityTests(unittest.TestCase):
         s = e.stop_under(z, 0.0004, 0.30)
         self.assertLess(s, 0.2800)
         self.assertLessEqual(s, 0.28 - 0.005 * 0.28 + 1e-9)
-
-    def test_decide_says_so_when_the_stop_sits_above_support(self):
-        df = flat_range(dips=(100, 140), dip_low=92.0)
-        pos = dict(entry_price=100.0, atr=1.0, opened_at=str(df.index[-30].date()), risk_status="RISK_ON", rung=0)
-        d = e.decide("X", df, pos, 98.5, self.ST)
-        self.assertEqual(d.action, "HOLD")
-        self.assertTrue(any("above the nearest support" in r for r in d.reasons), d.reasons)
-
-    def test_no_support_is_stated_not_invented(self):
-        df = flat_range(dips=(100, 140), dip_low=99.2)
-        pos = dict(entry_price=100.0, atr=1.0, opened_at=str(df.index[-30].date()), risk_status="RISK_ON", rung=0)
-        d = e.decide("X", df, pos, 90.0, self.ST)
-        self.assertIn("No clear support level nearby", " ".join(d.reasons))
-        self.assertNotIn("just under a support level", " ".join(d.reasons))
-
 
 class AlertTests(unittest.TestCase):
     @staticmethod
@@ -572,69 +504,8 @@ class Pipeline(unittest.TestCase):
         self.assertEqual({d.ticker: d.action for d in decisions}["GONE"], "SKIP")
 
     # --- short history: protected by the ladder, told once
-    def test_ipo_uses_ladder_and_is_announced_only_once(self):
-        ipo = self.climber.iloc[-60:]
-        p = self.add("NEW", ipo, back=30)
-        e.seed_stop(self.path, p["id"], "NEW", float(ipo["Close"].iloc[-1]) * 0.5, "STRUCTURAL")
-        frames = {"*": self.climber, "NEW": ipo}
-        self.go(frames)
-        self.assertIn("simple distance rule: NEW (60 days)", self.sent[0])
-        self.assertEqual(self.state()[0][2], "LADDER")
-        self.sent.clear()
-        self.go(frames, force=True)
-        self.assertFalse(any("NEW (60 days)" in m for m in self.sent))
-
     # --- unseeded positions
-    def test_first_run_announces_the_adopted_ladder_stop_once(self):
-        self.add()
-        self.go()
-        self.assertIn("Starting stops, confirm the broker order matches: ZZZ $", self.sent[0])
-        self.assertEqual(len(self.state()), 1)
-        self.sent.clear()
-        self.go(force=True)
-        self.assertFalse(any("Starting stops" in m for m in self.sent))
-
-
     # --- adoption never invents a breach, and is one compact line
-    def test_adopting_a_ladder_stop_already_above_the_price_starts_from_todays_price(self):
-        falling = bars(drift=-0.01, vol=0.01, seed=4, end=END)
-        p = self.add("DOWN", falling, back=60)
-        entry_ladder = e.ladder_stop(falling, p, dict(DEFAULT_SETTINGS))[0]
-        close = float(falling["Close"].iloc[-1])
-        self.assertGreater(entry_ladder, close, "fixture must start with a ladder stop above the market")
-        decisions, _ = self.go({"*": falling})
-        d = decisions[0]
-        self.assertIn(d.action, ("ENTRY", "HOLD"))               # a starting stop, never a "raise" or breach
-        self.assertLess(d.new_stop, close)
-        self.assertGreater(d.new_stop, 0)
-        self.assertEqual(self.state()[0][2], "BASELINE")
-        self.assertRegex(self.sent[0], rf"DOWN \${d.new_stop:,.2f}[*†]")
-        self.assertNotIn("BREACH", self.sent[0])
-        self.assertNotIn("to raise", self.sent[0].replace("0 to raise", ""))
-        self.assertNotIn("🔼", self.sent[0])
-        self.sent.clear()
-        again, _ = self.go({"*": falling}, force=True)           # nothing new: quiet, still no breach
-        self.assertEqual(again[0].action, "HOLD")
-        self.assertFalse(any("Starting stops" in m for m in self.sent))
-
-    def test_adoption_never_reports_a_breach_even_when_the_last_low_is_under_the_ladder(self):
-        df = self.climber.copy()
-        p = self.add("ZZZ", df)
-        ladder = e.ladder_stop(df, p, dict(DEFAULT_SETTINGS))[0]
-        df.iloc[-1, df.columns.get_loc("Low")] = ladder * 0.99
-        decisions, _ = self.go({"*": df})
-        self.assertNotEqual(decisions[0].action, "BREACH")
-
-    def test_many_adopted_positions_share_one_notice_line(self):
-        for t in ("AAA", "BBB", "CCC"):
-            self.add(t)
-        self.go()
-        text = self.sent[0]
-        self.assertEqual(text.count("ℹ️"), 1)
-        for t in ("AAA", "BBB", "CCC"):
-            self.assertIn(f"{t} $", text)
-        self.assertLess(len(text), 400)
-
     # --- Tel Aviv tickers are out of scope
     def test_tase_tickers_are_not_evaluated_alerted_or_stored(self):
         self.add("AAA")
@@ -662,34 +533,6 @@ class Pipeline(unittest.TestCase):
     # --- plain-language explanations
     JARGON = r"\b(ADX|RSI|ATR|DI|EMA|SMA|HVN|POC|volume node|bars?|ladder|tier|notch|distribution|exhaustion|divergence|chandelier)\b"
 
-    def test_every_explanation_is_plain_language(self):
-        import re
-        seen = []
-        for seed, drift in ((11, 0.004), (3, 0.0015), (5, -0.003), (9, 0.01)):
-            df = bars(drift=drift, seed=seed, end=END)
-            pos = position(df, 60)
-            for frac in (0.4, 0.9, 1.5):
-                prev = float(df["Close"].iloc[-1]) * frac
-                for ctx in (e.Context(), e.Context("XLK", True, "x", stock_vs_sector_10d=-0.05)):
-                    d = e.decide("X", df, pos, prev, dict(DEFAULT_SETTINGS), ctx, since=df.index[-6])
-                    seen += d.reasons
-        seen += e.decide("X", df.iloc[:60], position(df.iloc[:60], 30), 1.0, dict(DEFAULT_SETTINGS)).reasons
-        seen += e.initial_stop("X", bars(drift=0.002, seed=5), 190.0, dict(DEFAULT_SETTINGS))["reasons"]
-        self.assertGreater(len(set(seen)), 8, "fixtures must exercise many different explanations")
-        for text in set(seen):
-            self.assertIsNone(re.search(self.JARGON, text, re.I), text)
-            self.assertNotRegex(text, r"\d+\.\d{3,}|[<>]=?\s*\d", text)       # no raw metrics
-            self.assertTrue(text.rstrip().endswith((".", ")")), text)
-
-    def test_raise_explanation_reads_like_a_sentence(self):
-        df = self.climber
-        d = e.decide("X", df, position(df, 60), float(df["Close"].iloc[-1]) * 0.5, dict(DEFAULT_SETTINGS))
-        self.assertEqual(d.action, "RAISE")
-        text = e.format_alert([d], "d")[0]
-        self.assertIn("Why: ", text)
-        self.assertIn("🟢⬆️", text)
-        self.assertNotIn("[", text.split("Why:")[0])                 # no [TIER] tag any more
-
     # --- breach window
     def test_breach_in_a_session_the_last_run_missed_is_alerted(self):
         df = self.climber.copy()
@@ -697,7 +540,7 @@ class Pipeline(unittest.TestCase):
         p = self.add("ZZZ", df)
         with sqlite3.connect(self.path) as c:
             e.ensure_schema(c)
-            c.execute("INSERT INTO eod_stop_state VALUES (?, 'ZZZ', 60.0, 'NORMAL', ?, 'x')",
+            c.execute("INSERT INTO eod_stop_state VALUES (?, 'ZZZ', 60.0, 'CHART', ?, 'x')",
                       (p["id"], str(df.index[-6].date())))
         decisions, _ = self.go({"*": df})
         self.assertEqual(decisions[0].action, "BREACH")
@@ -825,6 +668,472 @@ class TelegramTests(unittest.TestCase):
         text = e.format_alert([d], "d")[0]
         self.assertIn("A&lt;B&gt;&amp;", text)
         self.assertNotIn("<B>", text)
+
+
+
+# ============================================================== chart-only engine
+def series(closes, spread=0.5, overrides=None, volume=1e6):
+    """Daily bars from a list of closes: High/Low = close +- spread, with per-bar overrides {i: (high, low)}."""
+    n = len(closes)
+    idx = pd.bdate_range(end="2026-07-17", periods=n)
+    df = pd.DataFrame({"Open": closes, "High": [c + spread for c in closes], "Low": [c - spread for c in closes],
+                       "Close": closes, "Volume": volume}, index=idx, dtype=float)
+    for i, (h, l) in (overrides or {}).items():
+        df.iloc[i, df.columns.get_loc("High")] = h
+        df.iloc[i, df.columns.get_loc("Low")] = l
+    return df
+
+
+def pos_for(df, entry=None, back=30):
+    return dict(entry_price=float(df["Close"].iloc[-back]) if entry is None else entry, atr=1.0,
+                opened_at=str(df.index[-back].date()), risk_status="RISK_ON", rung=0)
+
+
+def two_floors(upper=96.0, lower=88.0, n=220):
+    """Quiet range around 100 with two defended floors: `upper` (dips at 100/150) and `lower` (dips at 120/170)."""
+    df = flat_range(n=n)
+    for i, low in ((100, upper), (150, upper), (120, lower), (170, lower)):
+        df.iloc[i, df.columns.get_loc("Low")] = low
+        df.iloc[i, df.columns.get_loc("Close")] = low + 0.6
+    return df
+
+
+class VolatilityTests(unittest.TestCase):
+    def test_a_fresh_volatility_shock_widens_the_cushion_at_once(self):
+        calm = flat_range(n=200)
+        shock = calm.copy()
+        shock.iloc[-5:, shock.columns.get_loc("High")] = 106.0
+        shock.iloc[-5:, shock.columns.get_loc("Low")] = 94.0
+        a_calm, a_shock = float(e.atr(calm).iloc[-1]), float(e.atr(shock).iloc[-1])
+        self.assertAlmostEqual(e.true_range_size(calm, a_calm), a_calm, delta=0.2)
+        self.assertGreater(e.true_range_size(shock, a_shock), 1.5 * a_shock)      # not hidden by the slow ATR
+
+    def test_high_low_estimate_catches_wide_ranges_atr_smooths_over(self):
+        df = flat_range(n=200)
+        df.iloc[-15:, df.columns.get_loc("High")] = 103.0
+        df.iloc[-15:, df.columns.get_loc("Low")] = 97.0
+        a = float(e.atr(df).iloc[-1])
+        self.assertGreaterEqual(e.true_range_size(df, a), a)
+
+
+class ProvenSupportTests(unittest.TestCase):
+    def test_volume_node_needs_two_defended_visits(self):
+        df = flat_range(n=200)
+        for i in (100, 150):
+            df.iloc[i, df.columns.get_loc("Low")] = 96.8
+            df.iloc[i, df.columns.get_loc("Close")] = 97.5
+        a = float(e.atr(df).iloc[-1])
+        zones = e.node_supports(df, a, np.array([97.0]), 100.0)
+        self.assertEqual(len(zones), 1)
+        self.assertEqual((zones[0].kinds, zones[0].touches, zones[0].proven), (("volume",), 2, True))
+        one = flat_range(n=200)
+        one.iloc[100, one.columns.get_loc("Low")] = 96.8
+        one.iloc[100, one.columns.get_loc("Close")] = 97.5
+        self.assertEqual(e.node_supports(one, a, np.array([97.0]), 100.0), [])      # a busy price nobody defended
+        self.assertEqual(e.node_supports(df, a, np.array([103.0]), 100.0), [])      # nodes above the price are not support
+
+    def test_volume_node_merges_with_the_swing_zone_it_sits_on(self):
+        df = flat_range(n=200)
+        for i in (100, 150):
+            df.iloc[i, df.columns.get_loc("Low")] = 96.8
+            df.iloc[i, df.columns.get_loc("Close")] = 97.5
+        a = float(e.atr(df).iloc[-1])
+        zs = e.find_supports(df, a, np.array([97.0]), 100.0)
+        self.assertEqual(len(zs), 1)
+        self.assertIn("volume", zs[0].kinds)
+        self.assertIn("swing", zs[0].kinds)
+
+    def flip_df(self, retest=True, fail=False):
+        closes = [90.0] * 140
+        for i, c in zip(range(58, 65), (90.5, 92, 94, 95, 93, 91, 90)):
+            closes[i] = c
+        for i in range(100, 140):
+            closes[i] = 97.0 if i < 103 else 99.0
+        ov = {61: (95.5, 94.0)}
+        if retest:
+            ov[112] = (99.5, 95.6)                         # price comes back to the old high and holds
+        if fail:
+            for i in range(120, 126):
+                closes[i] = 93.0                           # ...but later falls back under it: breakout failed
+        return series(closes, overrides=ov)
+
+    def test_resistance_broken_and_retested_becomes_support(self):
+        df = self.flip_df()
+        a = float(e.atr(df).iloc[-1])
+        z = e.flip_supports(df, a, np.array([]), float(df["Close"].iloc[-1]))
+        self.assertEqual(len(z), 1)
+        self.assertEqual(z[0].kinds, ("flip",))
+        self.assertAlmostEqual(z[0].hi, 95.5)
+        self.assertLessEqual(z[0].lo, z[0].hi)
+
+    def test_flip_needs_a_holding_retest_or_a_volume_node(self):
+        df = self.flip_df(retest=False)
+        a = float(e.atr(df).iloc[-1])
+        self.assertEqual(e.flip_supports(df, a, np.array([]), 99.0), [])
+        self.assertEqual(len(e.flip_supports(df, a, np.array([95.4]), 99.0)), 1)    # volume proves it instead
+
+    def test_failed_breakout_is_not_support(self):
+        df = self.flip_df(fail=True)
+        a = float(e.atr(df).iloc[-1])
+        self.assertEqual(e.flip_supports(df, a, np.array([]), float(df["Close"].iloc[-1])), [])
+
+    def test_a_high_price_never_rejected_is_not_resistance(self):
+        closes = [90.0] * 140
+        for i in range(100, 140):
+            closes[i] = 99.0                               # a plain jump: no swing high with a rejection behind it
+        df = series(closes)
+        a = float(e.atr(df).iloc[-1])
+        self.assertEqual(e.flip_supports(df, a, np.array([]), 99.0), [])
+
+
+class ChartStopSelectionTests(unittest.TestCase):
+    ST = dict(DEFAULT_SETTINGS)
+
+    def decide(self, df, prev=0.0, ctx=None, since=None):
+        return e.decide("X", df, pos_for(df), prev, self.ST, ctx, since=since)
+
+    def test_stop_goes_under_the_nearest_proven_support_that_clears_the_cushion(self):
+        df = two_floors()
+        d = self.decide(df)
+        self.assertEqual(d.action, "ENTRY")
+        a = float(e.atr(df).iloc[-1])
+        hvn, _, _ = e.volume_profile(df, a)
+        close = float(df["Close"].iloc[-1])
+        sup = [z for z in e.find_supports(df, a, hvn, close) if z.hi < close]
+        eligible = [z for z in sup if close - e.stop_under(z, a, close) >= d.metrics["cushion"] * d.metrics["vol"]]
+        self.assertTrue(eligible)
+        best = max(eligible, key=lambda z: z.hi)
+        self.assertAlmostEqual(d.new_stop, e.stop_under(best, a, close))
+        self.assertLess(d.new_stop, best.lo)
+
+    def test_every_stop_sits_below_a_proven_support_and_a_cushion_under_the_price(self):
+        checked = 0
+        for seed in range(30):
+            df = bars(drift=0.0005, vol=0.02, seed=seed, end="2026-07-17")
+            d = e.decide("X", df, pos_for(df), 0.0, self.ST)
+            if d.action != "ENTRY":
+                continue
+            checked += 1
+            a = float(e.atr(df).iloc[-1])
+            hvn, _, _ = e.volume_profile(df, a)
+            sup = e.find_supports(df, a, hvn, d.close)
+            self.assertTrue(any(d.new_stop < z.lo for z in sup), seed)
+            self.assertGreaterEqual(d.close - d.new_stop, e.RULES["cushion_min"] * d.metrics["vol"] - 1e-6, seed)
+        self.assertGreater(checked, 5)
+
+    @staticmethod
+    def jumpy(floors):
+        """Wide daily range (about 2 points), so the cushion is about 3.5-4 points."""
+        df = flat_range(n=220)
+        df["High"], df["Low"] = 101.0, 99.0
+        for i, low in floors:
+            df.iloc[i, df.columns.get_loc("Low")] = low
+            df.iloc[i, df.columns.get_loc("Close")] = low + 1.5
+        return df
+
+    def test_support_inside_normal_daily_swings_is_skipped_for_the_next_one_down(self):
+        df = self.jumpy([(100, 97.9), (150, 97.9), (120, 88.0), (170, 88.0)])
+        d = self.decide(df)
+        self.assertEqual(d.action, "ENTRY")
+        self.assertLess(d.new_stop, 88.0)                                    # the 97 floor is inside the cushion
+        self.assertIn("around $88.00", " ".join(d.reasons))
+
+    def test_weak_sector_picks_a_nearer_support_but_a_strong_stock_ignores_it(self):
+        df = two_floors(upper=97.4, lower=88.0)
+        base = self.decide(df)
+        weak = self.decide(df, ctx=e.Context("XLK", True, "x", stock_vs_sector_10d=-0.05))
+        self.assertGreaterEqual(weak.new_stop, base.new_stop)                  # never a deeper (looser) level
+        strong = self.decide(df, ctx=e.Context("XLK", True, "x", stock_vs_sector_10d=0.10))
+        self.assertEqual(strong.tier, base.tier)
+
+    def test_no_proven_support_means_no_stop_and_a_flag(self):
+        df = flat_range(dips=(100, 140), dip_low=99.2)                         # only shallow wiggles
+        d = self.decide(df)
+        self.assertEqual((d.action, d.new_stop, d.source), ("NO_SUPPORT", 0.0, "NONE"))
+        self.assertIn("No chart support below, manual decision required.", d.reasons)
+
+    def test_price_at_multi_month_lows_says_so(self):
+        falling = bars(drift=-0.01, vol=0.01, seed=4, end="2026-07-17")
+        d = e.decide("X", falling, pos_for(falling), 0.0, self.ST)
+        self.assertEqual(d.action, "NO_SUPPORT")
+        self.assertIn("lowest level in about 7 months", d.reasons[0])
+
+    def test_short_history_has_no_chart_support_and_no_distance_fallback(self):
+        df = flat_range(n=60)
+        d = self.decide(df)
+        self.assertEqual((d.action, d.new_stop), ("NO_SUPPORT", 0.0))
+        self.assertIn("Too new to read chart levels", d.reasons[0])
+        keep = self.decide(df, prev=95.0)
+        self.assertEqual((keep.action, keep.new_stop), ("HOLD", 95.0))
+
+    def test_support_too_close_is_explained(self):
+        df = self.jumpy([(100, 97.9), (150, 97.9)])
+        d = self.decide(df)
+        self.assertEqual(d.action, "NO_SUPPORT")
+        self.assertIn("too close", d.reasons[0])
+
+    def test_chart_stop_only_rises(self):
+        df = two_floors()
+        first = self.decide(df)
+        up = self.decide(df, prev=first.new_stop - 5.0)
+        self.assertEqual(up.action, "RAISE")
+        self.assertAlmostEqual(up.new_stop, first.new_stop)
+        down = self.decide(df, prev=first.new_stop + 0.5)
+        self.assertEqual(down.action, "HOLD")
+        self.assertEqual(down.new_stop, first.new_stop + 0.5)
+
+    def test_tiny_steps_are_not_alerted(self):
+        df = two_floors()
+        first = self.decide(df)
+        d = self.decide(df, prev=first.new_stop - 0.05)
+        self.assertEqual(d.action, "HOLD")
+
+    def test_breach_means_the_support_broke_and_keeps_the_stop(self):
+        df = two_floors()
+        stop = self.decide(df).new_stop
+        broken = df.copy()
+        broken.iloc[-1, broken.columns.get_loc("Low")] = stop - 1.0
+        d = e.decide("X", broken, pos_for(broken), stop, self.ST, since=broken.index[-3])
+        self.assertEqual((d.action, d.new_stop), ("BREACH", stop))
+        self.assertEqual(len(d.reasons), 1)
+
+    def test_explanation_names_the_chart_level_in_plain_words(self):
+        d = self.decide(two_floors())
+        text = " ".join(d.reasons)
+        self.assertIn("just under a support level around", text)
+        self.assertRegex(text, r"days' worth of normal price swings below today's price")
+
+    JARGON = r"\b(ADX|RSI|ATR|DI|EMA|SMA|HVN|POC|VRVP|bars?|ladder|tier|notch|distribution|exhaustion|divergence|chandelier|ceiling)\b"
+
+    def test_every_explanation_is_plain_language(self):
+        seen = []
+        for df in (two_floors(), two_floors(upper=97.4), flat_range(dips=(100, 140), dip_low=99.2), flat_range(n=60),
+                   bars(drift=0.004, seed=11, end="2026-07-17"), bars(drift=-0.01, vol=0.01, seed=4, end="2026-07-17")):
+            for ctx in (e.Context(), e.Context("XLK", True, "x", stock_vs_sector_10d=-0.05)):
+                for prev in (0.0, 50.0):
+                    seen += e.decide("X", df, pos_for(df), prev, self.ST, ctx, since=df.index[-6]).reasons
+        seen += e.initial_stop("X", two_floors(), 100.0, self.ST)["reasons"]
+        self.assertGreater(len(set(seen)), 8)
+        for text in set(seen):
+            self.assertIsNone(re.search(self.JARGON, text, re.I), text)
+            self.assertNotRegex(text, r"\\d+\\.\\d{3,}|[<>]=?\\s*\\d", text)
+            self.assertTrue(text.rstrip().endswith((".", ")")), text)
+
+    def test_initial_stop_uses_the_same_proven_supports(self):
+        df = two_floors()
+        out = e.initial_stop("X", df, 100.0, self.ST)
+        self.assertIsNotNone(out["stop"])
+        self.assertLess(out["stop"], out["support_lo"])
+        self.assertIn("swing", out["kinds"])
+        none = e.initial_stop("X", flat_range(dips=(100, 140), dip_low=99.2), 100.0, self.ST)
+        self.assertIsNone(none["stop"])
+        self.assertTrue(none["no_support"] and none["extended"])
+
+
+class AlertFormatTests(unittest.TestCase):
+    def dec(self, action, t="AAA", **kw):
+        base = dict(ticker=t, close=50.0, prev_stop=40.0, new_stop=45.0, tier=e.NORMAL, action=action,
+                    reasons=["The stop now sits just under a support level around $44.00."])
+        base.update(kw)
+        return e.Decision(**base)
+
+    def test_new_chart_stops_replacing_old_ones_are_explained(self):
+        d = self.dec("ENTRY", prev_stop=0.0, notice="replaces the earlier distance-based stop of $41.20")
+        text = e.format_alert([d], "d")[0]
+        self.assertIn("🆕 <b>AAA</b>", text)
+        self.assertIn("Chart-based stop: <b>$45.00</b> (replaces the earlier distance-based stop of $41.20)", text)
+        self.assertIn("1 new chart stop", text)
+
+    def test_positions_without_support_are_grouped_by_cause_in_one_block_each(self):
+        cause = "The price is at or near its lowest level in about 7 months, so there is no proven support underneath to anchor a stop to."
+        ds = [self.dec("NO_SUPPORT", t, new_stop=0.0, prev_stop=0.0, reasons=[cause, e.NO_SUPPORT_SENTENCE])
+              for t in ("BBB", "AAA", "CCC")]
+        ds.append(self.dec("NO_SUPPORT", "DDD", new_stop=0.0, prev_stop=0.0,
+                           reasons=["There is no proven support level underneath the price.", e.NO_SUPPORT_SENTENCE]))
+        text = e.format_alert(ds, "d")[0]
+        self.assertEqual(text.count("No chart support below, manual decision required"), 2)
+        self.assertIn("AAA $50.00 · BBB $50.00 · CCC $50.00", text)
+        self.assertIn("4 without chart support", text)
+
+    def test_breach_alert_points_to_the_hold_decision(self):
+        d = self.dec("BREACH", reasons=["On Oct 16 it traded down to $39.00, at or below your stop of $40.00."])
+        text = e.format_alert([d], "d")[0]
+        self.assertIn("Your chart-based stop of $40.00 was reached", text)
+        self.assertIn("Holding on purpose", text)
+
+    def test_scorecard_appears_only_next_to_other_news(self):
+        holds = [dict(ticker="ZZZ", since="2026-10-28", price_then=38.10, price_now=39.50)]
+        quiet = e.format_alert([self.dec("HOLD")], "d", True, holds)
+        self.assertEqual(quiet, [])
+        text = e.format_alert([self.dec("RAISE")], "d", True, holds)[0]
+        self.assertIn("📌 Holding on purpose: ZZZ since Oct 28 ($38.10 → $39.50, +3.7%)", text)
+
+
+class ChartPipeline(Pipeline):
+    """Pipeline behaviour of the chart-only engine (reuses Pipeline's DB/fake-network helpers)."""
+    def setUp(self):
+        super().setUp()
+        self.floors = two_floors()
+        self.falling = bars(drift=-0.01, vol=0.01, seed=4, end=END)
+
+    def seed(self, p, stop, tier="CHART"):
+        with sqlite3.connect(self.path) as c:
+            e.ensure_schema(c)
+            c.execute("INSERT OR REPLACE INTO eod_stop_state VALUES (?, ?, ?, ?, ?, 'x')",
+                      (p["id"], p["ticker"], stop, tier, str(self.floors.index[-6].date())))
+
+    def log_actions(self):
+        with sqlite3.connect(self.path) as c:
+            return [r[0] for r in c.execute("SELECT action FROM eod_stop_log ORDER BY id")]
+
+    # --- first chart stop
+    def test_first_run_records_a_chart_stop_with_its_reasons(self):
+        self.add("ZZZ", self.floors)
+        decisions, _ = self.go({"*": self.floors})
+        self.assertEqual(decisions[0].action, "ENTRY")
+        self.assertEqual(self.state()[0][2], "CHART")
+        self.assertIn("🆕 <b>ZZZ</b>", self.sent[0])
+        self.assertIn("just under a support level around", self.sent[0])
+        self.sent.clear()
+        again, _ = self.go({"*": self.floors}, force=True)
+        self.assertEqual(again[0].action, "HOLD")
+        self.assertEqual(self.sent, [])
+
+    # --- the one-time reset of earlier distance-based stops
+    def test_earlier_distance_based_stops_are_replaced_by_chart_stops_once(self):
+        p = self.add("ZZZ", self.floors)
+        self.seed(p, 97.31, tier="TIGHT")
+        decisions, _ = self.go({"*": self.floors})
+        self.assertEqual(decisions[0].action, "ENTRY")
+        self.assertIn("replaces the earlier distance-based stop of $97.31", self.sent[0])
+        self.assertEqual(self.state()[0][2], "CHART")
+        self.assertLess(self.state()[0][1], 97.31)                       # it may go down: the old number was not chart-based
+        self.sent.clear()
+        self.go({"*": self.floors}, force=True)
+        self.assertEqual(self.sent, [])
+
+    def test_a_user_set_or_calculator_stop_is_kept_as_a_chart_anchor(self):
+        for tier in ("MANUAL", "STRUCTURAL", "CHART"):
+            self.tearDown(); self.setUp()
+            p = self.add("ZZZ", self.floors)
+            self.seed(p, 80.0, tier=tier)
+            decisions, _ = self.go({"*": self.floors})
+            self.assertEqual(decisions[0].action, "RAISE", tier)
+
+    # --- no support
+    def test_no_support_is_flagged_once_then_reminded_weekly(self):
+        self.add("DOWN", self.falling)
+        decisions, _ = self.go({"*": self.falling})
+        self.assertEqual(decisions[0].action, "NO_SUPPORT")
+        self.assertIn("No chart support below, manual decision required", self.sent[0])
+        self.assertEqual(self.state()[0][1:3], (0.0, "NONE"))
+        self.assertIsNone(e.stop_info(self.path)[1]["stop"])
+        self.sent.clear()
+        self.go({"*": self.falling}, force=True)                          # next day: already flagged
+        self.assertEqual(self.sent, [])
+        with sqlite3.connect(self.path) as c:                             # a week later it reminds again
+            c.execute("UPDATE eod_stop_log SET asof = '2026-07-01'")
+        self.go({"*": self.falling}, force=True)
+        self.assertIn("No chart support below", self.sent[0])
+
+    def test_no_support_never_invents_a_stop_even_for_a_position_far_in_profit(self):
+        df = series([90.0] * 250)
+        p = self.add("FLAT", df, back=100)
+        decisions, _ = self.go({"*": df})
+        self.assertEqual((decisions[0].action, decisions[0].new_stop), ("NO_SUPPORT", 0.0))
+
+    def test_support_appearing_later_turns_the_flag_into_a_chart_stop(self):
+        p = self.add("ZZZ", self.floors)
+        self.seed(p, 0.0, tier="NONE")
+        decisions, _ = self.go({"*": self.floors})
+        self.assertEqual(decisions[0].action, "ENTRY")
+        self.assertEqual(self.state()[0][2], "CHART")
+
+    # --- holding on purpose
+    def breach_setup(self):
+        p = self.add("ZZZ", self.floors)
+        stop = e.decide("ZZZ", self.floors, pos_for(self.floors), 0.0, dict(DEFAULT_SETTINGS)).new_stop
+        broken = self.floors.copy()
+        broken.iloc[-1, broken.columns.get_loc("Low")] = stop - 1.0
+        broken.iloc[-1, broken.columns.get_loc("Close")] = stop + 1.0
+        self.seed(p, stop)
+        return p, stop, broken
+
+    def preview(self, p, df):
+        pos = self.db.get_active(p["id"])
+        return e.hold_preview(pos, dict(DEFAULT_SETTINGS), make_downloader({"*": df}))
+
+    def test_hold_preview_changes_nothing(self):
+        p, stop, broken = self.breach_setup()
+        before = self.state()
+        v = self.preview(p, broken)
+        self.assertIn("new_stop", v)
+        self.assertEqual(self.state(), before)
+
+    def test_holding_on_purpose_rebases_the_stop_and_stops_the_breach_alerts(self):
+        p, stop, broken = self.breach_setup()
+        decisions, _ = self.go({"*": broken})
+        self.assertEqual(decisions[0].action, "BREACH")
+        v = self.preview(p, broken)
+        res = e.record_hold(self.path, self.db.get_active(p["id"]), "thesis", "earnings soon", v)
+        self.assertEqual(res["hold_count"], 1)
+        self.assertEqual(self.log_actions()[-1], "OVERRIDE")
+        self.sent.clear()
+        after, _ = self.go({"*": broken}, force=True)
+        self.assertNotEqual(after[0].action, "BREACH")
+        self.assertFalse(any("🚨" in m for m in self.sent))
+        info = e.stop_info(self.path)[p["id"]]
+        self.assertEqual(info["hold_count"], 1)
+        self.assertIsNotNone(info["held_since"])
+
+    def test_holding_with_no_support_leaves_no_stop_and_silences_the_flag(self):
+        self.add("DOWN", self.falling)
+        self.go({"*": self.falling})
+        p = self.db.list_active()[0]
+        v = e.hold_preview(p, dict(DEFAULT_SETTINGS), make_downloader({"*": self.falling}))
+        self.assertIsNone(v["new_stop"])
+        e.record_hold(self.path, p, "liquidity", None, v)
+        with sqlite3.connect(self.path) as c:
+            c.execute("UPDATE eod_stop_log SET asof = '2026-07-01'")      # even a week later: decided, not forgotten
+        self.sent.clear()
+        self.go({"*": self.falling}, force=True)
+        self.assertEqual(self.sent, [])
+        info = e.stop_info(self.path)[p["id"]]
+        self.assertEqual((info["held_reason"], info["hold_count"], info["stop"]), ("liquidity", 1, None))
+
+    def test_a_second_hold_needs_the_ticker_typed(self):
+        p, stop, broken = self.breach_setup()
+        pos = self.db.get_active(p["id"])
+        v = self.preview(p, broken)
+        e.record_hold(self.path, pos, "thesis", None, v)
+        with self.assertRaises(PermissionError):
+            e.record_hold(self.path, pos, "thesis", None, v)
+        with self.assertRaises(PermissionError):
+            e.record_hold(self.path, pos, "thesis", None, v, "WRONG")
+        self.assertEqual(e.record_hold(self.path, pos, "thesis", None, v, "zzz")["hold_count"], 2)
+
+    def test_hold_reason_must_be_one_of_the_choices(self):
+        p, stop, broken = self.breach_setup()
+        with self.assertRaises(ValueError):
+            e.record_hold(self.path, self.db.get_active(p["id"]), "because", None, self.preview(p, broken))
+
+    def test_the_scorecard_shows_what_happened_since_the_hold(self):
+        p, stop, broken = self.breach_setup()
+        e.record_hold(self.path, self.db.get_active(p["id"]), "earnings", None, self.preview(p, broken))
+        better = self.floors.copy()
+        better.iloc[-1, better.columns.get_loc("Close")] = 103.0
+        better.iloc[-1, better.columns.get_loc("High")] = 103.5
+        self.sent.clear()
+        other = self.add("OTHER", self.falling)
+        self.go({"*": better, "OTHER": self.falling}, force=True)
+        self.assertTrue(any("📌 Holding on purpose: ZZZ since" in m for m in self.sent), self.sent)
+
+    def test_deleting_a_position_removes_its_holds(self):
+        p, stop, broken = self.breach_setup()
+        e.record_hold(self.path, self.db.get_active(p["id"]), "thesis", None, self.preview(p, broken))
+        with sqlite3.connect(self.path) as c:
+            e.purge_position(c, p["id"])
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM eod_holds").fetchone()[0], 0)
 
 
 if __name__ == "__main__":
