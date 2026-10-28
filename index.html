@@ -437,6 +437,10 @@
   .position-stop span, .position-state span { display: block; color: var(--text-dim); font-size: 12px; }
   .position-stop strong { color: var(--accent); font: 700 28px/1 var(--font-mono); }
   .stop-up { color: var(--good); font-weight: 700; }
+  .hold-panel { margin: 8px 0 0; padding: 10px; border: 1px solid var(--border, #8884); border-radius: 8px; font-size: 13px; }
+  .hold-panel label { display: block; margin: 6px 0 2px; color: var(--text-dim); font-size: 12px; }
+  .hold-panel select, .hold-panel input { width: 100%; box-sizing: border-box; }
+  .hold-panel .hold-cost { margin: 6px 0; }
   .position-stop .stop-up { display: inline; margin-left: 8px; font-size: 14px; }
   .position-state { padding: 2px 2px 0; font-size: 14px; }
   .position-state strong { display: block; margin-bottom: 2px; }
@@ -2166,8 +2170,8 @@
         + (st && st.stop > 0 ? "Technical stop would be " + px(st.stop) + " — " + st.justification : "")
       : stopSource === "STRUCTURAL" ? st.justification
       : structural.status === "loading" ? "Looking up the technical stop…"
-      : structural.status === "failed" ? "Technical stop unavailable — using the ATR ladder."
-      : st && st.no_support ? "No valid support found — using the ATR ladder."
+      : structural.status === "failed" ? "Chart stop unavailable right now — the size above uses a plain ATR distance and is not a chart stop."
+      : st && st.no_support ? "No proven chart support below this price. The size above uses a plain ATR distance only to size the trade; it is not a chart stop, and the daily job will flag this position for a manual decision."
       : "";
     el("summaryPosition").textContent = nis(size);
     el("summaryShares").textContent = num(shares, shares < 10 ? 2 : 0);
@@ -2616,7 +2620,8 @@
       // The daily Telegram job's recorded stop (eod_stop_state).
       srvStop: row.stop > 0 ? Number(row.stop) : null, stopSource: row.stop_source || null,
       stopAsof: row.stop_asof || null, stopWhy: row.stop_why || null,
-      stopLast: row.stop_last_action || null, stopPrev: row.stop_prev > 0 ? Number(row.stop_prev) : null
+      stopLast: row.stop_last_action || null, stopPrev: row.stop_prev > 0 ? Number(row.stop_prev) : null,
+      heldSince: row.held_since || null, holdCount: Number(row.hold_count || 0)
     };
   }
 
@@ -2788,11 +2793,12 @@
       // Single source of truth: the daily EOD job's recorded stop (eod_stop_state), the same
       // number its Telegram alert carries. Only a position with no record yet falls back to
       // the post-close engine, then to the browser ATR ladder.
-      var recorded = p.srvStop !== null;
-      var shownStop = recorded ? p.srvStop : (isFinite(eodStop) ? eodStop : browserStop);
+      var noStop = p.stopSource === "NONE";          // the chart offers no support: there is no stop at all
+      var recorded = p.srvStop !== null || noStop;
+      var shownStop = noStop ? NaN : (recorded ? p.srvStop : (isFinite(eodStop) ? eodStop : browserStop));
       // A recorded stop is only breached by the latest bar: earlier lows happened while it was lower.
       var lastBar = recorded ? (barsCache[p.tick] || []).slice(-1)[0] : null;
-      var hit = recorded ? !!(lastBar && lastBar[2] <= p.srvStop)
+      var hit = recorded ? !!(!noStop && lastBar && lastBar[2] <= p.srvStop)
                          : (eod && eod.position_exit_detected) || (live && live.hit);
       // EOD determines the authoritative current stop, but the deterministic ladder
       // remains useful while an EOD job is pending. Show the first rung that would
@@ -2811,12 +2817,21 @@
         + '<button class="ghost-btn" type="button" data-act="edit" data-i="' + i + '">Edit</button>'
         + '<button class="danger-ghost" type="button" data-act="close" data-i="' + i + '">Delete</button>'
         + "</div></div>"
-        + '<div class="position-stop"><span>Current stop</span><strong>' + positionPx(shownStop) + "</strong>"
+        + '<div class="position-stop"><span>Current stop</span><strong>' + (noStop ? "No chart stop" : positionPx(shownStop)) + "</strong>"
         + (recorded && p.stopLast === "RAISE" && p.stopPrev !== null
             ? '<span class="stop-up">▲ up from ' + positionPx(p.stopPrev) + "</span>" : "") + "</div>";
 
-      if (hit) {
-        out += '<div class="position-state danger"><strong>Stop hit — close this position.</strong><span>Do not wait for another signal.</span></div>';
+      var holdBtn = '<div class="pos-actions"><button class="btn-reached" type="button" data-act="hold" data-i="' + i
+        + '">I\u2019m holding on purpose</button></div><div class="hold-panel" data-hold="' + i + '" hidden></div>';
+      if (noStop) {
+        out += p.heldSince
+          ? '<div class="position-state"><strong>Holding on purpose since ' + esc(p.heldSince) + '.</strong><span>No chart support below, so there is no stop. '
+            + 'You will be reminded only if the chart gives a stop.</span></div>'
+          : '<div class="position-state danger"><strong>No chart support below — manual decision required.</strong><span>'
+            + esc(p.stopWhy || "") + "</span></div>" + holdBtn;
+      } else if (hit) {
+        out += '<div class="position-state danger"><strong>Your chart stop was reached.</strong><span>The support it sat under broke. Sell it, or hold on purpose.</span></div>'
+          + (recorded ? holdBtn : "");
       } else if (recorded ? p.stopLast === "RAISE" : eod && eod.actionable_alert_needed) {
         out += '<div class="position-state good"><strong><span class="stop-up">▲</span> Move your broker stop up to ' + px(shownStop) + '.</strong><span>'
           + (recorded && p.stopWhy ? esc(p.stopWhy) : "This is today’s after-close update.") + "</span></div>";
@@ -2827,13 +2842,15 @@
 
       out += '<div class="pos-next">'
         + (recorded
-          ? 'Keep the stop at <b>' + positionPx(shownStop) + '</b>. It only moves when the daily review sends a raise.'
+          ? (noStop ? 'There is no stop to keep: the chart has no proven support below the price.'
+                    : 'Keep the stop at <b>' + positionPx(shownStop) + '</b>. It only moves when the daily review sends a raise.')
           : nextStep
           ? 'Next: at <b>' + positionPx(nextStep.px) + '</b>, move stop to <b>'
             + positionPx(nextStep.stop) + '</b>.'
           : 'Next: ladder complete; keep the stop at <b>' + positionPx(shownStop) + '</b>.')
         + '<br><span class="eod-status">EOD status: '
-        + (recorded ? ({ RAISE: "stop moved up", HOLD: "no change", BREACH: "stop reached", ENTRY: "starting stop" }[p.stopLast] || "recorded") + (p.stopAsof ? " · " + esc(p.stopAsof) : "")
+        + (recorded ? ({ RAISE: "stop moved up", HOLD: "no change", BREACH: "stop reached", ENTRY: "new chart stop",
+                                      NO_SUPPORT: "no chart support", OVERRIDE: "holding on purpose" }[p.stopLast] || "recorded") + (p.stopAsof ? " · " + esc(p.stopAsof) : "")
                     : eod ? "completed" : "waiting")
         + "</span></div>";
 
@@ -2892,12 +2909,53 @@
     });
   }
 
+  // "Holding on purpose": the owner keeps a position although its chart stop was reached (or the chart
+  // has no support). Shows what it costs first, asks for a reason, then the server re-bases the stop.
+  function openHoldPanel(i, button) {
+    var p = positions[i], panel = button.closest(".pos").querySelector('.hold-panel[data-hold="' + i + '"]');
+    if (!panel) return;
+    panel.hidden = false; panel.textContent = "Checking the chart…";
+    apiFetch("/api/positions/" + p.id + "/hold-preview").then(function (v) {
+      var ils = function (n) { return "₪" + Math.round(n).toLocaleString("en-US"); };
+      var reasons = Object.keys(v.reasons_allowed || {}).map(function (k) {
+        return '<option value="' + esc(k) + '">' + esc(v.reasons_allowed[k]) + "</option>"; }).join("");
+      panel.innerHTML = '<div class="hold-cost">'
+        + (v.new_stop ? "Holding on: the chart gives a new stop at <b>$" + num(v.new_stop, 2) + "</b>. From today’s price that is about <b>"
+            + ils(v.extra_risk_ils) + "</b> more you could lose."
+          : "The chart has no support below today’s price, so there will be <b>no stop</b> and the whole position (<b>"
+            + ils(v.position_value_ils) + "</b>) stays exposed.")
+        + " You are already down <b>" + ils(Math.max(v.loss_so_far_ils, 0)) + "</b> versus your entry.</div>"
+        + '<label>Why are you holding?</label><select data-role="hold-reason">' + reasons + "</select>"
+        + '<label>Note (optional)</label><input type="text" maxlength="300" data-role="hold-note">'
+        + (v.prior_holds >= 1 ? '<label>You already did this once for ' + esc(p.tick) + '. Type ' + esc(p.tick)
+            + ' to confirm</label><input type="text" data-role="hold-confirm-ticker">' : "")
+        + '<div class="pos-actions"><button class="primary-btn" type="button" data-act="hold-confirm" data-i="' + i + '">Confirm</button>'
+        + '<button class="btn-undo" type="button" data-act="hold-cancel" data-i="' + i + '">Cancel</button></div>';
+    }).catch(function (error) { panel.textContent = "Could not check the chart: " + error.message; });
+  }
+
+  function confirmHold(i, button) {
+    var panel = button.closest(".hold-panel"), p = positions[i];
+    var body = { reason: panel.querySelector('[data-role="hold-reason"]').value,
+                 note: panel.querySelector('[data-role="hold-note"]').value.trim() || null };
+    var typed = panel.querySelector('[data-role="hold-confirm-ticker"]');
+    if (typed) body.confirm_ticker = typed.value.trim();
+    button.disabled = true;
+    apiFetch("/api/positions/" + p.id + "/hold", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body) })
+      .then(function () { return loadServerPositions(); })
+      .catch(function (error) { button.disabled = false; window.alert(error.message); });
+  }
+
   el("posList").addEventListener("click", function (e) {
     var b = e.target.closest("button[data-act]");
     if (!b) return;
     var i = parseInt(b.dataset.i, 10);
     if (!positions[i]) return;
     var change = {};
+    if (b.dataset.act === "hold") { openHoldPanel(i, b); return; }
+    if (b.dataset.act === "hold-confirm") { confirmHold(i, b); return; }
+    if (b.dataset.act === "hold-cancel") { var hp = b.closest(".hold-panel"); hp.hidden = true; hp.innerHTML = ""; return; }
     if (b.dataset.act === "edit") {
       var nextName = window.prompt(
         "Friendly display name for " + positions[i].tick,
@@ -2971,7 +3029,8 @@
         quantity: valueIls / (price * fx), value_ils: valueIls,
         currency: inCcy.value === "USD" ? "USD" : "ILS", fx_to_ils: fx,
         risk_status: "RISK_ON", legacy: false, rung: 0, opened_at: todayStr(),
-        initial_stop: currentSizing && currentSizing.stop > 0 ? Math.round(currentSizing.stop * 10000) / 10000 : null,
+        // A plain ATR distance is not a chart stop: only a chart or user stop is recorded.
+        initial_stop: currentSizing && currentSizing.stop > 0 && currentSizing.stopSource !== "ATR" ? Math.round(currentSizing.stop * 10000) / 10000 : null,
         stop_source: currentSizing ? currentSizing.stopSource : "ENTRY",
         stop_note: currentSizing ? currentSizing.stopNote : null
       })

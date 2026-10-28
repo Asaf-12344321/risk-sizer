@@ -214,6 +214,61 @@ class RiskApiTests(unittest.TestCase):
         eod_stops.open_state(self.database.path).close()
         self.assertEqual(self._eod_rows("eod_stop_state"), 0)
 
+    def _chart_frame(self, ticker="ZZZ"):
+        from qa.test_eod_stops import two_floors
+        df = two_floors()
+        cols = {(ticker, c): df[c].to_numpy() for c in ("Open", "High", "Low", "Close", "Volume")}
+        return pd.DataFrame(cols, index=df.index)
+
+    def _hold_position(self):
+        created = self.client.post("/api/positions", headers=self.headers, json={
+            "ticker": "zzz", "entry_price": 110, "atr": 2, "quantity": 100, "value_ils": 36500,
+            "currency": "USD", "fx_to_ils": 3.65, "initial_stop": 95, "stop_source": "manual"})
+        self.assertEqual(created.status_code, 201, created.text)
+        return created.json()["id"]
+
+    def test_hold_preview_shows_the_chart_stop_and_the_cost(self):
+        pid = self._hold_position()
+        frame = self._chart_frame()
+        with patch.object(app_module, "market_data", lambda *a, **k: frame):
+            r = self.client.get(f"/api/positions/{pid}/hold-preview", headers=self.headers)
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        self.assertLess(body["new_stop"], body["price"])
+        self.assertAlmostEqual(body["extra_risk_ils"], round((body["price"] - body["new_stop"]) * 100 * 3.65, 2))
+        self.assertGreater(body["loss_so_far_ils"], 0)                      # entry 110 vs price 100
+        self.assertEqual(body["prior_holds"], 0)
+        self.assertIn("thesis", body["reasons_allowed"])
+
+    def test_hold_on_purpose_rebases_and_a_second_one_needs_the_ticker(self):
+        pid = self._hold_position()
+        frame = self._chart_frame()
+        with patch.object(app_module, "market_data", lambda *a, **k: frame):
+            ok = self.client.post(f"/api/positions/{pid}/hold", headers=self.headers,
+                                  json={"reason": "thesis", "note": "earnings Tuesday"})
+            again = self.client.post(f"/api/positions/{pid}/hold", headers=self.headers, json={"reason": "thesis"})
+            typed = self.client.post(f"/api/positions/{pid}/hold", headers=self.headers,
+                                     json={"reason": "other", "confirm_ticker": "ZZZ"})
+            bad = self.client.post(f"/api/positions/{pid}/hold", headers=self.headers, json={"reason": "because"})
+        self.assertEqual(ok.status_code, 200, ok.text)
+        self.assertEqual(ok.json()["hold_count"], 1)
+        self.assertEqual(again.status_code, 409)
+        self.assertEqual(typed.status_code, 200, typed.text)
+        self.assertEqual(bad.status_code, 422)
+        row = next(r for r in self.client.get("/api/positions", headers=self.headers).json() if r["id"] == pid)
+        self.assertEqual(row["hold_count"], 2)
+        self.assertLess(row["stop"], 100)                                 
+        self.assertEqual(row["stop_last_action"], "OVERRIDE")
+
+    def test_hold_endpoints_reject_unknown_and_tel_aviv_positions(self):
+        self.assertEqual(self.client.get("/api/positions/999/hold-preview", headers=self.headers).status_code, 404)
+        created = self.client.post("/api/positions", headers=self.headers, json={
+            "ticker": "imco.ta", "entry_price": 100, "atr": 2, "quantity": 1, "value_ils": 100, "currency": "ILS"})
+        pid = created.json()["id"]
+        self.assertEqual(self.client.get(f"/api/positions/{pid}/hold-preview", headers=self.headers).status_code, 422)
+        self.assertEqual(self.client.post(f"/api/positions/{pid}/hold", headers=self.headers,
+                                          json={"reason": "thesis"}).status_code, 422)
+
     def test_stop_suggest_endpoint(self):
         import numpy as np, pandas as pd
         dates = pd.bdate_range("2025-06-02", periods=300)
