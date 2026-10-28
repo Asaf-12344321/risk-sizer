@@ -901,7 +901,7 @@ class ChartStopSelectionTests(unittest.TestCase):
         d = self.decide(two_floors())
         text = " ".join(d.reasons)
         self.assertIn("just under a support level around", text)
-        self.assertRegex(text, r"days' worth of normal price swings below today's price")
+        self.assertNotRegex(text, r"days' worth|normal price swings")
 
     JARGON = r"\b(ADX|RSI|ATR|DI|EMA|SMA|HVN|POC|VRVP|bars?|ladder|tier|notch|distribution|exhaustion|divergence|chandelier|ceiling)\b"
 
