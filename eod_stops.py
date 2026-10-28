@@ -519,12 +519,6 @@ def anchor_phrase(z: Zone) -> str:
             f"{' and where lots of shares changed hands' if z.hvn else ''}")
 
 
-def cushion_sentence(close: float, stop: float, vol: float) -> str:
-    days = (close - stop) / vol if vol > 0 else 0.0
-    return (f"That is about {days:.1f} days' worth of normal price swings below today's price, "
-            f"so everyday moves shouldn't hit it.")
-
-
 def no_support_reason(df: pd.DataFrame, supports: list[Zone], close: float, vol: float, gap: float) -> str:
     below = [z for z in supports if z.hi < close]
     if below:
@@ -677,14 +671,13 @@ def decide(
                         source="NONE")
 
     anchor = anchor_phrase(chosen)
-    cushion = cushion_sentence(close, chart_stop, vol)
     if prev_stop <= 0:
         return Decision(ticker, close, 0.0, chart_stop, tier, "ENTRY",
-                        [f"The stop sits {anchor}.", cushion] + reasons, metrics, source="CHART")
+                        [f"The stop sits {anchor}."] + reasons, metrics, source="CHART")
     new_stop = max(prev_stop, chart_stop)
     if new_stop - prev_stop >= max(RULES["min_move_atr"] * vol, RULES["min_move_pct"] / 100 * prev_stop):
         return Decision(ticker, close, prev_stop, new_stop, tier, "RAISE",
-                        [f"The stop now sits {anchor}.", cushion] + reasons, metrics, source="CHART")
+                        [f"The stop now sits {anchor}."] + reasons, metrics, source="CHART")
     return Decision(ticker, close, prev_stop, prev_stop, tier, "HOLD",
                     ["The chart stop is unchanged: no higher proven support has formed."] + reasons[:1],
                     metrics, source="CHART")
