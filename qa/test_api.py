@@ -269,6 +269,33 @@ class RiskApiTests(unittest.TestCase):
         self.assertEqual(self.client.post(f"/api/positions/{pid}/hold", headers=self.headers,
                                           json={"reason": "thesis"}).status_code, 422)
 
+    def test_regime_page_is_served_and_its_data_endpoint_needs_the_key(self):
+        page = self.client.get("/regime")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Market Regime", page.text)
+        self.assertEqual(self.client.get("/api/regime").status_code, 401)
+
+    def test_regime_data_is_cached_and_refreshable_and_failures_are_a_503(self):
+        view = {"title": "Nasdaq-100 (NDX / QQQ) Market Regime", "kpis": [], "checks": []}
+        app_module._regime_cache.update(at=0.0, view=None)
+        with patch.object(app_module.market_regime, "compute_view", return_value=view) as compute:
+            first = self.client.get("/api/regime", headers=self.headers)
+            second = self.client.get("/api/regime", headers=self.headers)
+            self.assertEqual((first.status_code, first.json()), (200, view))
+            self.assertEqual(second.status_code, 200)
+            self.assertEqual(compute.call_count, 1)                           # second call served from the cache
+            self.client.get("/api/regime?refresh=1", headers=self.headers)
+            self.assertEqual(compute.call_count, 2)
+            self.assertTrue(compute.call_args.kwargs["refresh"])
+        app_module._regime_cache.update(at=0.0, view=None)
+        with patch.object(app_module.market_regime, "compute_view", side_effect=RuntimeError("offline")):
+            r = self.client.get("/api/regime", headers=self.headers)
+        self.assertEqual(r.status_code, 503)
+        self.assertIn("Market data unavailable", r.json()["detail"])
+
+    def test_the_main_page_links_to_the_regime_dashboard(self):
+        self.assertIn('href="/regime"', self.client.get("/").text)
+
     def test_stop_suggest_endpoint(self):
         import numpy as np, pandas as pd
         dates = pd.bdate_range("2025-06-02", periods=300)

@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Market Regime</title>
+<link rel="icon" href="/risk-sizer-icon.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #f6f6f8; --card: #ffffff; --fg: #1c1c1e; --dim: #6b6b72; --line: #e4e4e8;
+    --good: #1f8a4c; --good-bg: #e4f4ea; --warn: #b86e00; --warn-bg: #fdf0d9; --bad: #c0392b; --bad-bg: #fbe5e2;
+    --accent: #2a5bd7; --radius: 12px;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101013; --card: #1a1a1f; --fg: #ececf1; --dim: #9b9ba5; --line: #2b2b32;
+      --good: #5fcf8d; --good-bg: #15291e; --warn: #f0b24b; --warn-bg: #2d2412; --bad: #ff7b6e; --bad-bg: #321a17;
+      --accent: #7da2ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 16px 16px 56px; }
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .top a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  button.refresh { border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 999px;
+                   padding: 8px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+  button.refresh:disabled { opacity: .55; cursor: progress; }
+  h1 { font-size: 22px; line-height: 1.25; margin: 4px 0 2px; }
+  .asof { color: var(--dim); font-size: 13px; }
+  .banner { margin: 14px 0; padding: 14px 16px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--card); }
+  .banner .label { font-size: 20px; font-weight: 700; }
+  .banner.good { background: var(--good-bg); } .banner.good .label { color: var(--good); }
+  .banner.warn { background: var(--warn-bg); } .banner.warn .label { color: var(--warn); }
+  .banner.bad { background: var(--bad-bg); } .banner.bad .label { color: var(--bad); }
+  .banner p { margin: 4px 0 0; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 14px 0 6px; }
+  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+  .kpi .t { color: var(--dim); font-size: 12px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
+  .kpi .v { font-size: 24px; font-weight: 700; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
+  .kpi.good .v { color: var(--good); } .kpi.warn .v { color: var(--warn); } .kpi.bad .v { color: var(--bad); }
+  .kpi .n { font-size: 13px; font-weight: 600; min-height: 1.2em; }
+  .kpi .s { color: var(--dim); font-size: 12px; margin-top: 6px; border-top: 1px solid var(--line); padding-top: 6px; }
+  h2 { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); margin: 28px 0 8px; }
+  .checks { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .check { display: flex; gap: 12px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .check:last-child { border-bottom: 0; }
+  .check.red { background: var(--bad-bg); }
+  .badge { flex: none; min-width: 104px; text-align: center; font-size: 12px; font-weight: 700; padding: 4px 8px; border-radius: 999px; }
+  .badge.ok { background: var(--good-bg); color: var(--good); } .badge.red { background: var(--bad); color: #fff; }
+  .badge.na { background: var(--line); color: var(--dim); }
+  .check b { display: block; font-size: 14px; } .check span { color: var(--dim); font-size: 14px; } .check.red span { color: var(--fg); }
+  details { margin: 10px 0; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; }
+  summary { cursor: pointer; font-weight: 600; }
+  details[open] summary { margin-bottom: 8px; }
+  details p, details li { color: var(--fg); margin: 6px 0; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--dim); font-size: 12px; font-weight: 600; }
+  .pos { color: var(--good); font-weight: 700; } .neg { color: var(--bad); font-weight: 700; }
+  .wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 2px 6px; }
+  .sub { color: var(--dim); font-size: 13px; margin: 0 0 8px; }
+  .state { text-align: center; color: var(--dim); padding: 60px 0; }
+  .err { background: var(--bad-bg); color: var(--bad); border-radius: var(--radius); padding: 12px 14px; margin: 14px 0; }
+  .small td, .small th { font-size: 13px; padding: 6px 8px; }
+  @media (max-width: 560px) { .check { align-items: flex-start; } .badge { min-width: 86px; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <a href="/">&larr; Risk Sizer</a>
+    <button class="refresh" id="refresh" type="button">&#8635; Refresh</button>
+  </div>
+  <div id="app"><div class="state" id="loading">Checking the market&hellip; this takes a few seconds the first time.</div></div>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var API_KEY_STORE = "riskSizerApiKey";          // the same key the Risk Sizer page stores
+  var app = document.getElementById("app");
+  var btn = document.getElementById("refresh");
+
+  function loadKey() { try { return window.localStorage.getItem(API_KEY_STORE) || null; } catch (e) { return null; } }
+  function saveKey(v) { try { if (v) window.localStorage.setItem(API_KEY_STORE, v); else window.localStorage.removeItem(API_KEY_STORE); } catch (e) { /* private mode */ } }
+
+  function api(path, retried) {
+    var key = loadKey(), headers = {};
+    if (key) headers["X-API-Key"] = key;
+    return fetch(path, { headers: headers }).then(function (r) {
+      if (r.status === 401 && !retried) {
+        var typed = window.prompt("Enter the Risk Sizer API key");
+        if (!typed) throw new Error("An API key is needed to load the market regime.");
+        saveKey(typed);
+        return api(path, true);
+      }
+      if (r.status === 401) { saveKey(null); throw new Error("That API key was not accepted."); }
+      return r.json().catch(function () { return {}; }).then(function (body) {
+        if (!r.ok) throw new Error(body.detail || ("HTTP " + r.status));
+        return body;
+      });
+    });
+  }
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.textContent = text;
+    return n;
+  }
+  function pct(v, signed, digits) {
+    if (v === null || v === undefined || isNaN(v)) return "n/a";
+    var d = digits === undefined ? 1 : digits, x = v * 100;
+    return (signed !== false && x > 0 ? "+" : "") + x.toFixed(d) + "%";
+  }
+  function tone(v) { return v > 0 ? "pos" : v < 0 ? "neg" : ""; }
+
+  function section(title) { return el("h2", null, title); }
+
+  function kpiCards(vm) {
+    var grid = el("div", "kpis");
+    vm.kpis.forEach(function (k) {
+      var c = el("div", "kpi " + k.tone);
+      c.appendChild(el("div", "t", k.title));
+      c.appendChild(el("div", "v", k.value));
+      c.appendChild(el("div", "n", k.note));
+      c.appendChild(el("div", "s", k.scale));
+      if (k.raw) c.appendChild(el("div", "s", k.raw));
+      grid.appendChild(c);
+    });
+    return grid;
+  }
+
+  function checks(vm) {
+    var wrap = el("div", "checks");
+    vm.checks.forEach(function (c) {
+      var red = c.ok === false, na = c.ok === null;
+      var row = el("div", "check" + (red ? " red" : ""));
+      row.appendChild(el("div", "badge " + (red ? "red" : na ? "na" : "ok"),
+                         red ? "🚨 RED FLAG" : na ? "NO DATA" : "✅ OK"));
+      var text = el("div");
+      text.appendChild(el("b", null, c.title));
+      text.appendChild(el("span", null, c.status));
+      row.appendChild(text);
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+
+  var EXPLAIN = [
+    ["1. Price vs. 200-Day Average", "The 200-day line is Wall Street’s macro dividing line. Staying above it means the long-term bull trend is intact; breaking below signals a structural trend break."],
+    ["2. 200-Day Average Slope", "Even during sharp dips, as long as the 200-day line itself is still sloping upward, multi-month momentum is positive. A falling slope signals a sustained bear market."],
+    ["3. Drawdown Depth (-20% Threshold)", "Drops of 5%–10% from the 52-week high are standard bull-market pullbacks. Crossing -20% is the official definition of a Bear Market."],
+    ["4. Drop Velocity (-10% in 20 Days)", "Markets that drift down slowly are calmly repricing earnings. A plunge of 10%+ within 20 trading days indicates forced liquidations, margin calls, and panic."],
+    ["5. Fear Level (VIX >= 30)", "VIX measures the cost of crash-protection options. 12–18 = Calm routine; 18–25 = Normal caution/choppy (no systemic panic); 25–30 = High stress; 30+ = Full institutional panic (seen in major crashes like 2008, 2020, 2022)."],
+    ["6. Fear Term Structure (VIX vs. VIX3M)", "Compares 1-month fear (VIX) to 3-month fear (VIX3M). Normally, the 3-month outlook is more uncertain than tomorrow (ratio < 1.0). When VIX spikes above VIX3M (Inversion > 1.0), institutions are paying anything for immediate overnight protection — a classic acute crash signal."],
+    ["7. Market Breadth (QQEW vs. QQQ)", "Compares the equal-weight Nasdaq-100 (where all 100 stocks count equally) to the cap-weight QQQ (dominated by 7 mega-caps). If QQQ holds up while QQEW plunges, the market foundation is rotting underneath. Moving together means broad market health."]
+  ];
+
+  function explainChecks() {
+    var d = el("details");
+    d.appendChild(el("summary", null, "ℹ️ What do these 7 checks & VIX levels mean?"));
+    EXPLAIN.forEach(function (e) {
+      var p = el("p");
+      p.appendChild(el("b", null, e[0] + ": "));
+      p.appendChild(document.createTextNode(e[1]));
+      d.appendChild(p);
+    });
+    return d;
+  }
+
+  function analogTable(vm) {
+    var a = vm.analogs, wrap = el("div", "wrap"), t = el("table"), head = el("tr");
+    ["Timeframe", "Win Rate (% ended higher)", "Typical Return (Median)", "Worst-Case Dip (worst 10%)", "Severe Crash Risk (further -20%)"]
+      .forEach(function (h) { head.appendChild(el("th", null, h)); });
+    t.appendChild(head);
+    a.rows.forEach(function (r) {
+      var tr = el("tr");
+      tr.appendChild(el("td", null, r.timeframe));
+      tr.appendChild(el("td", null, pct(r.win_rate, false, 0)));
+      tr.appendChild(el("td", tone(r.typical), pct(r.typical)));
+      tr.appendChild(el("td", "neg", pct(r.worst_dip)));
+      tr.appendChild(el("td", null, pct(r.crash_risk, false, 0)));
+      t.appendChild(tr);
+    });
+    wrap.appendChild(t);
+    return wrap;
+  }
+
+  function readTable(vm) {
+    var d = el("details");
+    d.appendChild(el("summary", null, "ℹ️ How to read this table (What is Median Return?)"));
+    d.appendChild(el("p", null, "Out of " + vm.analogs.episodes + " similar historical episodes since 1990, the Median (Typical) Return sorts all outcomes from worst to best and picks the exact middle case — so half of historical times did better than this number, and half did worse. It avoids distortion from extreme outliers."));
+    d.appendChild(el("p", null, "Win Rate is the share of similar days that ended higher after that time. Worst-Case Dip is the further drop from today’s close that the worst 10% of cases suffered before recovering. Severe Crash Risk is how often a further 20% drop developed."));
+    return d;
+  }
+
+  function rawSection(vm) {
+    var d = el("details");
+    d.appendChild(el("summary", null, "📂 Show raw percentiles & all " + vm.analogs.episodes + " historical episodes"));
+    var w1 = el("div", "wrap small"), t = el("table"), h = el("tr");
+    ["Horizon", "Return p10", "Return median", "Return p90", "Drop p10 (worst)", "Drop median", "Drop p90",
+     "-10% more", "-20% more", "-20% (all days)", "Ended lower", "n"].forEach(function (x) { h.appendChild(el("th", null, x)); });
+    t.appendChild(h);
+    vm.raw.horizons.forEach(function (r) {
+      var tr = el("tr"), cells = [r.horizon + " days", pct(r.ret_p10), pct(r.ret_p50), pct(r.ret_p90), pct(r.dd_p10), pct(r.dd_p50),
+        pct(r.dd_p90), pct(r.p_down10, false, 0), pct(r.p_crash20, false, 0), pct(r.base_p_crash20, false, 1), pct(r.p_negative, false, 0), r.n];
+      cells.forEach(function (c) { tr.appendChild(el("td", null, String(c))); });
+      t.appendChild(tr);
+    });
+    w1.appendChild(t);
+    d.appendChild(w1);
+    d.appendChild(el("p", "sub", "Episodes (outcome counted from each episode’s first day)"));
+    var w2 = el("div", "wrap small"), t2 = el("table"), h2 = el("tr");
+    ["Start", "End", "Days", "60 days later", "Worst drop within 120 days"].forEach(function (x) { h2.appendChild(el("th", null, x)); });
+    t2.appendChild(h2);
+    vm.raw.episodes.forEach(function (e) {
+      var tr = el("tr");
+      [e.start, e.end, e.days, pct(e.ret_60d), pct(e.worst_dd_120d)].forEach(function (c) { tr.appendChild(el("td", null, String(c))); });
+      t2.appendChild(tr);
+    });
+    w2.appendChild(t2);
+    d.appendChild(w2);
+    return d;
+  }
+
+  function render(vm) {
+    app.textContent = "";
+    app.appendChild(el("h1", null, vm.title));
+    app.appendChild(el("div", "asof", "Data as of " + vm.as_of + " (last completed trading day)"));
+    var banner = el("div", "banner " + vm.tone);
+    banner.appendChild(el("div", "label", vm.label + " · " + vm.flags_on + " of " + vm.flags_known + " red flags"));
+    banner.appendChild(el("p", null, vm.summary));
+    app.appendChild(banner);
+    app.appendChild(kpiCards(vm));
+    app.appendChild(section("7 Market Health Checks"));
+    app.appendChild(checks(vm));
+    app.appendChild(explainChecks());
+    app.appendChild(section("What happened after similar days since 1990"));
+    var a = vm.analogs;
+    app.appendChild(el("p", "sub", "Based on " + a.days + " similar days in " + a.episodes + " separate episodes (" + a.matched_on + ")." +
+      (a.low_confidence ? " ⚠️ Low confidence: few similar days." : "")));
+    app.appendChild(analogTable(vm));
+    app.appendChild(readTable(vm));
+    app.appendChild(rawSection(vm));
+    var notes = vm.notes.slice();
+    notes.push("Statistics describe the past, not a prediction. Overlapping days are not independent, so trust the episode count.");
+    notes.forEach(function (n) { app.appendChild(el("p", "sub", "• " + n)); });
+  }
+
+  function load(refresh) {
+    btn.disabled = true;
+    btn.textContent = "Checking…";
+    if (!app.firstChild || refresh) {
+      // keep the old page visible while refreshing; only show the spinner on the very first load
+      if (!app.querySelector("h1")) { app.textContent = ""; app.appendChild(el("div", "state", "Checking the market… this takes a few seconds the first time.")); }
+    }
+    return api("/api/regime" + (refresh ? "?refresh=1" : "")).then(render).catch(function (e) {
+      var old = app.querySelector("h1");
+      var box = el("div", "err", "Could not load the market regime: " + e.message);
+      if (old) app.insertBefore(box, app.firstChild); else { app.textContent = ""; app.appendChild(box); }
+    }).then(function () {
+      btn.disabled = false;
+      btn.textContent = "↻ Refresh";
+    });
+  }
+
+  btn.addEventListener("click", function () { load(true); });
+  load(false);
+})();
+</script>
+</body>
+</html>
