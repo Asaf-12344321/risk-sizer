@@ -108,20 +108,25 @@ def handle_update(update: Mapping[str, Any], *, db: Any, settings: Mapping[str, 
             payload["reply_markup"] = markup
         tg("sendMessage", payload)
 
+    def answer(text: str) -> None:        # stops the button spinner; a stale/expired query must not block the flow
+        try:
+            tg("answerCallbackQuery", {"callback_query_id": qid, "text": text})
+        except Exception as exc:
+            log.info("answerCallbackQuery skipped: %s", exc)
+
     def finish(text: str) -> None:        # replace the preview message and drop its buttons
         tg("editMessageText", {"chat_id": chat_id, "message_id": message.get("message_id"), "text": text,
                                "reply_markup": {"inline_keyboard": []}})
 
     if kind == "x":
-        tg("answerCallbackQuery", {"callback_query_id": qid, "text": "Cancelled."})
+        answer("Cancelled.")
         finish("Cancelled. Nothing was changed.")
         return "cancelled"
     if kind not in ("h", "r", "c"):
         tg("answerCallbackQuery", {"callback_query_id": qid, "text": "Unknown button."})
         return "bad_data"
 
-    tg("answerCallbackQuery", {"callback_query_id": qid,
-                               "text": "Checking the chart…" if kind == "h" else "Saving…"})
+    answer("Checking the chart…" if kind == "h" else "Saving…")
     try:
         position = db.get_active(position_id)
         if position is None:

@@ -171,6 +171,9 @@ class HoldFlowTests(unittest.TestCase):
         self.assertEqual(self.press(f"c:{self.pid()}:earnings:50"), "recorded")
         self.assertEqual(self.holds(), 2)
 
+    def test_an_expired_button_press_still_gets_its_answer_message(self):
+        self.assertEqual(self.press(f"h:{self.pid()}", tg=FakeTg(fail_on="answerCallbackQuery")), "preview")
+
     def test_cancel_changes_nothing(self):
         self.assertEqual(self.press(f"x:{self.pid()}"), "cancelled")
         self.assertEqual(self.holds(), 0)
