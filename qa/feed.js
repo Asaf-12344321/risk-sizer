@@ -1,4 +1,4 @@
-// The FEED PATH — fillFromFeed(), i.e. what happens when a ticker is looked up.
+// The FEED PATH - fillFromFeed(), i.e. what happens when a ticker is looked up.
 //
 // This surface had no coverage at all, which is exactly why DEF-006 survived: every
 // other suite calls price(p, atr, beta) directly and so never touched the code that
@@ -31,7 +31,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   // .toFixed(2) discarded two of the feed's four decimals. It changed the size of 909
   // of 2,604 tickers (34.9%), 24 of them by more than 1%, worst ABEV at 3.05%. The
   // extreme relative ATR errors (TALK 12.4%) did NOT move size, because the 8% minimum
-  // stop floors them — which is why this needs measuring, not reasoning about.
+  // stop floors them - which is why this needs measuring, not reasoning about.
   let atrBad = [], pxBad = [];
   for (const s of syms) {
     t.lookup(s);
@@ -47,7 +47,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ---------- DEF-007: the beta cap must never be silently absent ----------
   // It used to be applied only `if (beta > 0)`, so a missing or non-positive beta
-  // dropped the constraint instead of tightening it — 278 of 2,604 tickers (10.7%).
+  // dropped the constraint instead of tightening it - 278 of 2,604 tickers (10.7%).
   const noCap = [], badCap = [];
   for (const s of syms) {
     t.lookup(s);
@@ -77,7 +77,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const s = nonPositive[0];
     t.lookup(s);
     const f = t.formula();
-    // A measured beta <= 0 is usually REAL (WMT -0.10, JNJ -0.21, XOM -0.48 — defensive
+    // A measured beta <= 0 is usually REAL (WMT -0.10, JNJ -0.21, XOM -0.48 - defensive
     // names decoupling from a tech-led SPY), so it must NOT be called unmeasurable.
     ck('a measured beta <= 0 is NOT mislabelled as estimated',
        !/estimated from ATR/.test(f) && /≤ 0, floored/.test(f), `${s}: ${(/beta cap[^)]*\)/.exec(f) || [''])[0]}`);
@@ -134,7 +134,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
        /does not match the daily ATR/.test(t.flags()), t.flags().slice(0, 80) || '(no flag)');
   }
 
-  // It must NOT fire on legitimate disagreement — TradingView's simple-mean vs Wilder
+  // It must NOT fire on legitimate disagreement - TradingView's simple-mean vs Wilder
   // differs by up to 19% on volatile names, which is a real reason to override by hand.
   t.lookup('IREN');
   for (const f of [0.85, 1.19]) {

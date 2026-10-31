@@ -9,7 +9,7 @@ const jsParams = { init: +t.$('cfg-initmult').value, trail: +t.$('cfg-trailmult'
                    min: +t.$('cfg-minstop').value, max: +t.$('cfg-maxstop').value };
 console.log('  page parameters  :', JSON.stringify(jsParams));
 console.log('  riskml parameters:', JSON.stringify(ref.params));
-// arm_on_close is behaviour, not a numeric setting the tool exposes — it is verified
+// arm_on_close is behaviour, not a numeric setting the tool exposes - it is verified
 // directly by the spike cases below, which is a stronger check than comparing a value.
 for (const k of Object.keys(ref.params).filter((k) => k !== 'arm_on_close')) {
   ck(`parameter "${k}" matches between tool and research code`,

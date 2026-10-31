@@ -61,13 +61,13 @@ const SUP = { stop: 90, no_support: false, extended: false, support_lo: 91, supp
                      support_gap_pct: 28, justification: 'below support 71-72' });
   await wait(800);
   ck('support 28% away shows the timing warning',
-     /⚠️ Extended from support — poor R\/R entry timing/.test(far.flags()), far.flags());
+     /⚠️ Extended from support - poor R\/R entry timing/.test(far.flags()), far.flags());
   ck('extended entry is still sized honestly, not hidden', far.size() > 0);
 
   const none = page({ stop: null, no_support: true, extended: true, reasons: [], justification: 'none' });
   await wait(800);
   ck('no support at all shows the timing warning',
-     /Extended from support — poor R\/R entry timing/.test(none.flags()), none.flags());
+     /Extended from support - poor R\/R entry timing/.test(none.flags()), none.flags());
   ck('no support falls back to the ATR stop', Math.abs(none.stop() - 85) < 0.01, String(none.stop()));
 
   report('entry_stop');

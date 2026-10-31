@@ -79,7 +79,7 @@ const wait = (ms) => new Promise(r => setTimeout(r, ms));
   const nc = n.$('posList').innerHTML.split('<div class="pos">').slice(1);
   const low = nc.find(c => />LOW</.test(c) || /position-ticker">LOW/.test(c)), held = nc.find(c => /position-ticker">HELD/.test(c)), okc = nc.find(c => /position-ticker">OK/.test(c));
   ck('no support shows "No chart stop" instead of a number', /Current stop<\/span><strong>No chart stop</.test(low), low.slice(0, 300));
-  ck('no support shows the manual-decision flag', /No chart support below — manual decision required/.test(low));
+  ck('no support shows the manual-decision flag', /No chart support below - manual decision required/.test(low));
   ck('no support offers the hold-on-purpose button', /data-act="hold"/.test(low));
   ck('a position already held on purpose says so and has no button', /Holding on purpose since 2026-10-20/.test(held) && !/data-act="hold"/.test(held));
   ck('a position with a chart stop and no breach has no hold button', !/data-act="hold"/.test(okc));

@@ -1,4 +1,4 @@
-// GOLDEN SNAPSHOT — freeze the answers for a fixed set of stocks. Any logic change that
+// GOLDEN SNAPSHOT - freeze the answers for a fixed set of stocks. Any logic change that
 // moves them fails here, so a shift is always a deliberate decision rather than a surprise.
 // Regenerate on purpose with:  node golden.js --update
 const { boot, ck, report } = require('./lib');
@@ -25,13 +25,13 @@ if (process.argv.includes('--update')) {
   console.log(`golden.json written with ${Object.keys(got).length} cases`);
   process.exit(0);
 }
-if (!fs.existsSync(FILE)) { console.log('no golden.json — run: node golden.js --update'); process.exit(1); }
+if (!fs.existsSync(FILE)) { console.log('no golden.json - run: node golden.js --update'); process.exit(1); }
 const want = JSON.parse(fs.readFileSync(FILE, 'utf8'));
 for (const k of Object.keys(want)) {
   const g = got[k], e = want[k];
   const same = g && ['size','stop','stopPct','risk','rungs'].every(f => Math.abs(g[f] - e[f]) < 0.02);
   ck(`${k} unchanged`, same,
      same ? `₪${e.size.toLocaleString()} stop ${e.stop}` :
-     `expected ₪${e.size} stop ${e.stop} risk ₪${e.risk} — got ₪${g && g.size} stop ${g && g.stop} risk ₪${g && g.risk}`);
+     `expected ₪${e.size} stop ${e.stop} risk ₪${e.risk} - got ₪${g && g.size} stop ${g && g.stop} risk ₪${g && g.risk}`);
 }
 report('GOLDEN SNAPSHOT');

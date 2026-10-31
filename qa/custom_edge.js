@@ -1,4 +1,4 @@
-// qa/custom_edge.js — Extended Edge Case Suite
+// qa/custom_edge.js - Extended Edge Case Suite
 const { boot, ck, report } = require('./lib');
 
 const t = boot();
@@ -26,6 +26,6 @@ ck('FX = 0 -> Falls back to default FX without NaN', !t.$('out-size').textConten
 
 // 5. Input Reset & Blanking
 t.set('in-price', '');
-ck('Empty Price -> Resets output cleanly to placeholder', t.$('out-size').textContent.includes('—'), t.$('out-size').textContent);
+ck('Empty Price -> Resets output cleanly to placeholder', t.$('out-size').textContent.includes('-'), t.$('out-size').textContent);
 
 report('CUSTOM EDGE CASES');

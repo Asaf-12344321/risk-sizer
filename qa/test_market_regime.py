@@ -419,7 +419,8 @@ class ViewModelTests(unittest.TestCase):
         self.assertEqual(k["drawdown"]["scale"], "Normal pullback: 5–10% | Bear market: 20%+")
         self.assertEqual(k["trend"]["value"], "+1.6% Above & Rising")
         self.assertEqual(k["trend"]["scale"], "Bullish above 200d SMA | Bearish below")
-        self.assertEqual(k["vix"]["value"], "19.4 — Mild Caution")
+        self.assertEqual(k["vix"]["value"], "19.4")
+        self.assertEqual(k["vix"]["pill"], "Mild Caution")
         self.assertEqual(k["vix"]["scale"], "<18 Calm | 18–25 Caution | 25–30 High Stress | 30+ Panic")
         self.assertEqual(k["today"]["value"], "-3.46%")
         self.assertEqual(k["today"]["scale"], "Shock rarity: ~1 in 115 trading days")
@@ -466,30 +467,51 @@ class ViewModelTests(unittest.TestCase):
         "📊 <b>Nasdaq-100 Regime · 30 Oct 2026</b>",
         "🟢 <b>Normal Bull-Market Pullback</b> (0/7 red flags · 2 watch)",
         "",
-        "• <b>Trend:</b> <b>-9.1%</b> from high | <b>+1.6%</b> above rising 200d ⚠️",
-        "• <b>Speed & Stress:</b> <b>-9.1%</b> in 20d ⚠️ | VIX <b>19.4</b> (Mild Caution)",
+        "• <b>Trend:</b> 🔻 <b>-9.1%</b> from high | <code>+1.6%</code> above rising 200d ⚠️",
+        "• <b>Speed & Stress:</b> 🔻 <b>-9.1%</b> in 20d ⚠️ | VIX <b>19.4</b> (Mild Caution)",
         "• <b>Structure:</b> VIX curve & Breadth OK",
-        "• <b>Today:</b> <b>-3.46%</b> (1-in-115d shock)",
+        "• <b>Today:</b> 🔻 <b>-3.46%</b> (1-in-115d shock)",
         "",
         "🕰 <b>3-Month Historical Outlook (32 episodes):</b>",
-        "📈 Higher <b>80%</b> of the time (Typical: <b>+7.4%</b>)",
-        "🛡️ Worst-case dip: <b>-8.8%</b> | Severe crash risk (-20%): <b>1%</b>"])
+        "📈 Higher <code>80%</code> of the time (Typical: <code>+7.4%</code>)",
+        "🛡️ Worst-case dip: 🔻 <b>-8.8%</b> | Severe crash risk (-20%): <b>1%</b>"])
 
     def test_telegram_layout_is_exactly_the_agreed_one(self):
         self.assertEqual(m.render_telegram(self.rep(self.snap())), self.EXPECTED_HTML)
 
-    def test_numbers_are_bold_never_monospace(self):
+    def test_gains_are_green_code_and_drops_are_bold_with_a_red_marker(self):
         text = m.render_telegram(self.rep(self.snap()))
-        self.assertNotIn("<code>", text)
-        self.assertNotIn("`", text)
-        for number in ("-9.1%", "+1.6%", "-3.46%", "-8.8%"):
-            self.assertIn(f"<b>{number}</b>", text)
+        for gain in ("+1.6%", "+7.4%", "80%"):
+            self.assertIn(f"<code>{gain}</code>", text)
+        for drop in ("-9.1%", "-3.46%", "-8.8%"):
+            self.assertIn(f"🔻 <b>{drop}</b>", text)
+            self.assertNotIn(f"<code>{drop}</code>", text)                  # a drop must never turn green
+        self.assertNotIn("<code>-", text)
+
+    def test_win_rates_are_green_only_when_high(self):
+        s = self.snap()
+        rep = self.rep(s)
+        rep.analogs.horizons[1].p_negative = 0.45                           # 55% ended higher
+        text = m.render_telegram(rep)
+        self.assertIn("Higher <b>55%</b>", text)
+        rep.analogs.horizons[1].p_negative = 0.30                           # 70% is the green line
+        self.assertIn("Higher <code>70%</code>", m.render_telegram(rep))
+
+    def test_a_break_below_the_200_day_line_is_marked_red(self):
+        text = m.render_telegram(self.rep(self.snap(dist_sma=-0.05, slope=-0.01, ret=0.012, z=0.8)))
+        self.assertIn("🔻 <b>-5.0%</b> below falling 200d", text)
+        self.assertIn("<b>Today:</b> <code>+1.20%</code>", text)            # an up day is green
+
+    def test_nothing_in_the_output_uses_em_dashes_or_unicode_minus(self):
+        for text in (m.render_telegram(self.rep(self.snap())), m.render_text(m.analyze(synthetic(seed=7)))):
+            self.assertNotIn("\u2014", text)
+            self.assertNotIn("\u2212", text)
 
     def test_telegram_plain_version_for_the_terminal_has_no_tags(self):
         plain = m.render_telegram(self.rep(self.snap()), html_markup=False)
         self.assertNotIn("<", plain)
-        self.assertIn("• Trend: -9.1% from high | +1.6% above rising 200d ⚠️", plain)
-        self.assertIn("• Speed & Stress: -9.1% in 20d ⚠️ | VIX 19.4 (Mild Caution)", plain)
+        self.assertIn("• Trend: 🔻 -9.1% from high | +1.6% above rising 200d ⚠️", plain)
+        self.assertIn("• Speed & Stress: 🔻 -9.1% in 20d ⚠️ | VIX 19.4 (Mild Caution)", plain)
 
     def test_telegram_flags_problems_in_the_right_places(self):
         s = self.snap(dist_sma=-0.05, slope=-0.01, dd=-0.22, fall20=-0.12, vix=34.0, term=1.1, inverted=True,
