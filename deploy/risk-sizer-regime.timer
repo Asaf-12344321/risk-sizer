@@ -1,0 +1,12 @@
+[Unit]
+Description=Send the Nasdaq-100 market regime summary after each US session
+
+[Timer]
+# 01:10 New York, Tuesday-Saturday: ten minutes after the stop-loss review (01:00), i.e. the morning after
+# each Mon-Fri session, when Yahoo's NDX, VIX, VIX3M and QQEW daily bars are final.  A US holiday produces
+# no new bar, so the job stays quiet.
+OnCalendar=Tue..Sat 01:10:00 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

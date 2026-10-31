@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime
@@ -436,6 +437,129 @@ class ViewModelTests(unittest.TestCase):
             vm = m.compute_view()
         self.assertEqual(len(vm["kpis"]), 4)
         self.assertEqual(len(vm["checks"]), 7)
+
+
+class DailyJobTests(unittest.TestCase):
+    NOW = datetime(2026, 11, 3, 1, 10, tzinfo=NY)             # Tuesday 01:10 New York: Monday's bar is the latest final one
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cache = Path(self.tmp.name)
+        self.sent = []
+        self.sleeps = []
+        full = synthetic(end="2026-11-02", seed=11)             # ends on Monday 2 Nov
+        self.by_symbol = {m.SYMBOLS[k]: v for k, v in full.items()}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_daily(self, fetch=None, send=None, **kw):
+        kw.setdefault("now", self.NOW)
+        return m.daily(fetch=fetch or (lambda sym: self.by_symbol[sym]), cache_dir=self.cache,
+                       send=send or (lambda text, url: self.sent.append((text, url))), sleep=self.sleeps.append, **kw)
+
+    def test_expected_session_is_the_last_final_weekday_bar(self):
+        d = lambda *a: m.expected_session(datetime(*a, tzinfo=NY)).isoformat()
+        self.assertEqual(d(2026, 11, 3, 1, 10), "2026-11-02")      # Tuesday morning -> Monday
+        self.assertEqual(d(2026, 11, 3, 17, 0), "2026-11-03")      # Tuesday after the close -> Tuesday
+        self.assertEqual(d(2026, 11, 3, 11, 0), "2026-11-02")      # during the session the bar is not final
+        self.assertEqual(d(2026, 11, 7, 1, 10), "2026-11-06")      # Saturday morning -> Friday
+        self.assertEqual(d(2026, 11, 8, 12, 0), "2026-11-06")      # Sunday -> Friday
+
+    def test_sends_one_summary_with_the_dashboard_button_and_remembers_the_session(self):
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"RISK_SIZER_PUBLIC_URL": "https://example.test"}):
+            self.assertEqual(self.run_daily(), 0)
+        self.assertEqual(len(self.sent), 1)
+        text, url = self.sent[0]
+        self.assertEqual(len(text.splitlines()), 6)
+        self.assertEqual(url, "https://example.test/regime")
+        self.assertNotIn("delayed", text)
+        self.assertEqual(m.read_last_sent(self.cache), "2026-11-02")
+
+    def test_the_same_session_is_never_sent_twice_unless_forced(self):
+        self.run_daily()
+        self.assertEqual(self.run_daily(), 0)
+        self.assertEqual(len(self.sent), 1)
+        self.run_daily(force=True)
+        self.assertEqual(len(self.sent), 2)
+
+    def test_download_failures_are_retried_before_sending(self):
+        calls = {"n": 0}
+
+        def flaky(sym):
+            calls["n"] += 1
+            if calls["n"] <= 10:                                   # the first two full attempts (5 symbols each) fail
+                raise ConnectionError("yahoo hiccup")
+            return self.by_symbol[sym]
+        self.assertEqual(self.run_daily(fetch=flaky), 0)
+        self.assertEqual(len(self.sent), 1)
+        self.assertNotIn("delayed", self.sent[0][0])
+        self.assertEqual(self.sleeps, [20.0, 60.0])                # waited between attempts, not before the first
+
+    def test_stale_data_is_retried_and_finally_sent_with_a_delay_marker(self):
+        stale = {k: v[v.index <= "2026-10-30"] for k, v in self.by_symbol.items()}   # Friday: Monday's bar missing
+        self.assertEqual(self.run_daily(fetch=lambda sym: stale[sym]), 0)
+        self.assertEqual(self.sleeps[:2], [20.0, 60.0])
+        self.assertIn("⚠️ data may be delayed", self.sent[0][0])
+        self.assertIn("30 Oct 2026", self.sent[0][0])
+
+    def test_a_holiday_stays_quiet(self):
+        self.run_daily()
+        self.sent.clear()
+        later = datetime(2026, 11, 4, 1, 10, tzinfo=NY)            # Wednesday, but no new bar arrived (market holiday)
+        self.assertEqual(self.run_daily(now=later), 0)
+        self.assertEqual(self.sent, [])
+
+    def test_total_failure_exits_non_zero_and_sends_nothing(self):
+        def down(sym):
+            raise ConnectionError("offline")
+        self.assertEqual(self.run_daily(fetch=down), 1)
+        self.assertEqual(self.sent, [])
+
+    def test_a_telegram_failure_is_retried_then_reported_and_not_remembered(self):
+        attempts = []
+
+        def broken(text, url):
+            attempts.append(1)
+            raise RuntimeError("telegram send failed (URLError)")
+        self.assertEqual(self.run_daily(send=broken), 1)
+        self.assertEqual(len(attempts), 3)
+        self.assertIsNone(m.read_last_sent(self.cache))            # tomorrow's run (or a manual one) will try again
+
+    def test_a_telegram_hiccup_that_clears_still_delivers(self):
+        attempts = []
+
+        def hiccup(text, url):
+            attempts.append(1)
+            if len(attempts) < 2:
+                raise RuntimeError("telegram send failed (URLError)")
+            self.sent.append((text, url))
+        self.assertEqual(self.run_daily(send=hiccup), 0)
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(m.read_last_sent(self.cache), "2026-11-02")
+
+    def test_failure_notice_command(self):
+        import io, contextlib
+        from unittest import mock
+        with mock.patch.object(m, "send_telegram") as send, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(m.main(["--notify-failure"]), 0)
+        self.assertIn("could not be produced", send.call_args.args[0])
+
+    def test_the_timer_is_a_separate_unit_so_it_cannot_touch_the_stop_loss_job(self):
+        root = Path(__file__).resolve().parent.parent / "deploy"
+        regime = (root / "risk-sizer-regime.service").read_text()
+        eod = (root / "risk-sizer-eod.service").read_text()
+        self.assertIn("market_regime.py --daily", regime)
+        self.assertIn("OnFailure=risk-sizer-regime-failed.service", regime)
+        self.assertNotIn("market_regime", eod)
+        self.assertNotIn("risk-sizer-regime", eod)
+        timer = (root / "risk-sizer-regime.timer").read_text()
+        self.assertIn("OnCalendar=Tue..Sat 01:10:00 America/New_York", timer)
+        self.assertIn("ExecStart=/opt/risk-sizer/.venv/bin/python market_regime.py --notify-failure",
+                      (root / "risk-sizer-regime-failed.service").read_text())
+        eod_src = (Path(__file__).resolve().parent.parent / "eod_stops.py").read_text()
+        self.assertNotIn("market_regime", eod_src)                 # the stop-loss code does not even import it
 
 if __name__ == "__main__":
     unittest.main()

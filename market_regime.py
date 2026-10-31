@@ -40,6 +40,7 @@ Usage:
 The formatted dashboard is the /regime page of the web app (see app.py).
   python market_regime.py --json           # machine-readable
   python market_regime.py --asof 2020-03-16 --episodes
+  python market_regime.py --daily          # what the timer runs: fresh data, one summary per new session
 Telegram sending uses TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID from the environment.
 """
 from __future__ import annotations
@@ -54,7 +55,7 @@ import urllib.parse
 import urllib.request
 import warnings
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import date, datetime, time as dtime, timedelta
 from pathlib import Path
 from typing import Callable, Mapping
 from zoneinfo import ZoneInfo
@@ -707,8 +708,8 @@ def dashboard_url() -> str | None:
     return f"{base}/regime" if base.startswith("https://") else None
 
 
-def render_telegram(rep: Report) -> str:
-    """The six-line executive summary, in plain English."""
+def render_telegram(rep: Report, delayed: bool = False) -> str:
+    """The six-line executive summary, in plain English.  `delayed` flags data older than the last session."""
     vm = view_model(rep)
     s = rep.snapshot
     icon = TELEGRAM_ICON[vm["tone"]]
@@ -737,7 +738,7 @@ def render_telegram(rep: Report) -> str:
         if vm["analogs"]["low_confidence"]:
             hist += " ⚠️ low confidence"
     return "\n".join([
-        f"📊 Nasdaq-100 Market Regime · {d:%-d %b %Y}",
+        f"📊 Nasdaq-100 Market Regime · {d:%-d %b %Y}" + (" ⚠️ data may be delayed" if delayed else ""),
         f"{icon} {rep.label} · {rep.flags_on} of {rep.flags_known} red flags",
         f"📉 {_p(s.dd)} from 52-week high{trend}",
         f"😐 {fear}",
@@ -768,6 +769,96 @@ def send_telegram(text: str, button_url: str | None = None) -> None:
         raise RuntimeError(f"telegram send failed ({type(exc).__name__})") from None
 
 
+# ============================================================================ daily job ==========
+def expected_session(now: datetime | None = None) -> date:
+    """The most recent weekday whose 16:30 New York close has passed: the bar that should be final now.
+    Holidays are not modelled; a holiday simply produces no new bar (the job then stays quiet)."""
+    now = (now or datetime.now(NY)).astimezone(NY)
+    d = now.date()
+    if now.time() < dtime(16, 30):
+        d -= timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+
+def fetch_fresh(*, fetch: Callable[[str], pd.Series] | None = None, cache_dir: Path | None = None,
+                now: datetime | None = None, attempts: int = 3, delays: tuple[float, ...] = (20.0, 60.0),
+                sleep: Callable[[float], None] = time.sleep) -> tuple[dict[str, pd.Series], list[str], bool]:
+    """Download everything, retrying until NDX and VIX both have the latest completed session.
+    Returns (series, notes, fresh).  After the last attempt it returns the best data it has with
+    fresh=False; it raises only when nothing at all could be loaded."""
+    expected = pd.Timestamp(expected_session(now))
+    best: tuple[dict[str, pd.Series], list[str]] | None = None
+    last_exc: Exception | None = None
+    for i in range(max(1, attempts)):
+        try:
+            series, notes = load_series(fetch=fetch, cache_dir=cache_dir, refresh=True)
+            best = (series, notes)
+            downloaded = not any(n.startswith(("^NDX:", "^VIX:")) for n in notes)
+            if downloaded and series["ndx"].index[-1] >= expected and series["vix"].index[-1] >= expected:
+                return series, notes, True
+        except RuntimeError as exc:
+            last_exc = exc
+        if i < attempts - 1:
+            sleep(delays[min(i, len(delays) - 1)] if delays else 0)
+    if best is None:
+        raise last_exc or RuntimeError("no market data")
+    return best[0], best[1], False
+
+
+def _state_path(cache_dir: Path) -> Path:
+    return cache_dir / "last_sent.json"
+
+
+def read_last_sent(cache_dir: Path) -> str | None:
+    try:
+        return json.loads(_state_path(cache_dir).read_text()).get("asof")
+    except (OSError, ValueError):
+        return None
+
+
+def write_last_sent(cache_dir: Path, asof: str) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    _state_path(cache_dir).write_text(json.dumps({"asof": asof, "sent_at": datetime.now(NY).isoformat(timespec="seconds")}))
+
+
+def daily(*, now: datetime | None = None, fetch: Callable[[str], pd.Series] | None = None,
+          send: Callable[[str, str | None], None] | None = None, cache_dir: Path | None = None,
+          attempts: int = 3, delays: tuple[float, ...] = (20.0, 60.0),
+          sleep: Callable[[float], None] = time.sleep, force: bool = False) -> int:
+    """The scheduled run: fresh data (with retries), one Telegram summary per new session, never twice.
+    Runs in its own process/unit, so a failure here cannot touch the stop-loss job.  Exit code 0 also
+    covers 'nothing new to say' (holiday); 1 means something went wrong and the failure unit pings."""
+    cache_dir = cache_dir or CACHE_DIR
+    send = send or send_telegram
+    try:
+        series, notes, fresh = fetch_fresh(fetch=fetch, cache_dir=cache_dir, now=now, attempts=attempts,
+                                           delays=delays, sleep=sleep)
+        rep = analyze(cut_asof(series, None, now=now), notes=notes)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    last = read_last_sent(cache_dir)
+    if not force and last and rep.snapshot.date <= last:
+        print(f"no new completed session since {last}: nothing to send"
+              + ("" if fresh else " (fresh data could not be fetched)"))
+        return 0
+    text = render_telegram(rep, delayed=not fresh)
+    for attempt in range(3):
+        try:
+            send(text, dashboard_url())
+            break
+        except RuntimeError as exc:
+            if attempt == 2:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+            sleep(5 * (attempt + 1))
+    write_last_sent(cache_dir, rep.snapshot.date)
+    print(text)
+    return 0
+
+
 # ================================================================================= CLI ===========
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Standalone Nasdaq-100 market-regime barometer (no trading advice).")
@@ -778,9 +869,24 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--episodes", action="store_true", help="list each historical analog episode")
     ap.add_argument("--refresh", action="store_true", help="ignore the cache and re-download")
     ap.add_argument("--include-partial", action="store_true", help="keep today's bar even before the close")
+    ap.add_argument("--daily", action="store_true",
+                    help="scheduled run: fetch fresh data (retrying), send one summary per new session")
+    ap.add_argument("--force", action="store_true", help="with --daily: send even if this session was already sent")
+    ap.add_argument("--attempts", type=int, default=3, help="with --daily: download attempts before giving up on fresh data")
+    ap.add_argument("--notify-failure", action="store_true", help="send a 'regime job failed' Telegram message")
     ap.add_argument("--min-days", type=int, default=MIN_DAYS)
     ap.add_argument("--min-episodes", type=int, default=MIN_EPISODES)
     a = ap.parse_args(argv)
+    if a.notify_failure:
+        try:
+            send_telegram("⚠️ The Nasdaq-100 market regime summary could not be produced today.\n"
+                          "Check: journalctl -u risk-sizer-regime -n 50")
+            return 0
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+    if a.daily:
+        return daily(attempts=a.attempts, force=a.force)
     try:
         series, notes = load_series(refresh=a.refresh)
         series = cut_asof(series, a.asof, include_partial=a.include_partial)

@@ -1,0 +1,23 @@
+[Unit]
+Description=Risk Sizer daily Nasdaq-100 market regime summary (Telegram)
+After=network-online.target
+Wants=network-online.target
+OnFailure=risk-sizer-regime-failed.service
+
+[Service]
+# Deliberately a separate unit from risk-sizer-eod: a problem here can never delay or break the stop-loss alerts.
+Type=oneshot
+User=risk-sizer
+Group=risk-sizer
+WorkingDirectory=/opt/risk-sizer
+EnvironmentFile=/etc/risk-sizer.env
+Environment=XDG_CACHE_HOME=/var/cache/risk-sizer
+Environment=MARKET_REGIME_CACHE=/opt/risk-sizer/data/regime_cache
+ExecStart=/opt/risk-sizer/.venv/bin/python market_regime.py --daily
+# up to 3 download attempts (20 s and 60 s apart) plus 3 send attempts
+TimeoutStartSec=420
+CacheDirectory=risk-sizer
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/risk-sizer/data
