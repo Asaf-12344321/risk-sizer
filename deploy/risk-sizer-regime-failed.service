@@ -1,0 +1,14 @@
+[Unit]
+Description=Tell Telegram that the Risk Sizer market regime job failed
+
+[Service]
+Type=oneshot
+User=risk-sizer
+Group=risk-sizer
+WorkingDirectory=/opt/risk-sizer
+EnvironmentFile=/etc/risk-sizer.env
+ExecStart=/opt/risk-sizer/.venv/bin/python market_regime.py --notify-failure
+TimeoutStartSec=60
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
