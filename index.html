@@ -3060,6 +3060,7 @@
   }
   el("tab-calc").addEventListener("click", function () { selectTab("calc"); });
   el("tab-pos").addEventListener("click", function () { selectTab("pos"); });
+  if (location.hash === "#positions") selectTab("pos");     // the link in the Telegram alert
   el("tab-settings").addEventListener("click", function () {
     el("settingsPanel").open = true;
     el("tab-settings").setAttribute("aria-selected", "true");

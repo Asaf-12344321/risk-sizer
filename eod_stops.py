@@ -393,6 +393,7 @@ class Decision:
     notice: str | None = None        # one-off heads-up shown in the alert
     notice_kind: str | None = None   # notices of a kind share ONE alert line
     source: str | None = None        # stored as the stop's source: CHART | NONE (no chart support)
+    position_id: int | None = None   # lets the alert attach a per-position button
 
     @property
     def moved(self) -> bool:
@@ -984,6 +985,17 @@ def hold_preview(position: Mapping[str, Any], settings: Mapping[str, float],
             "reasons": d.reasons, "no_support": stop is None}
 
 
+def hold_numbers(position: Mapping[str, Any], preview: Mapping[str, Any]) -> dict[str, float]:
+    """Shekel cost of holding on: what could still be lost from today's price to the new stop (or the
+    whole position when there is no stop), and what is already lost versus the entry price."""
+    qty, fx = float(position["quantity"]), float(position.get("fx_to_ils") or 1)
+    price, entry = float(preview["price"]), float(position["entry_price"])
+    stop = preview["new_stop"]
+    return {"extra_risk_ils": round((price - stop) * qty * fx, 2) if stop else round(price * qty * fx, 2),
+            "loss_so_far_ils": round((entry - price) * qty * fx, 2),
+            "position_value_ils": round(price * qty * fx, 2)}
+
+
 def record_hold(db_path: str | Path, position: Mapping[str, Any], reason: str, note: str | None,
                 preview: Mapping[str, Any], confirm_ticker: str | None = None,
                 now: datetime | None = None) -> dict[str, Any]:
@@ -1034,6 +1046,35 @@ def record_hold(db_path: str | Path, position: Mapping[str, Any], reason: str, n
 
 
 # --------------------------------------------------------------------------- message
+class AlertMessage(str):
+    """A Telegram message that still behaves as a plain string (tests and callers that only read the
+    text keep working) but also carries the inline-keyboard buttons to attach to it."""
+    buttons: list[dict[str, str]]
+
+    def __new__(cls, text: str, buttons: list[dict[str, str]] | None = None) -> "AlertMessage":
+        obj = super().__new__(cls, text)
+        obj.buttons = list(buttons or [])
+        return obj
+
+
+def hold_button(d: Decision) -> dict[str, str] | None:
+    """'Holding on purpose' for a position whose stop was reached or that has no chart support.
+    callback_data h:<position id> is handled by telegram_hold.py (the webhook)."""
+    if d.position_id is None:
+        return None
+    return {"text": f"📌 Holding on purpose: {d.ticker}", "callback_data": f"h:{d.position_id}"}
+
+
+def keyboard(buttons: list[dict[str, str]]) -> dict[str, Any] | None:
+    """Telegram reply_markup: one button per row, plus a link to the Positions page when
+    RISK_SIZER_PUBLIC_URL is set.  None when there is nothing to attach."""
+    rows = [[b] for b in buttons]
+    base = os.environ.get("RISK_SIZER_PUBLIC_URL", "").strip().rstrip("/")
+    if rows and base.startswith("https://"):
+        rows.append([{"text": "🔗 Open the Positions page", "url": f"{base}/#positions"}])
+    return {"inline_keyboard": rows} if rows else None
+
+
 def format_alert(decisions: list[Decision], asof: str, quiet_when_no_changes: bool = True,
                  holds: list[dict[str, Any]] | None = None) -> list[str]:
     """One consolidated Telegram HTML message holding only actionable items: breaches, stops to
@@ -1049,40 +1090,44 @@ def format_alert(decisions: list[Decision], asof: str, quiet_when_no_changes: bo
     nosup = [d for d in decisions if d.action == "NO_SUPPORT"]
     skipped = [d for d in decisions if d.action == "SKIP"]
     if not (breaches or raises or entries or nosup or skipped):
-        return [] if quiet_when_no_changes else ["✅ EOD Check: No stop adjustments required today."]
+        return [] if quiet_when_no_changes else [AlertMessage("✅ EOD Check: No stop adjustments required today.")]
 
-    blocks = []
+    blocks: list[tuple[str, list[dict[str, str]]]] = []
+
+    def add(text: str, *buttons: dict[str, str] | None) -> None:
+        blocks.append((text, [b for b in buttons if b]))
+
     for d in breaches:
-        blocks.append(f"🚨 <b>{html.escape(d.ticker)}</b>  {_p(d.close)}\n"
-                      f"Your chart-based stop of {_p(d.prev_stop)} was reached\n"
-                      f"Why: {html.escape(' '.join(d.reasons))}\n"
-                      f"Sell it, or press \"Holding on purpose\" on the Positions page.")
+        add(f"🚨 <b>{html.escape(d.ticker)}</b>  {_p(d.close)}\n"
+            f"Your chart-based stop of {_p(d.prev_stop)} was reached\n"
+            f"Why: {html.escape(' '.join(d.reasons))}\n"
+            f"Sell it, or tap \"Holding on purpose\" below if you are keeping it on purpose.", hold_button(d))
     for d in sorted(raises, key=lambda x: x.ticker):
         chg = (d.new_stop / d.prev_stop - 1) * 100
-        blocks.append(f"🟢⬆️ <b>{html.escape(d.ticker)}</b>  {_p(d.close)}\n"
-                      f"Move your stop up: {_p(d.prev_stop)} → <b>{_p(d.new_stop)}</b> ({chg:+.1f}%)\n"
-                      f"Why: {html.escape(' '.join(d.reasons))}")
+        add(f"🟢⬆️ <b>{html.escape(d.ticker)}</b>  {_p(d.close)}\n"
+            f"Move your stop up: {_p(d.prev_stop)} → <b>{_p(d.new_stop)}</b> ({chg:+.1f}%)\n"
+            f"Why: {html.escape(' '.join(d.reasons))}")
     for d in sorted(entries, key=lambda x: x.ticker):
         extra = f" ({html.escape(d.notice)})" if d.notice else ""
-        blocks.append(f"🆕 <b>{html.escape(d.ticker)}</b>  {_p(d.close)}\n"
-                      f"Chart-based stop: <b>{_p(d.new_stop)}</b>{extra}\n"
-                      f"Why: {html.escape(' '.join(d.reasons))}")
+        add(f"🆕 <b>{html.escape(d.ticker)}</b>  {_p(d.close)}\n"
+            f"Chart-based stop: <b>{_p(d.new_stop)}</b>{extra}\n"
+            f"Why: {html.escape(' '.join(d.reasons))}")
     groups: dict[str, list[Decision]] = {}
     for d in sorted(nosup, key=lambda x: x.ticker):
         groups.setdefault(d.reasons[0], []).append(d)
     for cause, ds in groups.items():
         names = " · ".join(f"{html.escape(d.ticker)} {_p(d.close)}" for d in ds)
-        blocks.append(f"🧭 <b>No chart support below, manual decision required</b>\n"
-                      f"{html.escape(cause)}\n{names}")
+        add(f"🧭 <b>No chart support below, manual decision required</b>\n"
+            f"{html.escape(cause)}\n{names}", *[hold_button(d) for d in ds])
     if skipped:
-        blocks.append("⚠️ Skipped: " + html.escape("  ".join(
+        add("⚠️ Skipped: " + html.escape("  ".join(
             f"{d.ticker}: {' '.join(d.reasons)}" for d in skipped)))
     if holds:
         def one(h: dict[str, Any]) -> str:
             then, now = h.get("price_then"), h["price_now"]
             move = f", {(now / then - 1) * 100:+.1f}%" if then else ""
             return f"{html.escape(h['ticker'])} since {_d(h['since'])} ({_p(then) if then else '?'} → {_p(now)}{move})"
-        blocks.append("📌 Holding on purpose: " + " · ".join(one(h) for h in holds))
+        add("📌 Holding on purpose: " + " · ".join(one(h) for h in holds))
 
     parts = []
     if raises:
@@ -1094,13 +1139,15 @@ def format_alert(decisions: list[Decision], asof: str, quiet_when_no_changes: bo
     if nosup:
         parts.append(f"{len(nosup)} without chart support")
     head = f"<b>EOD stops · {html.escape(asof)}</b>\n" + (" · ".join(parts) if parts else "no changes")
-    messages, cur = [], head
-    for blk in blocks:
+    messages: list[AlertMessage] = []
+    cur, cur_buttons = head, []
+    for blk, btns in blocks:
         if len(cur) + len(blk) + 2 > 3900:
-            messages.append(cur)
-            cur = ""
+            messages.append(AlertMessage(cur, cur_buttons))
+            cur, cur_buttons = "", []
         cur += ("\n\n" if cur else "") + blk
-    messages.append(cur)
+        cur_buttons += btns
+    messages.append(AlertMessage(cur, cur_buttons))
     return messages
 
 
@@ -1127,10 +1174,12 @@ def send_telegram(messages: list[str], token: str, chat_id: str, *, opener: Call
     which contains the bot token."""
     url = f"https://api.telegram.org/bot{token}/sendMessage"
 
-    def post(text: str, parse_mode: str | None) -> None:
+    def post(text: str, parse_mode: str | None, markup: dict[str, Any] | None = None) -> None:
         params = {"chat_id": chat_id, "text": text, "disable_web_page_preview": "true"}
         if parse_mode:
             params["parse_mode"] = parse_mode
+        if markup:
+            params["reply_markup"] = json.dumps(markup)
         req = urllib.request.Request(url, data=urllib.parse.urlencode(params).encode())
         with opener(req, timeout=20) as r:
             if r.status != 200:
@@ -1139,9 +1188,10 @@ def send_telegram(messages: list[str], token: str, chat_id: str, *, opener: Call
     for m in messages:
         mode: str | None = "HTML"
         text = m
+        markup = keyboard(getattr(m, "buttons", []))
         for attempt in range(1, attempts + 1):
             try:
-                post(text, mode)
+                post(text, mode, markup)
                 break
             except urllib.error.HTTPError as err:
                 if err.code == 400 and mode:
@@ -1248,6 +1298,7 @@ def evaluate(db_path: str | Path, *, overrides_stop: Mapping[str, float] | None 
                     < RULES["no_support_reminder_days"]
                 if held or (was_none and recent):          # decided or already flagged: say nothing again
                     d = Decision(t, d.close, 0.0, 0.0, d.tier, "HOLD", d.reasons[:1], d.metrics, source="NONE")
+            d.position_id = p["id"]
             ev.decisions.append(d)
             if d.action != "SKIP":
                 ev.pending.append((p["id"], d))
