@@ -9,6 +9,7 @@
   :root {
     --bg: #f6f6f8; --card: #ffffff; --fg: #1c1c1e; --dim: #6b6b72; --line: #e4e4e8;
     --good: #1f8a4c; --good-bg: #e4f4ea; --warn: #b86e00; --warn-bg: #fdf0d9; --bad: #c0392b; --bad-bg: #fbe5e2;
+    --amber: #b8860b; --amber-bg: #fbf3d6; --orange: #c2570c; --orange-bg: #fde6d3;
     --accent: #2a5bd7; --radius: 12px;
     --mono: ui-monospace, "SF Mono", Menlo, monospace;
   }
@@ -16,6 +17,7 @@
     :root {
       --bg: #101013; --card: #1a1a1f; --fg: #ececf1; --dim: #9b9ba5; --line: #2b2b32;
       --good: #5fcf8d; --good-bg: #15291e; --warn: #f0b24b; --warn-bg: #2d2412; --bad: #ff7b6e; --bad-bg: #321a17;
+      --amber: #e8c04a; --amber-bg: #2c2610; --orange: #ff9a4d; --orange-bg: #33200f;
       --accent: #7da2ff;
     }
   }
@@ -39,19 +41,31 @@
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 14px 0 6px; }
   .kpi { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
   .kpi .t { color: var(--dim); font-size: 12px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
-  .kpi .v { font-size: 24px; font-weight: 700; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
-  .kpi.good .v { color: var(--good); } .kpi.warn .v { color: var(--warn); } .kpi.bad .v { color: var(--bad); }
-  .kpi .n { font-size: 13px; font-weight: 600; min-height: 1.2em; }
-  .kpi .s { color: var(--dim); font-size: 12px; margin-top: 6px; border-top: 1px solid var(--line); padding-top: 6px; }
+  .kpi .v { font-size: 24px; font-weight: 700; margin: 4px 0 6px; font-variant-numeric: tabular-nums; }
+  .v.good { color: var(--good); } .v.warn { color: var(--amber); } .v.orange { color: var(--orange); } .v.bad { color: var(--bad); }
+  .pill { display: inline-block; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; min-height: 1.4em; }
+  .pill.good { background: var(--good-bg); color: var(--good); } .pill.warn { background: var(--amber-bg); color: var(--amber); }
+  .pill.orange { background: var(--orange-bg); color: var(--orange); } .pill.bad { background: var(--bad-bg); color: var(--bad); }
+  .pill:empty { display: none; }
+  .kpi .s { color: var(--dim); font-size: 12px; margin-top: 8px; border-top: 1px solid var(--line); padding-top: 6px; }
   h2 { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); margin: 28px 0 8px; }
-  .checks { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
-  .check { display: flex; gap: 12px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); }
-  .check:last-child { border-bottom: 0; }
-  .check.red { background: var(--bad-bg); }
-  .badge { flex: none; min-width: 104px; text-align: center; font-size: 12px; font-weight: 700; padding: 4px 8px; border-radius: 999px; }
+  .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .check { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; }
+  .check.red { background: var(--bad-bg); border-color: var(--bad); }
+  .check.watch, .check.caution { background: var(--amber-bg); border-color: var(--amber); }
+  .check.orange { background: var(--orange-bg); border-color: var(--orange); }
+  .check .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .check b { font-size: 14px; }
+  .badge { flex: none; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
   .badge.ok { background: var(--good-bg); color: var(--good); } .badge.red { background: var(--bad); color: #fff; }
+  .badge.watch, .badge.caution { background: var(--amber); color: #fff; } .badge.orange { background: var(--orange); color: #fff; }
   .badge.na { background: var(--line); color: var(--dim); }
-  .check b { display: block; font-size: 14px; } .check span { color: var(--dim); font-size: 14px; } .check.red span { color: var(--fg); }
+  .check .st { display: block; margin: 4px 0 8px; font-size: 13px; }
+  .gauge { height: 5px; border-radius: 999px; background: var(--line); overflow: hidden; }
+  .gauge i { display: block; height: 100%; border-radius: 999px; background: var(--good); }
+  .check.red .gauge i { background: var(--bad); } .check.watch .gauge i, .check.caution .gauge i { background: var(--amber); }
+  .check.orange .gauge i { background: var(--orange); }
+  .check .lim { color: var(--dim); font-size: 11px; margin-top: 4px; }
   details { margin: 10px 0; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; }
   summary { cursor: pointer; font-weight: 600; }
   details[open] summary { margin-bottom: 8px; }
@@ -62,11 +76,14 @@
   th { color: var(--dim); font-size: 12px; font-weight: 600; }
   .pos { color: var(--good); font-weight: 700; } .neg { color: var(--bad); font-weight: 700; }
   .wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 2px 6px; }
+  .wrap.fit { display: inline-block; max-width: 100%; }
+  .wrap.fit table { width: auto; } .wrap.fit th, .wrap.fit td { padding: 9px 18px; }
+  td.win { font-weight: 700; } td.win.hi { background: var(--good-bg); color: var(--good); border-radius: 6px; }
   .sub { color: var(--dim); font-size: 13px; margin: 0 0 8px; }
   .state { text-align: center; color: var(--dim); padding: 60px 0; }
   .err { background: var(--bad-bg); color: var(--bad); border-radius: var(--radius); padding: 12px 14px; margin: 14px 0; }
   .small td, .small th { font-size: 13px; padding: 6px 8px; }
-  @media (max-width: 560px) { .check { align-items: flex-start; } .badge { min-width: 86px; } }
+  @media (max-width: 640px) { .checks { grid-template-columns: 1fr; } .wrap.fit th, .wrap.fit td { padding: 9px 10px; } }
 </style>
 </head>
 <body>
@@ -124,10 +141,10 @@
   function kpiCards(vm) {
     var grid = el("div", "kpis");
     vm.kpis.forEach(function (k) {
-      var c = el("div", "kpi " + k.tone);
+      var c = el("div", "kpi");
       c.appendChild(el("div", "t", k.title));
-      c.appendChild(el("div", "v", k.value));
-      c.appendChild(el("div", "n", k.note));
+      c.appendChild(el("div", "v " + k.value_tone, k.value));          // the number is coloured by its sign
+      c.appendChild(el("div", "pill " + k.pill_tone, k.pill));          // the verdict gets its own pill
       c.appendChild(el("div", "s", k.scale));
       if (k.raw) c.appendChild(el("div", "s", k.raw));
       grid.appendChild(c);
@@ -135,20 +152,27 @@
     return grid;
   }
 
+  var BADGE_TEXT = { ok: "\u2705 OK", caution: "\u26A0\uFE0F CAUTION", watch: "\u26A0\uFE0F WATCH", red: "\uD83D\uDEA8 RED FLAG", na: "NO DATA" };
+
   function checks(vm) {
-    var wrap = el("div", "checks");
+    var grid = el("div", "checks");
     vm.checks.forEach(function (c) {
-      var red = c.ok === false, na = c.ok === null;
-      var row = el("div", "check" + (red ? " red" : ""));
-      row.appendChild(el("div", "badge " + (red ? "red" : na ? "na" : "ok"),
-                         red ? "🚨 RED FLAG" : na ? "NO DATA" : "✅ OK"));
-      var text = el("div");
-      text.appendChild(el("b", null, c.title));
-      text.appendChild(el("span", null, c.status));
-      row.appendChild(text);
-      wrap.appendChild(row);
+      var tone = c.key === "vix" && c.level === "watch" ? "orange" : c.level;     // VIX 25-30 is deep orange
+      var card = el("div", "check " + tone);
+      var head = el("div", "head");
+      head.appendChild(el("b", null, c.title));
+      head.appendChild(el("span", "badge " + tone, BADGE_TEXT[c.level]));
+      card.appendChild(head);
+      card.appendChild(el("span", "st", c.status));
+      var gauge = el("div", "gauge");
+      var fill = el("i");
+      fill.style.width = Math.round((c.gauge || 0) * 100) + "%";
+      gauge.appendChild(fill);
+      card.appendChild(gauge);
+      card.appendChild(el("div", "lim", c.limit));
+      grid.appendChild(card);
     });
-    return wrap;
+    return grid;
   }
 
   var EXPLAIN = [
@@ -174,14 +198,14 @@
   }
 
   function analogTable(vm) {
-    var a = vm.analogs, wrap = el("div", "wrap"), t = el("table"), head = el("tr");
+    var a = vm.analogs, wrap = el("div", "wrap fit"), t = el("table"), head = el("tr");
     ["Timeframe", "Win Rate (% ended higher)", "Typical Return (Median)", "Worst-Case Dip (worst 10%)", "Severe Crash Risk (further -20%)"]
       .forEach(function (h) { head.appendChild(el("th", null, h)); });
     t.appendChild(head);
     a.rows.forEach(function (r) {
       var tr = el("tr");
       tr.appendChild(el("td", null, r.timeframe));
-      tr.appendChild(el("td", null, pct(r.win_rate, false, 0)));
+      tr.appendChild(el("td", "win" + (r.win_rate >= 0.7 ? " hi" : ""), pct(r.win_rate, false, 0)));
       tr.appendChild(el("td", tone(r.typical), pct(r.typical)));
       tr.appendChild(el("td", "neg", pct(r.worst_dip)));
       tr.appendChild(el("td", null, pct(r.crash_risk, false, 0)));
@@ -233,11 +257,11 @@
     app.appendChild(el("h1", null, vm.title));
     app.appendChild(el("div", "asof", "Data as of " + vm.as_of + " (last completed trading day)"));
     var banner = el("div", "banner " + vm.tone);
-    banner.appendChild(el("div", "label", vm.label + " · " + vm.flags_on + " of " + vm.flags_known + " red flags"));
+    banner.appendChild(el("div", "label", vm.label + " · " + vm.flags_on + " of " + vm.flags_known + " red flags · " + vm.watch_count + " watch"));
     banner.appendChild(el("p", null, vm.summary));
     app.appendChild(banner);
     app.appendChild(kpiCards(vm));
-    app.appendChild(section("7 Market Health Checks"));
+    app.appendChild(section("7 Market Health Checks · closest to a red flag first"));
     app.appendChild(checks(vm));
     app.appendChild(explainChecks());
     app.appendChild(section("What happened after similar days since 1990"));
