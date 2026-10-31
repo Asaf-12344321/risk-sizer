@@ -23,6 +23,9 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 import eod_stops
+# Keep the regime page's downloaded history inside data/, the one directory the service may write.
+os.environ.setdefault("MARKET_REGIME_CACHE", str(Path(__file__).resolve().parent / "data" / "regime_cache"))
+import market_regime  # noqa: E402
 import telegram_hold
 from database import DEFAULT_SETTINGS, Database
 from quant_risk_engine import QuantitativeRiskEngine
@@ -629,6 +632,34 @@ async def telegram_webhook(request: Request, background: BackgroundTasks) -> dic
     if isinstance(update, dict):
         background.add_task(_handle_telegram_update, update)
     return {"ok": True}
+
+
+REGIME_TTL_SECONDS = 600
+_regime_lock = threading.Lock()
+_regime_cache: dict[str, Any] = {"at": 0.0, "view": None}
+
+
+@app.get("/regime")
+def regime_page() -> FileResponse:
+    """The Market Regime dashboard shell.  It holds no data: the numbers come from /api/regime."""
+    return FileResponse(ROOT / "regime.html")
+
+
+@app.get("/api/regime")
+async def regime_view(_: Protected, refresh: bool = False) -> dict[str, Any]:
+    """Nasdaq-100 regime in plain language.  Cached for ten minutes; ?refresh=1 re-downloads and recomputes."""
+    def compute() -> dict[str, Any]:
+        with _regime_lock:                              # one heavy download/compute at a time
+            fresh = _regime_cache["view"] is not None and time.monotonic() - _regime_cache["at"] < REGIME_TTL_SECONDS
+            if fresh and not refresh:
+                return _regime_cache["view"]
+            view = market_regime.compute_view(refresh=refresh)
+            _regime_cache.update(at=time.monotonic(), view=view)
+            return view
+    try:
+        return await run_in_threadpool(compute)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=f"Market data unavailable: {exc}") from exc
 
 
 @app.get("/api/stop/suggest")
