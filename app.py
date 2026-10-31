@@ -16,13 +16,14 @@ from urllib.parse import urlparse
 
 import pandas as pd
 import yfinance as yf
-from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 import eod_stops
+import telegram_hold
 from database import DEFAULT_SETTINGS, Database
 from quant_risk_engine import QuantitativeRiskEngine
 from stop_engine import build_policy_snapshot, har_parkinson_shadow, replay_post_close_stop
@@ -556,17 +557,6 @@ def _position_or_404(item_id: int) -> dict[str, Any]:
     return position
 
 
-def _hold_numbers(position: dict[str, Any], preview: dict[str, Any]) -> dict[str, Any]:
-    """Shekel cost of holding on: what could still be lost from today's price to the new stop (or the
-    whole position when there is no stop), and what is already lost versus the entry price."""
-    qty, fx = float(position["quantity"]), float(position.get("fx_to_ils") or 1)
-    price, entry = float(preview["price"]), float(position["entry_price"])
-    stop = preview["new_stop"]
-    return {"extra_risk_ils": round((price - stop) * qty * fx, 2) if stop else round(price * qty * fx, 2),
-            "loss_so_far_ils": round((entry - price) * qty * fx, 2),
-            "position_value_ils": round(price * qty * fx, 2)}
-
-
 @app.get("/api/positions/{item_id}/hold-preview")
 async def hold_preview(item_id: int, _: Protected) -> dict[str, Any]:
     """What 'holding on purpose' would do, with its cost, before the owner confirms."""
@@ -578,7 +568,7 @@ async def hold_preview(item_id: int, _: Protected) -> dict[str, Any]:
         with closing(sqlite3.connect(db.path)) as conn:
             eod_stops.ensure_schema(conn)
             prior = conn.execute("SELECT COUNT(*) FROM eod_holds WHERE position_id = ?", (item_id,)).fetchone()[0]
-        return {**preview, **_hold_numbers(position, preview), "prior_holds": prior,
+        return {**preview, **eod_stops.hold_numbers(position, preview), "prior_holds": prior,
                 "reasons_allowed": eod_stops.HOLD_REASONS}
     try:
         return await run_in_threadpool(compute)
@@ -609,6 +599,36 @@ async def hold_on_purpose(item_id: int, request: HoldRequest, _: Protected) -> d
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _handle_telegram_update(update: dict[str, Any]) -> None:
+    """Runs after the webhook has answered Telegram: preview/record a 'holding on purpose' decision."""
+    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN", ""), os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not (token and chat):
+        return
+    try:
+        settings = db.get_settings()["settings"]
+        telegram_hold.handle_update(update, db=db, settings=settings, downloader=market_data,
+                                    tg=telegram_hold.make_tg(token), allowed_chat_id=chat)
+    except Exception as exc:                     # a webhook must never raise into Telegram's retry loop
+        print(f"telegram update failed: {type(exc).__name__}: {exc}", flush=True)
+
+
+@app.post("/api/telegram/webhook")
+async def telegram_webhook(request: Request, background: BackgroundTasks) -> dict[str, bool]:
+    """Receives Telegram button presses.  Not behind the API key (Telegram cannot send one): it is
+    protected by the secret token Telegram echoes back, and only TELEGRAM_CHAT_ID is served."""
+    secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+    got = request.headers.get("x-telegram-bot-api-secret-token", "")
+    if not secret or not hmac.compare_digest(got, secret):
+        raise HTTPException(status_code=401, detail="Invalid webhook secret")
+    try:
+        update = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid JSON") from None
+    if isinstance(update, dict):
+        background.add_task(_handle_telegram_update, update)
+    return {"ok": True}
 
 
 @app.get("/api/stop/suggest")

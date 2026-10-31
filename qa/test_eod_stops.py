@@ -960,6 +960,7 @@ class AlertFormatTests(unittest.TestCase):
         text = e.format_alert([d], "d")[0]
         self.assertIn("Your chart-based stop of $40.00 was reached", text)
         self.assertIn("Holding on purpose", text)
+        self.assertNotIn("Positions page.", text)                  # it points at the button, not a page you cannot click
 
     def test_scorecard_appears_only_next_to_other_news(self):
         holds = [dict(ticker="ZZZ", since="2026-10-28", price_then=38.10, price_now=39.50)]
