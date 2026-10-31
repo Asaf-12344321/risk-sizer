@@ -466,17 +466,24 @@ class ViewModelTests(unittest.TestCase):
         "📊 <b>Nasdaq-100 Regime · 30 Oct 2026</b>",
         "🟢 <b>Normal Bull-Market Pullback</b> (0/7 red flags · 2 watch)",
         "",
-        "• <b>Trend:</b> <code>-9.1%</code> from high | <code>+1.6%</code> above rising 200d ⚠️",
-        "• <b>Speed & Stress:</b> <code>-9.1%</code> in 20d ⚠️ | VIX <b>19.4</b> (Mild Caution)",
+        "• <b>Trend:</b> <b>-9.1%</b> from high | <b>+1.6%</b> above rising 200d ⚠️",
+        "• <b>Speed & Stress:</b> <b>-9.1%</b> in 20d ⚠️ | VIX <b>19.4</b> (Mild Caution)",
         "• <b>Structure:</b> VIX curve & Breadth OK",
-        "• <b>Today:</b> <code>-3.46%</code> (1-in-115d shock)",
+        "• <b>Today:</b> <b>-3.46%</b> (1-in-115d shock)",
         "",
         "🕰 <b>3-Month Historical Outlook (32 episodes):</b>",
         "📈 Higher <b>80%</b> of the time (Typical: <b>+7.4%</b>)",
-        "🛡️ Worst-case dip: <code>-8.8%</code> | Severe crash risk (-20%): <b>1%</b>"])
+        "🛡️ Worst-case dip: <b>-8.8%</b> | Severe crash risk (-20%): <b>1%</b>"])
 
     def test_telegram_layout_is_exactly_the_agreed_one(self):
         self.assertEqual(m.render_telegram(self.rep(self.snap())), self.EXPECTED_HTML)
+
+    def test_numbers_are_bold_never_monospace(self):
+        text = m.render_telegram(self.rep(self.snap()))
+        self.assertNotIn("<code>", text)
+        self.assertNotIn("`", text)
+        for number in ("-9.1%", "+1.6%", "-3.46%", "-8.8%"):
+            self.assertIn(f"<b>{number}</b>", text)
 
     def test_telegram_plain_version_for_the_terminal_has_no_tags(self):
         plain = m.render_telegram(self.rep(self.snap()), html_markup=False)

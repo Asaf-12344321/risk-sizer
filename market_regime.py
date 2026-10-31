@@ -778,14 +778,15 @@ _MARK = {"watch": " ⚠️", "caution": " ⚠️", "red": " 🚨"}
 
 
 def render_telegram(rep: Report, delayed: bool = False, html_markup: bool = True) -> str:
-    """The phone summary: bold anchors, monospace number pills, one idea per line.  With html_markup=False
+    """The phone summary: bold anchors and bold numbers, one idea per line.  With html_markup=False
     the tags are stripped (for the terminal)."""
     from html import escape
     vm = view_model(rep)
     s = rep.snapshot
     lvl = {c["key"]: c["level"] for c in vm["checks"]}
     mark = lambda key: _MARK.get(lvl.get(key, "ok"), "")
-    b, c = (lambda t: f"<b>{t}</b>"), (lambda t: f"<code>{t}</code>")
+    b = lambda t: f"<b>{t}</b>"
+    c = b          # numbers are bold, not <code>: Telegram's dark theme paints monospace text green
     d = datetime.fromisoformat(s.date)
     head = (f"📊 {b(f'Nasdaq-100 Regime · {d:%-d %b %Y}')}" + (" ⚠️ data may be delayed" if delayed else "") + "\n"
             f"{TELEGRAM_ICON[vm['tone']]} {b(escape(rep.label))} ({rep.flags_on}/{rep.flags_known} red flags · "
