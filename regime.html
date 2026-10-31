@@ -181,7 +181,7 @@
     ["3. Drawdown Depth (-20% Threshold)", "Drops of 5%–10% from the 52-week high are standard bull-market pullbacks. Crossing -20% is the official definition of a Bear Market."],
     ["4. Drop Velocity (-10% in 20 Days)", "Markets that drift down slowly are calmly repricing earnings. A plunge of 10%+ within 20 trading days indicates forced liquidations, margin calls, and panic."],
     ["5. Fear Level (VIX >= 30)", "VIX measures the cost of crash-protection options. 12–18 = Calm routine; 18–25 = Normal caution/choppy (no systemic panic); 25–30 = High stress; 30+ = Full institutional panic (seen in major crashes like 2008, 2020, 2022)."],
-    ["6. Fear Term Structure (VIX vs. VIX3M)", "Compares 1-month fear (VIX) to 3-month fear (VIX3M). Normally, the 3-month outlook is more uncertain than tomorrow (ratio < 1.0). When VIX spikes above VIX3M (Inversion > 1.0), institutions are paying anything for immediate overnight protection — a classic acute crash signal."],
+    ["6. Fear Term Structure (VIX vs. VIX3M)", "Compares 1-month fear (VIX) to 3-month fear (VIX3M). Normally, the 3-month outlook is more uncertain than tomorrow (ratio < 1.0). When VIX spikes above VIX3M (Inversion > 1.0), institutions are paying anything for immediate overnight protection - a classic acute crash signal."],
     ["7. Market Breadth (QQEW vs. QQQ)", "Compares the equal-weight Nasdaq-100 (where all 100 stocks count equally) to the cap-weight QQQ (dominated by 7 mega-caps). If QQQ holds up while QQEW plunges, the market foundation is rotting underneath. Moving together means broad market health."]
   ];
 
@@ -218,7 +218,7 @@
   function readTable(vm) {
     var d = el("details");
     d.appendChild(el("summary", null, "ℹ️ How to read this table (What is Median Return?)"));
-    d.appendChild(el("p", null, "Out of " + vm.analogs.episodes + " similar historical episodes since 1990, the Median (Typical) Return sorts all outcomes from worst to best and picks the exact middle case — so half of historical times did better than this number, and half did worse. It avoids distortion from extreme outliers."));
+    d.appendChild(el("p", null, "Out of " + vm.analogs.episodes + " similar historical episodes since 1990, the Median (Typical) Return sorts all outcomes from worst to best and picks the exact middle case - so half of historical times did better than this number, and half did worse. It avoids distortion from extreme outliers."));
     d.appendChild(el("p", null, "Win Rate is the share of similar days that ended higher after that time. Worst-Case Dip is the further drop from today’s close that the worst 10% of cases suffered before recovering. Severe Crash Risk is how often a further 20% drop developed."));
     return d;
   }

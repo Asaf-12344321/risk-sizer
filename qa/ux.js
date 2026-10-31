@@ -21,7 +21,7 @@ ck('UX-2 only the lookup ticker field is visible when empty',
 ck('UX-2 lookup placeholder names an example', /AAPL/.test(t.$('in-lookup').placeholder),
    t.$('in-lookup').placeholder);
 ck('UX-2 tracking field is labelled distinctly',
-   /Ticker to track/.test(HTML) && !/Track it — ticker/.test(HTML));
+   /Ticker to track/.test(HTML) && !/Track it - ticker/.test(HTML));
 
 // ---- jargon removed from the tagline
 ck('UX-3 no "thesis break" jargon anywhere in the UI copy', !/thesis break/i.test(HTML));

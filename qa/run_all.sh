@@ -1,17 +1,17 @@
 #!/bin/sh
-# Runs every suite. A crash is a FAILURE, not a silent zero — an earlier version of this
+# Runs every suite. A crash is a FAILURE, not a silent zero - an earlier version of this
 # loop reported "0 fail" while a whole file threw before its first assertion.
 set -u
 
 # sweep.js and feed.js need a real quotes.json. Fetch one if it is absent, rather than
-# letting two suites crash — the runner reports a crash as failure, but a developer who
+# letting two suites crash - the runner reports a crash as failure, but a developer who
 # has never fetched the feed reads it as a broken test rather than a missing input.
 Q="${QA_QUOTES:-/tmp/q.json}"
 if [ ! -f "$Q" ]; then
   echo "  fetching quotes feed -> $Q"
   curl -fsS -o "$Q" \
     https://raw.githubusercontent.com/Asaf-12344321/risk-sizer/data/quotes.json \
-    || { echo "  COULD NOT FETCH $Q — sweep and feed will fail"; }
+    || { echo "  COULD NOT FETCH $Q - sweep and feed will fail"; }
 fi
 
 tot=0; fail=0; crashed=""; skipped=""
@@ -29,7 +29,7 @@ for s in invariants sweep edge golden defects ux feed custom_edge tracker policy
 done
 # parity.py imports the riskml research simulator from ~/riskml, a separate private
 # checkout. It is the only suite with an input CI cannot obtain, so a missing riskml is
-# reported as SKIPPED rather than CRASHED — a crash there used to mask the other suites'
+# reported as SKIPPED rather than CRASHED - a crash there used to mask the other suites'
 # result behind a red run. Set QA_REQUIRE_PARITY=1 before a release: parity is the only
 # guard on the research -> production link, so shipping without it is a deliberate choice,
 # not a default.

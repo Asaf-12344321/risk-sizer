@@ -1,7 +1,7 @@
 {
   "name": "risk-sizer-qa",
   "private": true,
-  "description": "QA suite for risk-sizer.html — invariants, universe sweep, golden snapshot, edge cases",
+  "description": "QA suite for risk-sizer.html - invariants, universe sweep, golden snapshot, edge cases",
   "scripts": {
     "test": "sh run_all.sh"
   },

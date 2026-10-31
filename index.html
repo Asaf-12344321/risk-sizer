@@ -516,7 +516,7 @@
   details.manual summary::-webkit-details-marker,
   details.why summary::-webkit-details-marker { display: none; }
   details.manual summary::before, details.why summary::before { content: "＋ "; }
-  details.manual[open] summary::before, details.why[open] summary::before { content: "− "; }
+  details.manual[open] summary::before, details.why[open] summary::before { content: "- "; }
   .manual-body { display: flex; flex-direction: column; gap: 10px; padding: 8px 0 4px; }
 
   .trailmode-row { margin: 2px 0; }
@@ -1203,7 +1203,7 @@
       <div class="stop-alert-status" id="stopAlertStatus" aria-live="polite"></div>
     </section>
     <section class="card">
-      <div class="section-label">Core portfolio <span class="hint">— long-term holdings in SQLite</span></div>
+      <div class="section-label">Core portfolio <span class="hint">- long-term holdings in SQLite</span></div>
       <p class="setup-intro">Values are current market values in ILS. These holdings are included automatically in every risk check.</p>
       <form class="core-form" id="coreForm">
         <div class="field"><label for="coreTicker">Ticker</label><input id="coreTicker" autocomplete="off" autocapitalize="characters" placeholder="QQQ" required></div>
@@ -1291,7 +1291,7 @@
       <strong>Awaiting market data</strong>
       <p>Enter a ticker or set entry price and ATR to generate the position recommendation.</p>
     </div>
-    <div class="terminal-empty-ring" aria-hidden="true"><span>—</span><small>EQUITY<br>AT RISK</small></div>
+    <div class="terminal-empty-ring" aria-hidden="true"><span>-</span><small>EQUITY<br>AT RISK</small></div>
   </section>
 
   <section class="card result-card" id="answerCard" hidden>
@@ -1299,14 +1299,14 @@
     <div class="answer-hero">
       <div class="answer">
         <div class="answer-label">Position size</div>
-        <div class="answer-num" id="out-size">₪ —</div>
+        <div class="answer-num" id="out-size">₪ -</div>
         <div class="answer-sub" id="out-shares">enter a price and ATR</div>
       </div>
       <div class="risk-orbit" aria-hidden="true"><span>1R</span><small>controlled</small></div>
     </div>
     <div class="answer alt">
       <div class="answer-label">Initial stop</div>
-      <div class="answer-num" id="out-stopprice">—</div>
+      <div class="answer-num" id="out-stopprice">-</div>
       <div class="answer-sub" id="out-stopsub"></div>
       <div class="answer-sub" id="out-stopwhy"></div>
     </div>
@@ -1318,10 +1318,10 @@
         <strong id="riskVerdict">WAITING</strong>
       </div>
       <div class="risk-metrics" id="riskMetrics" hidden aria-hidden="true">
-        <div><span>Weighted correlation</span><strong id="riskCorrelation">—</strong></div>
-        <div><span>Variance change</span><strong id="riskVariance">—</strong></div>
-        <div><span>Incremental 99% VaR</span><strong id="riskIncrementalVar">—</strong></div>
-        <div><span>Portfolio heat</span><strong id="riskPortfolioHeat">—</strong></div>
+        <div><span>Weighted correlation</span><strong id="riskCorrelation">-</strong></div>
+        <div><span>Variance change</span><strong id="riskVariance">-</strong></div>
+        <div><span>Incremental 99% VaR</span><strong id="riskIncrementalVar">-</strong></div>
+        <div><span>Portfolio heat</span><strong id="riskPortfolioHeat">-</strong></div>
       </div>
       <div class="risk-reasons" id="riskReasons">Enter the position amount to check whether it fits your portfolio.</div>
       <button class="risk-check-btn" type="button" id="riskCheckBtn">Check again</button>
@@ -1348,10 +1348,10 @@
   </section>
 
   <section class="summary-strip" id="summaryStrip" hidden aria-label="Position summary">
-    <div><span>Position value</span><strong id="summaryPosition">—</strong></div>
-    <div><span>Share quantity</span><strong id="summaryShares">—</strong></div>
-    <div class="loss"><span>Initial stop</span><strong id="summaryStop">—</strong></div>
-    <div class="good"><span>Capital at risk</span><strong id="summaryRisk">—</strong></div>
+    <div><span>Position value</span><strong id="summaryPosition">-</strong></div>
+    <div><span>Share quantity</span><strong id="summaryShares">-</strong></div>
+    <div class="loss"><span>Initial stop</span><strong id="summaryStop">-</strong></div>
+    <div class="good"><span>Capital at risk</span><strong id="summaryRisk">-</strong></div>
   </section>
 
   <section class="card" id="ladderCard" hidden>
@@ -1491,11 +1491,11 @@
 
   <!-- The multipliers here are written from cfg at render time, never typed. This copy
        said "3× ATR" for months after the default moved to 2.5×, telling the user a rule
-       the tool does not follow — the one kind of stale comment that reaches a person. -->
+       the tool does not follow - the one kind of stale comment that reaches a person. -->
   <footer class="note">
     Everything is sized from the stop: risk 1R, divide by the stop distance, then take the
-    smallest cap. The stop starts at <b id="foot-initmult">—</b>× ATR and only ever moves
-    up — once the price is <b id="foot-arm">—</b> ahead it sits at your entry, which
+    smallest cap. The stop starts at <b id="foot-initmult">-</b>× ATR and only ever moves
+    up - once the price is <b id="foot-arm">-</b> ahead it sits at your entry, which
     protects the trade <b>95%</b> of the time. The other 5% is an overnight gap opening
     below the stop and filling there, and the tracker prices that fill at the open. Bars
     are daily OHLC from Yahoo, not live quotes.
@@ -1533,7 +1533,7 @@
     // 10-12% -> 61.5, 12-15% -> 62.8. The curve clamps at 13.5%.
     gapt6: 56,          // ATR ~9%
     gapt7: 60,          // ATR ~11%
-    gapt8: 63,          // ATR ~13.5%+ — measured 62.8 on n=4,268 (was 71 on n=1,540)
+    gapt8: 63,          // ATR ~13.5%+ - measured 62.8 on n=4,268 (was 71 on n=1,540)
     liqpct: 5,
     initmult: 2.5,     // OOS grid: 2.5x gave +0.341 mean OOS Sharpe vs +0.137 at 3.0x
     trailmult: 3.5,    // OOS grid: 3.5x gave +0.273 vs +0.206 at 2.5x
@@ -1541,7 +1541,7 @@
     armatrmult: 3.0,     // arm at max(armpct, this x ATR%). 0 disables the scaling
     minstop: 8,
     // 30% not 45%: on a name like QBTS (ATR ~15% of price) the raw initmult distance is a
-    // 37.5% stop at today's 2.5x — it was 45% when this was decided at 3.0x — which is not
+    // 37.5% stop at today's 2.5x - it was 45% when this was decided at 3.0x - which is not
     // protection at all. -30% also tested best of every fixed depth on the real trade history.
     maxstop: 30,
     drawdown: 40,
@@ -1575,7 +1575,7 @@
 
   // staleKey is the key the caller actually sent. Comparing against it is what
   // separates "the key I sent was rejected" from "a key arrived while I was in
-  // flight" — the second case must not discard the key another request just
+  // flight" - the second case must not discard the key another request just
   // established, or entering it correctly still ends in an auth error.
   function acquireApiKey(staleKey) {
     if (apiKey && apiKey !== staleKey) return Promise.resolve(apiKey);
@@ -1701,7 +1701,7 @@
 
   el("enableStopAlerts").addEventListener("click", function () {
     // Config and the service worker are prepared at startup, so subscribe is called
-    // directly from this tap — required by iPhone's notification permission policy.
+    // directly from this tap - required by iPhone's notification permission policy.
     if (!pushConfig || !pushRegistration) { prepareStopAlerts(); return; }
     el("enableStopAlerts").disabled = true;
     pushRegistration.pushManager.subscribe({
@@ -1773,7 +1773,7 @@
   // The five settings are anchor points, not buckets: each is the measured ~96th-percentile
   // 45-day drawdown at a representative ATR level, and we interpolate between them. Treating
   // them as buckets made this a step function, so 2,607 tickers produced only five possible
-  // position sizes — MSFT at 3.04% ATR and META at 3.91% got identical caps. Interpolating
+  // position sizes - MSFT at 3.04% ATR and META at 3.91% got identical caps. Interpolating
   // makes the answer specific to each stock, which is the whole point.
   // "Speculative" in this book means something like QBTS or OKLO: about 10% ATR.
   // The crash budget is anchored there, so the size you name in setup is the size such
@@ -1798,7 +1798,7 @@
 
   // Arming trigger, as a % gain from entry. Volatility-scaled, floored at armpct.
   // Measured: arming earlier than +15% is worse on calm names, but on ATR>9% names a
-  // +15% trigger fires inside the daily noise — 3x ATR gave +48% there.
+  // +15% trigger fires inside the daily noise - 3x ATR gave +48% there.
   function armTriggerPct(price, atr, policy) {
     var rule = policy || cfg;
     if (!(rule.armatrmult > 0) || !(price > 0) || !(atr > 0)) return rule.armpct;
@@ -1812,25 +1812,25 @@
   // ---- beta used for the beta-exposure cap.
   //
   // The cap was previously applied only `if (beta > 0)`. That guarded against dividing
-  // by a negative beta, but it did so by DROPPING the constraint — silently, and for
+  // by a negative beta, but it did so by DROPPING the constraint - silently, and for
   // 278 of 2,604 tickers (10.7%). Two quite different situations were being collapsed:
   //
-  //   1. Beta measured, but <= 0. Usually REAL, not noise — ABBV -0.078, ADP -0.025,
+  //   1. Beta measured, but <= 0. Usually REAL, not noise - ABBV -0.078, ADP -0.025,
   //      TMUS -0.39. Defensive names genuinely decouple from a tech-dominated SPY.
   //      A stock with no positive market co-movement adds no market exposure, so a
   //      market-exposure cap SHOULD NOT bind on it: capital*pct/beta correctly tends to
   //      infinity as beta approaches 0 from above. Beta is floored at BETA_MIN purely to
   //      keep the arithmetic positive and finite; the cap then lands far above every
   //      other candidate and the capital/crash/risk caps do the work, as they should.
-  //      Never call this "estimated" — the measurement succeeded.
+  //      Never call this "estimated" - the measurement succeeded.
   //
-  //   2. Beta not measurable at all — under ~6 months of history. THIS is the real
+  //   2. Beta not measurable at all - under ~6 months of history. THIS is the real
   //      hole: SHAZ (ATR 18%, ADV $141M) had no beta and therefore no cap, on exactly
   //      the kind of name where it binds hardest. Estimate from ATR%, and disclose it.
   //
   // The estimate is fitted on the 2,579 tickers that do have a beta: regressing
   // band-median beta on ATR% gives 0.235 + 0.232 x ATR%, corr 0.946. ATR% is the right
-  // predictor — it is measured reliably for every ticker, and Phase 2 found atr_pct
+  // predictor - it is measured reliably for every ticker, and Phase 2 found atr_pct
   // alone outranked all 29 candidate features. Better than a flat 1.5, which would let
   // SHAZ size to 26.7% of capital rather than 9.1%.
   //
@@ -1851,7 +1851,7 @@
 
   // When a ticker was looked up we know its true daily ATR, so we can compare directly
   // instead of guessing from magnitude. Intraday readings are 28-51x too small (96-98%
-  // below), while legitimate disagreement — TradingView's simple-mean vs Wilder — tops
+  // below), while legitimate disagreement - TradingView's simple-mean vs Wilder - tops
   // out near 19%. 40% separates those two by a wide margin in both directions.
   var FEED_ATR_TOLERANCE = 0.4;
 
@@ -1863,7 +1863,7 @@
     return clamp(BETA_FIT_A + BETA_FIT_B * atrPct, BETA_FIT_FLOOR, BETA_FIT_CAP);
   }
 
-  // `measured` says whether a beta was actually obtained — from the feed, or typed in.
+  // `measured` says whether a beta was actually obtained - from the feed, or typed in.
   // That is what separates case 1 from case 2; the sign alone cannot.
   function betaForSizing(beta, atrPct, measured) {
     if (beta > 0) return { beta: beta, mode: "measured", shown: beta };
@@ -1923,8 +1923,8 @@
     var rule = policy || cfg;
     var trailDist = rule.trailmult * atr;
     function trailStopFor(high) { return Math.min(high - trailDist, high); }
-    var rungs = [{ label: "— now —", stop: initialStop, why: "set this at entry", cls: "now" }];
-    rungs.push({ px: armPrice, stop: price, why: "jumps to BREAKEVEN — protected bar a gap", cls: "arm" });
+    var rungs = [{ label: "- now -", stop: initialStop, why: "set this at entry", cls: "now" }];
+    rungs.push({ px: armPrice, stop: price, why: "jumps to BREAKEVEN - protected bar a gap", cls: "arm" });
     var step = niceStep(Math.max(atr, price * 0.05));
     var lvl = Math.ceil(armPrice / step) * step;
     var lastStop = price, count = 0;
@@ -2041,7 +2041,7 @@
     if (!(p > 0) || !(p < price)) return { error: "Your stop must be below the entry price" + (inManualUnit.value === "pct" ? " (use a % between 0 and 100)." : ".") };
     return { price: p };
   }
-  var TIMING_WARNING = "⚠️ Extended from support — poor R/R entry timing";
+  var TIMING_WARNING = "⚠️ Extended from support - poor R/R entry timing";
   var inPositionValue = el("in-position-value");
   var positionValueOverridden = false, currentSizing = null;
   var riskGateState = { status: "idle", approved: false, signature: null };
@@ -2060,15 +2060,15 @@
     currentSizing = null;
     if (!positionValueOverridden) inPositionValue.value = "";
     resetRiskGate("Enter a ticker and position value.");
-    // nothing to show yet — keep the result cards out of the way entirely
+    // nothing to show yet - keep the result cards out of the way entirely
     el("answerCard").hidden = true;
     el("resultTerminalEmpty").hidden = false;
     el("summaryStrip").hidden = true;
     el("ladderCard").hidden = true;
     el("addRow").hidden = true;
-    outSize.textContent = "₪ —";
+    outSize.textContent = "₪ -";
     outShares.textContent = msg;
-    outStopPrice.textContent = "—";
+    outStopPrice.textContent = "-";
     outStopSub.textContent = "";
     outStopWhy.textContent = "";
     outSizeFormula.textContent = "";
@@ -2103,7 +2103,7 @@
     var stopPrice = price * (1 - stopPct / 100);
 
     // Stop precedence: your own chart stop > structural (support/volume/ADX) > ATR ladder.
-    // A chosen stop is an exact exit price, so sizing uses its real distance — no 8% floor
+    // A chosen stop is an exact exit price, so sizing uses its real distance - no 8% floor
     // and no 30% ceiling, which exist only to tame the volatility formula.
     requestStructural();
     var manual = manualStopFor(price);
@@ -2120,7 +2120,7 @@
     // Sizing uses the volatility-implied distance, with the FLOOR applied but NOT the
     // ceiling. Capping the stop at 30% limits where the order sits; it does nothing to
     // stop the price falling initmult x ATR. Sizing off the capped figure would assume a
-    // protection the stop cannot deliver — on NBIS (49.5% implied) that understated the
+    // protection the stop cannot deliver - on NBIS (49.5% implied) that understated the
     // real risk by two thirds, and made every name above 10% ATR the same size.
     var riskStopPct = chosenStopPrice ? stopPct : Math.min(Math.max(rawStopPct, cfg.minstop), 100);
     var stopWasCapped = !chosenStopPrice && riskStopPct > stopPct + 0.01;
@@ -2146,7 +2146,7 @@
     var inCcyAmt = inCcy.value === "USD" ? size / fx : size;
     var shares = inCcyAmt / price;
     if (!(size >= 1)) {
-      blankOut("too volatile to size — skip this one");
+      blankOut("too volatile to size - skip this one");
       el("answerCard").hidden = false;
       el("resultTerminalEmpty").hidden = true;
       outShares.textContent = "at " + pct(riskStopPct) + " implied risk, no position is small enough";
@@ -2169,10 +2169,10 @@
           + pct(riskStopPct) : "")
       + (binding === "risk-based" ? "" : " · size held down by the " + binding);
     outStopWhy.textContent = stopSource === "MANUAL" ? "Using your stop. "
-        + (st && st.stop > 0 ? "Technical stop would be " + px(st.stop) + " — " + st.justification : "")
+        + (st && st.stop > 0 ? "Technical stop would be " + px(st.stop) + " - " + st.justification : "")
       : stopSource === "STRUCTURAL" ? st.justification
       : structural.status === "loading" ? "Looking up the technical stop…"
-      : structural.status === "failed" ? "Chart stop unavailable right now — the size above uses a plain ATR distance and is not a chart stop."
+      : structural.status === "failed" ? "Chart stop unavailable right now - the size above uses a plain ATR distance and is not a chart stop."
       : st && st.no_support ? "No proven chart support below this price. The size above uses a plain ATR distance only to size the trade; it is not a chart stop, and the daily job will flag this position for a manual decision."
       : "";
     el("summaryPosition").textContent = nis(size);
@@ -2187,9 +2187,9 @@
         : k === "crash cap" ? nis(cfg.breakbudget) + " ÷ " + band.gap.toFixed(1) + "% crash"
         : k === "capital cap" ? cfg.maxpct + "% of capital"
         : k === "beta cap" ? cfg.betaexpct + "% ÷ beta " + bs.beta.toFixed(2)
-            + (bs.mode === "estimated" ? " (estimated from ATR — beta not measurable)"
+            + (bs.mode === "estimated" ? " (estimated from ATR - beta not measurable)"
              : bs.mode === "nonpositive" ? " (measured beta " + bs.shown.toFixed(2)
-                 + " ≤ 0, floored — no market exposure to cap)" : "")
+                 + " ≤ 0, floored - no market exposure to cap)" : "")
         : cfg.liqpct + "% of daily volume";
       return '<span class="cand' + (k === binding ? " is-binding" : "") + '">'
         + (k === binding ? "▸ " : "· ") + k + " " + nis(cand[k]) + " (" + detail + ")</span>";
@@ -2203,7 +2203,7 @@
     var all = buildLadder(price, atr, stopPrice, armPrice);
     var rungs = [], seen = null;
     for (var ri = 0; ri < all.length && rungs.length < 7; ri++) {
-      // skip rungs that repeat the previous stop — they tell you nothing new
+      // skip rungs that repeat the previous stop - they tell you nothing new
       if (seen !== null && Math.abs(all[ri].stop - seen) < 0.005) continue;
       rungs.push(all[ri]); seen = all[ri].stop;
     }
@@ -2231,12 +2231,12 @@
     // An ATR this small cannot be a DAILY ATR. Across 2,606 liquid US tickers the lowest
     // measured is about 0.27% of price (GBTG/DBRG). A value under the
     // floor almost always means an INTRADAY reading: Yahoo's chart computes ATR on
-    // whatever bars it is showing, and its "1D" range shows 1-MINUTE bars — which gave
+    // whatever bars it is showing, and its "1D" range shows 1-MINUTE bars - which gave
     // NVDA 0.27 against a true daily 7.47, INTC 0.17 against 8.62, IREN 0.11 against 4.58.
     //
     // This has to be caught loudly, because the failure is silent and large. Below ~0.5%
     // every name looks "very calm", so the min-stop floor and the lowest crash anchor
-    // both bind and unlike stocks collapse to an IDENTICAL size — the DEF-001 signature,
+    // both bind and unlike stocks collapse to an IDENTICAL size - the DEF-001 signature,
     // from bad input rather than bad code. IREN would have been sized ₪15,818 instead of
     // ₪4,176, nearly 4x too large, with an 8% stop where it needs 30%.
     // Only trust the stored reference while the price still looks like the same quote.
@@ -2248,20 +2248,20 @@
     if (feedRef && Math.abs(atr - feedRef) / feedRef > FEED_ATR_TOLERANCE) {
       flags.push(["bad", "ATR " + px(atr) + " does not match the daily ATR fetched for "
         + extra.feedSym + " (" + px(feedRef) + "). A Yahoo chart set to “1D” measures "
-        + "ATR on 1-minute bars, not days — that reads about "
+        + "ATR on 1-minute bars, not days - that reads about "
         + (feedRef / atr).toFixed(0) + "x too small here. Clear the field to restore "
         + px(feedRef) + "."]);
     } else if (!feedRef && atrPct > 0 && atrPct < ATR_PCT_IMPLAUSIBLE) {
       flags.push(["bad", "ATR is only " + atrPct.toFixed(2) + "% of price. No liquid US "
         + "stock has a daily ATR that small (the calmest is ~0.27%), so this is probably an "
-        + "intraday reading — a Yahoo chart on “1D” measures 1-minute bars. Use a "
+        + "intraday reading - a Yahoo chart on “1D” measures 1-minute bars. Use a "
         + "daily chart, or look the ticker up instead of typing it."]);
     }
     if (rawStopPct > cfg.maxstop + 0.01) {
       flags.push(["bad", "Too volatile to stop cleanly. ATR is " + atrPct.toFixed(1)
         + "% of price, so a proper stop would sit " + pct(rawStopPct)
         + " away. Capped at " + cfg.maxstop + "% for the order, but the position is sized "
-        + "against the full " + pct(rawStopPct) + " — expect the stop to be tested."]);
+        + "against the full " + pct(rawStopPct) + " - expect the stop to be tested."]);
     } else if (rawStopPct < cfg.minstop) {
       flags.push(["quiet", "Stop widened to the " + cfg.minstop + "% floor; " + cfg.initmult
         + "× ATR would have been only " + pct(rawStopPct) + " away."]);
@@ -2363,7 +2363,7 @@
     var n = el("feedStatus");
     if (feedErr) {
       n.className = "sub feed-bad";
-      n.textContent = "Market data unavailable (" + feedErr + ") — type the numbers in by hand.";
+      n.textContent = "Market data unavailable (" + feedErr + ") - type the numbers in by hand.";
       return;
     }
     if (!feed) { n.className = "sub"; n.textContent = "loading market data…"; return; }
@@ -2377,7 +2377,7 @@
     n.className = "sub" + (stale ? " feed-stale" : "");
     n.textContent = (feed.count || syms) + " US tickers, updated "
       + (age === null ? feed.updated : age < 1 ? Math.round(age * 60) + " min ago" : age.toFixed(0) + "h ago")
-      + (stale ? " — stale" : age !== null && age > 24 ? " (market closed)" : "");
+      + (stale ? " - stale" : age !== null && age > 24 ? " (market closed)" : "");
   }
 
   function lookupTicker(sym) {
@@ -2411,7 +2411,7 @@
     if (!t) {
       el("feedStatus").className = "sub feed-bad";
       el("feedStatus").textContent = feed
-        ? sym + " not found. It may be too illiquid, an ETF, or newly listed — enter the numbers by hand below."
+        ? sym + " not found. It may be too illiquid, an ETF, or newly listed - enter the numbers by hand below."
         : "Market data hasn't loaded yet.";
       return;
     }
@@ -2424,7 +2424,7 @@
     // overstatement; 120 of 2,604 tickers were off by more than 1%. That error flows
     // straight into the stop distance and from there ~1:1 into the position size.
     inAtr.value = t.atr > 0 ? String(t.atr) : "";
-    // Carry the measured beta through verbatim, negative included — it is the truth and
+    // Carry the measured beta through verbatim, negative included - it is the truth and
     // the reasoning line explains it. Blank only when nothing was measurable.
     inBeta.value = t.betaMeasured ? String(t.beta) : "";
     extra.betaMeasured = !!t.betaMeasured;
@@ -2584,13 +2584,13 @@
     var rho = Number(correlation.new_ticker_to_weighted_portfolio);
     var varianceChange = Number(variance.relative_increase_pct);
     var incrementalVar = Number(valueAtRisk.incremental_var_ils);
-    el("riskCorrelation").textContent = isFinite(rho) ? rho.toFixed(3) : "—";
+    el("riskCorrelation").textContent = isFinite(rho) ? rho.toFixed(3) : "-";
     el("riskVariance").textContent = isFinite(varianceChange)
-      ? (varianceChange >= 0 ? "+" : "") + (varianceChange * 100).toFixed(1) + "%" : "—";
-    el("riskIncrementalVar").textContent = isFinite(incrementalVar) ? nis(incrementalVar) : "—";
+      ? (varianceChange >= 0 ? "+" : "") + (varianceChange * 100).toFixed(1) + "%" : "-";
+    el("riskIncrementalVar").textContent = isFinite(incrementalVar) ? nis(incrementalVar) : "-";
     var currentHeat = Number(portfolioHeat.current_r), maxHeat = Number(portfolioHeat.max_r);
     el("riskPortfolioHeat").textContent = isFinite(currentHeat) && isFinite(maxHeat)
-      ? currentHeat.toFixed(0) + " / " + maxHeat.toFixed(0) + "R" : "—";
+      ? currentHeat.toFixed(0) + " / " + maxHeat.toFixed(0) + "R" : "-";
     el("riskReasons").textContent = simpleRiskMessage(metrics, approved);
     syncAddBtn();
   }
@@ -2748,7 +2748,7 @@
     for (var i = 0; i < bars.length; i++) {
       var hi = bars[i][1], lo = bars[i][2], cl = bars[i][3], op = bars[i][4];
       // Stop-first, open-first. A bar that OPENED below the stop never offered the stop
-      // price — you were filled at the open, lower. Reporting that exit at the stop price
+      // price - you were filled at the open, lower. Reporting that exit at the stop price
       // flatters the worst days, which are the only days this number matters on.
       // `op` is undefined against a feed published before opens were added; fall back to
       // the old stop-price fill rather than dropping the breach entirely.
@@ -2760,7 +2760,7 @@
       }
       // The TRAIL rides the close; ARMING is judged on the intraday high. A parabolic
       // spike that touches the arm trigger and closes back below it used to arm nothing,
-      // so the give-back cost a full 1R — the exact failure a fast +30% move produces.
+      // so the give-back cost a full 1R - the exact failure a fast +30% move produces.
       // Measured on 17,516 high-ATR entries: median -14.56% -> -9.14%, mean essentially
       // unchanged, real losses 56.8% -> 54.4% as they become break-even scratches.
       // Arming AND trailing on the high costs 0.83pp of mean, because the trail then
@@ -2811,10 +2811,10 @@
       function positionPx(value) {
         return (p.currency === "USD" ? "$" : p.currency === "ILS" ? "₪" : "") + px(value);
       }
-      var displayName = p.display_name || p.tick || "—";
+      var displayName = p.display_name || p.tick || "-";
       var out = '<div class="pos">'
         + '<div class="pos-head"><div class="pos-heading-copy"><span class="position-name">' + esc(displayName) + "</span>"
-        + '<span class="position-ticker">' + esc(p.tick || "—") + '</span>'
+        + '<span class="position-ticker">' + esc(p.tick || "-") + '</span>'
         + '</div><div class="row-actions">'
         + '<button class="ghost-btn" type="button" data-act="edit" data-i="' + i + '">Edit</button>'
         + '<button class="danger-ghost" type="button" data-act="close" data-i="' + i + '">Delete</button>'
@@ -2829,7 +2829,7 @@
         out += p.heldSince
           ? '<div class="position-state"><strong>Holding on purpose since ' + esc(p.heldSince) + '.</strong><span>No chart support below, so there is no stop. '
             + 'You will be reminded only if the chart gives a stop.</span></div>'
-          : '<div class="position-state danger"><strong>No chart support below — manual decision required.</strong><span>'
+          : '<div class="position-state danger"><strong>No chart support below - manual decision required.</strong><span>'
             + esc(p.stopWhy || "") + "</span></div>" + holdBtn;
       } else if (hit) {
         out += '<div class="position-state danger"><strong>Your chart stop was reached.</strong><span>The support it sat under broke. Sell it, or hold on purpose.</span></div>'
@@ -2868,14 +2868,14 @@
       var shadow = positionShadows[String(p.id)];
       var detailStop = eod ? px(eodStop) + " after close" : "waiting for after-close check";
       out += '<details class="position-details"><summary>Details</summary><div class="position-detail-body">'
-        + '<div>Entry ' + px(p.entry) + " · opened " + esc(p.added || "—") + "</div>"
+        + '<div>Entry ' + px(p.entry) + " · opened " + esc(p.added || "-") + "</div>"
         + (p.srvStop !== null ? "<div>Stop source: " + esc(stopSourceLabel(p.stopSource))
             + (p.stopAsof ? " · as of " + esc(p.stopAsof) : "") + (p.stopWhy ? "<br>" + esc(p.stopWhy) : "") + "</div>" : "")
         + '<div>Browser tracker ' + px(browserStop) + " · EOD engine " + detailStop + "</div>";
       if (live) out += '<div>Latest price ' + px(live.last) + " · " + esc(live.asOf) + "</div>";
       if (live && live.hit) out += '<div>Stop breach detected on ' + esc(live.hit.date) + " at " + px(live.hit.price)
-        + (live.hit.gap ? " — gapped through the stop." : ".") + "</div>";
-      if (p.added && ageDays >= cfg.holddays) out += '<div>Held ' + ageDays + " days — review this position.</div>";
+        + (live.hit.gap ? " - gapped through the stop." : ".") + "</div>";
+      if (p.added && ageDays >= cfg.holddays) out += '<div>Held ' + ageDays + " days - review this position.</div>";
       if (shadow) {
         var f21 = shadow.forecasts && shadow.forecasts["21"], f31 = shadow.forecasts && shadow.forecasts["31"];
         var fmtShadow = function (forecast) {
@@ -2888,7 +2888,7 @@
       if (!live) {
         out += '<button class="btn-reached" type="button" data-act="reached" data-i="' + i + '"'
           + (next ? "" : " disabled") + ">Reached "
-          + (next ? positionPx(next.px) + " → apply stop " + positionPx(next.stop) : "—") + "</button>"
+          + (next ? positionPx(next.px) + " → apply stop " + positionPx(next.stop) : "-") + "</button>"
           + (idx > 0 ? '<button class="btn-undo" type="button" data-act="undo" data-i="' + i + '">Undo</button>' : "");
       }
       out += '<button class="btn-reached" type="button" data-act="toggle-risk" data-i="' + i + '">'
@@ -3110,7 +3110,7 @@
       msg = "Risk per trade (1R): " + nis(cfg.riskabs > 0 ? cfg.riskabs : cap * cfg.riskpct / 100)
         + (cfg.riskabs > 0 ? " (fixed)" : " (" + cfg.riskpct + "% of capital)") + "."
         + "\nCrash budget: " + nis(spec * crashPctFor(SPEC_REF_ATR) / 100)
-        + " — what a " + crashPctFor(SPEC_REF_ATR).toFixed(0) + "% crash costs on a " + nis(spec)
+        + " - what a " + crashPctFor(SPEC_REF_ATR).toFixed(0) + "% crash costs on a " + nis(spec)
         + " position (a speculative name moves about " + SPEC_REF_ATR + "% a day)."
         + "\nAll of it is editable later under Your rules.";
     }

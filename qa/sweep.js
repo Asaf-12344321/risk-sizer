@@ -1,4 +1,4 @@
-// UNIVERSE SWEEP — run every real ticker through the calculator and inspect the
+// UNIVERSE SWEEP - run every real ticker through the calculator and inspect the
 // DISTRIBUTION of answers. The step-function bug was invisible per-stock and obvious here.
 const { boot, ck, report } = require('./lib');
 const CAP = +(process.env.QA_CAPITAL || 100000), RISK = +(process.env.QA_RISK || 1300);
@@ -35,12 +35,12 @@ ck('every ticker respects the caps', breaches.length === 0,
    breaches.length ? `${breaches.length} breaches, e.g. ${breaches[0].sym} risk ₪${breaches[0].risk} stop ${breaches[0].stopPct}%`
                    : `${rows.length.toLocaleString()} tickers, using the tool's own reported risk/stop`);
 
-// Ordering: size must fall as ATR rises — but ONLY where ATR is actually the input.
+// Ordering: size must fall as ATR rises - but ONLY where ATR is actually the input.
 // This check used to be asserted across EVERY binding constraint, which was wrong: the
 // beta cap is `capital x betaexpct / beta` and ATR does not appear in it at all. Beta
 // tracks ATR only as a band-median fit (corr 0.946), never per ticker, so sorting the
 // beta-cap group by ATR and demanding monotone size asserts something the formula never
-// promised. It failed on exactly that — BMNR ATR 6.35% ₪6,172 -> QUBT ATR 6.55% ₪6,750,
+// promised. It failed on exactly that - BMNR ATR 6.35% ₪6,172 -> QUBT ATR 6.55% ₪6,750,
 // two names whose measured betas run the other way. The tool was right and the test was
 // wrong. Assert each cap against the variable its own formula uses.
 const ATR_DRIVEN = new Set(['risk-based', 'crash cap']);
@@ -66,14 +66,14 @@ const budget = CAP * betaexpct / 100;
 const betaRows = rows.filter(r => r.bind === 'beta cap' && r.beta > 0);
 // Tolerance scales with beta: size is read back from a display rounded to ₪1, so one
 // rounding unit becomes `beta` shekels once multiplied. A flat tolerance reads a high-beta
-// name as a breach — the same rounded-display trap documented in lib.js.
+// name as a breach - the same rounded-display trap documented in lib.js.
 const betaBad = betaRows.filter(r => Math.abs(r.size * r.beta - budget) > r.beta + 1);
 ck('beta-cap size is exactly the exposure budget divided by measured beta',
    betaRows.length > 0 && betaBad.length === 0,
    betaBad.length ? `${betaBad.length} off, e.g. ${betaBad[0].sym} beta ${betaBad[0].beta} size ₪${betaBad[0].size} -> ₪${(betaBad[0].size * betaBad[0].beta).toFixed(0)} vs budget ₪${budget}`
                   : `${betaRows.length.toLocaleString()} measured-beta tickers at ₪${budget.toLocaleString()} exposure`);
 
-// Within the beta cap, size must fall as BETA rises — the ordering that formula does promise.
+// Within the beta cap, size must fall as BETA rises - the ordering that formula does promise.
 const byBeta = betaRows.slice().sort((x, y) => x.beta - y.beta);
 let betaInv = 0, betaEg = '';
 for (let i = 1; i < byBeta.length; i++)

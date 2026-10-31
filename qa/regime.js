@@ -11,7 +11,7 @@ const vm = (over = {}) => Object.assign({
   kpis: [
     { key: 'drawdown', title: 'Pullback from 52w High', value: '-24.0%', value_tone: 'bad', pill: 'Bear-market territory', pill_tone: 'bad', scale: 'Normal pullback: 5–10% | Bear market: 20%+' },
     { key: 'trend', title: 'Long-Term Trend (200d SMA)', value: '+1.6% Above & Rising', value_tone: 'good', pill: 'Thin cushion: watch', pill_tone: 'warn', scale: 'Bullish above 200d SMA | Bearish below' },
-    { key: 'vix', title: 'Market Fear (VIX)', value: '27.0 — High Stress', value_tone: 'orange', pill: '', pill_tone: 'orange', scale: '<18 Calm | 18–25 Caution | 25–30 High Stress | 30+ Panic' },
+    { key: 'vix', title: 'Market Fear (VIX)', value: '27.0', value_tone: 'orange', pill: 'High Stress', pill_tone: 'orange', scale: '<18 Calm | 18–25 Caution | 25–30 High Stress | 30+ Panic' },
     { key: 'today', title: "Today's Move", value: '-3.46%', value_tone: 'bad', pill: 'Rare shock', pill_tone: 'bad', scale: 'Shock rarity: ~1 in 115 trading days', raw: 'Raw size alone: ~1 in 40 days' }],
   checks: [
     { key: 'trend', title: 'Long-Term Trend', level: 'red', ok: false, badge: 'RED FLAG', status: 'Price is 6.0% below the 200-day average', gauge: 1, limit: 'Red flag if price drops below the 200-day line (0%)' },
@@ -59,6 +59,10 @@ function boot(responses, opts = {}) {
   ck('the banner counts red flags and watch items', /2 of 6 red flags · 2 watch/.test(text));
   ck('a negative number is red', cards[0].querySelector('.v').classList.contains('bad') && cards[3].querySelector('.v').classList.contains('bad'));
   ck('a positive number is green and VIX 25-30 is deep orange', cards[1].querySelector('.v').classList.contains('good') && cards[2].querySelector('.v').classList.contains('orange'));
+  ck('the VIX card shows only the number, with the word in a pill like the other cards',
+     cards[2].querySelector('.v').textContent === '27.0' && cards[2].querySelector('.pill').textContent === 'High Stress' &&
+     cards.every(c => c.querySelector('.pill')) && !/-/.test(cards[2].querySelector('.v').textContent));
+  ck('no em dash or unicode minus anywhere on the page', !/\u2014|\u2212/.test(d.body.textContent) && !/\u2014|\u2212/.test(HTML));
   ck('the status verdict is a separate pill with its own colour', cards[0].querySelector('.pill').textContent === 'Bear-market territory' &&
      cards[1].querySelector('.pill').classList.contains('warn') && cards[1].querySelector('.pill').textContent === 'Thin cushion: watch');
   const pillBeside = boot([{ status: 200, body: vm({ kpis: [{ key: 'drawdown', title: 'Pullback from 52w High', value: '-9.1%', value_tone: 'bad', pill: 'Normal pullback', pill_tone: 'good', scale: 's' }] }) }], { storedKey: 'k' });

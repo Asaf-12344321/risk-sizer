@@ -15,7 +15,7 @@ backups/
 portfolio_snapshot*.json
 
 # Design reference and handoff bundles. Not sensitive (verified free of account figures)
-# but not needed by anyone cloning this repo. NOTE: untracked means unbacked-up — if these
+# but not needed by anyone cloning this repo. NOTE: untracked means unbacked-up - if these
 # should survive a lost laptop, track them instead; `git add -f docs/` is all it takes.
 docs/
 

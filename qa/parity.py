@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PARITY — the browser tool and the Python research simulator implement the SAME ladder.
+"""PARITY - the browser tool and the Python research simulator implement the SAME ladder.
 If they disagree numerically, one of them is wrong. This is the only test that can catch
 a rule drifting between the thing that was validated and the thing being traded.
 
@@ -11,7 +11,7 @@ from riskml.sim.ladder import Ladder, initial_stop
 
 # Take the parameters from Ladder() rather than restating them: this comment used to read
 # "3x ATR init, 2.5x trail, [8,45] clamp" long after riskml had moved to 2.5 / 3.5 / [8,30],
-# and a stale comment next to a parity check is worse than none — it is the thing someone
+# and a stale comment next to a parity check is worse than none - it is the thing someone
 # reads when deciding whether a mismatch is real. riskml/sim/ladder.py is the source of truth.
 P = Ladder()          # 45d horizon; every numeric parameter is emitted below and compared
 CASES = [(100, 1.0), (100, 2.0), (100, 3.25), (100, 5.0), (100, 8.0), (100, 15.0),

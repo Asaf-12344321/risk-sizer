@@ -10,7 +10,7 @@ Works in any browser on any device. The first visit asks once for the API key
 and remembers it on that device. On iPhone, open the link in Safari, then tap
 Share and choose *Add to Home Screen* for an app icon.
 
-Typing the bare IP works too — it redirects to the address above, which is the
+Typing the bare IP works too - it redirects to the address above, which is the
 one holding the TLS certificate.
 
 The old GitHub Pages address no longer works. Pages can only serve static
@@ -33,7 +33,7 @@ Risk Sizer is a discipline and risk-management tool for **long equity positions*
 
 It is deliberately **not** a stock picker. It provides no screening, buy signal, short strategy, profit target or order execution. Its current job begins after you have chosen a stock.
 
-The default rules were calibrated for multi-week swing positions, but they are choices supported by a limited historical sample—not guarantees or universal optima. See [`PRD.md`](PRD.md) for the complete requirements, evidence and calibration caveats.
+The default rules were calibrated for multi-week swing positions, but they are choices supported by a limited historical sample-not guarantees or universal optima. See [`PRD.md`](PRD.md) for the complete requirements, evidence and calibration caveats.
 
 ---
 
@@ -100,7 +100,7 @@ and HAR-Parkinson research reference without cluttering the decision.
 Risk Sizer can send a direct iPhone notification only when that after-close engine moves
 a stop. In Safari, open the tool, select **Share → Add to Home Screen**, then open the
 new Risk Sizer icon. On **Portfolio**, select **Enable alerts** and then **Send a test**.
-This is standards-based Web Push from Risk Sizer itself—no messaging app is involved.
+This is standards-based Web Push from Risk Sizer itself-no messaging app is involved.
 It does not send a notification when a stop is unchanged.
 
 Risk Sizer does not transmit an order. You remain responsible for entering and updating the stop at your broker.
@@ -200,11 +200,11 @@ When the raw `2.5 × ATR` distance exceeds 30%, the **order** remains at the 30%
 
 The calculator no longer defaults to the ATR stop when a better one exists. Stop precedence:
 
-1. **Your chart stop** — optional field (a price, or a % below entry). Sizing uses its exact distance, still limited by 1R, the maximum position %, the crash, beta and liquidity caps.
-2. **Technical stop** — nearest qualified support (clustered swing lows, strengthened by volume-profile nodes) with the stop placed 0.3 ATR beneath it, at least 1.5 ATR from entry in a clean uptrend (2 ATR when ADX shows range or downtrend). The justification is shown under the stop.
-3. **ATR ladder** — the previous behaviour, used only when no qualified support exists or the lookup fails.
+1. **Your chart stop** - optional field (a price, or a % below entry). Sizing uses its exact distance, still limited by 1R, the maximum position %, the crash, beta and liquidity caps.
+2. **Technical stop** - nearest qualified support (clustered swing lows, strengthened by volume-profile nodes) with the stop placed 0.3 ATR beneath it, at least 1.5 ATR from entry in a clean uptrend (2 ATR when ADX shows range or downtrend). The justification is shown under the stop.
+3. **ATR ladder** - the previous behaviour, used only when no qualified support exists or the lookup fails.
 
-If the nearest support is more than *Extended-from-support warn* (default 22.5%) below entry, or none exists, the calculator shows **"⚠️ Extended from support — poor R/R entry timing"**. The honest size is still shown; it is not hidden.
+If the nearest support is more than *Extended-from-support warn* (default 22.5%) below entry, or none exists, the calculator shows **"⚠️ Extended from support - poor R/R entry timing"**. The honest size is still shown; it is not hidden.
 
 Saving a position sends the chosen stop to the server, which records it as the starting stop for the daily `eod_stops.py` job, so no `--set-stop` is needed for new trades.
 
@@ -253,7 +253,7 @@ The ladder follows four rules:
    ```
 
 3. Arming is judged from the daily **intraday high**, so a fast spike can activate protection even if the stock closes lower.
-4. After arming, the trail follows closing-price highs at the configured distance—currently `3.5 × ATR`—and never falls below entry.
+4. After arming, the trail follows closing-price highs at the configured distance-currently `3.5 × ATR`-and never falls below entry.
 
 Ladder trigger levels use round numbers because they are intended for manual alerts and broker updates. The ladder contains at most seven useful, non-repeating rows.
 
@@ -272,7 +272,7 @@ Risk Sizer does **not** warn simply because RSI is high or a stock recently rose
 
 ---
 
-## Settings — *Your rules*
+## Settings - *Your rules*
 
 Everything below is editable and applies immediately.
 
@@ -303,7 +303,7 @@ Everything below is editable and applies immediately.
 Yahoo Finance does not provide the browser CORS headers required for direct client-side access. A scheduled GitHub Action therefore fetches data server-side and force-pushes a single snapshot commit to the `data` branch:
 
 ```text
-GitHub Action — every 30 minutes during configured US market hours
+GitHub Action - every 30 minutes during configured US market hours
    └─ fetch_data.py
         ├─ reads the committed SEC-derived universe.csv
         ├─ downloads ~1 year of adjusted daily OHLCV from Yahoo
@@ -400,7 +400,7 @@ Risk Sizer has a substantial regression suite under [`qa/`](qa/). Before changin
 1. Read the related PRD requirements and tests.
 2. Document the intended behavioral change.
 3. Keep product/visual changes separate from calculation changes.
-4. Run the full suite: `cd qa && npm install && sh run_all.sh`. CI runs it on every push and pull request, minus `parity` — that one needs the private `riskml` checkout, so run `QA_REQUIRE_PARITY=1 sh run_all.sh` locally before merging any change to a **rule**.
+4. Run the full suite: `cd qa && npm install && sh run_all.sh`. CI runs it on every push and pull request, minus `parity` - that one needs the private `riskml` checkout, so run `QA_REQUIRE_PARITY=1 sh run_all.sh` locally before merging any change to a **rule**.
 
 See [`qa/README.md`](qa/README.md) and [`qa/DATASET.md`](qa/DATASET.md) for suite design and research limitations.
 
@@ -408,15 +408,15 @@ See [`qa/README.md`](qa/README.md) and [`qa/DATASET.md`](qa/DATASET.md) for suit
 
 ## Troubleshooting
 
-**Market data unavailable** — enter price, ATR, currency, FX and beta manually. The calculator must remain usable without the feed.
+**Market data unavailable** - enter price, ATR, currency, FX and beta manually. The calculator must remain usable without the feed.
 
-**Feed marked stale** — check the repository Actions workflow. Closed-market weekends receive a larger allowance before the UI reports staleness.
+**Feed marked stale** - check the repository Actions workflow. Closed-market weekends receive a larger allowance before the UI reports staleness.
 
-**Ticker will not fill** — it may be below the feed's price/liquidity filters, newly listed or absent from the committed universe. Manual entry remains available.
+**Ticker will not fill** - it may be below the feed's price/liquidity filters, newly listed or absent from the committed universe. Manual entry remains available.
 
-**Tracked position has no automatic update** — add the symbol to `tickers.txt`; until bars are published, use manual **Reached** mode.
+**Tracked position has no automatic update** - add the symbol to `tickers.txt`; until bars are published, use manual **Reached** mode.
 
-**Settings or positions disappeared** — browser site data was probably cleared, storage was unavailable, or a different browser/device is being used.
+**Settings or positions disappeared** - browser site data was probably cleared, storage was unavailable, or a different browser/device is being used.
 
 ---
 

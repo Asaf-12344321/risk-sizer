@@ -1,10 +1,10 @@
-// POSITION TRACKER — the replay path (`liveState`), driven through real bar fixtures.
+// POSITION TRACKER - the replay path (`liveState`), driven through real bar fixtures.
 //
 // This suite exists because the feed used to publish [date, high, low, close] with no
 // OPEN, so the tracker could only ask `low <= stop` and then report the fill AT the stop.
 // That is false on any bar that opened below the stop: you were filled lower, at the
 // open. It overstated the exit on precisely the days the stop exists for, and no
-// assertion touched it — parity.js drives this path but only ever checks arming.
+// assertion touched it - parity.js drives this path but only ever checks arming.
 //
 // Entry 100 / ATR 5 throughout: initial stop = clamp(2.5x5/100) = 12.5% -> 87.50,
 // arm trigger = max(15%, 3.0 x 5%) = +15% -> 115.00.
@@ -39,7 +39,7 @@ const calm = (d) => [d, 101, 99, 100, 100];
   ck('a bar that opens above the stop and trades through it fills AT the stop',
      Math.abs(r.price - STOP) < 0.01 && !r.gapped, `reported ${r.price}, gap=${r.gapped}`);
 
-  // 2. Gap fill: the bar OPENS below the stop. The stop price never traded — the fill is
+  // 2. Gap fill: the bar OPENS below the stop. The stop price never traded - the fill is
   //    the open, and it is worse than the stop. This is the case the old feed could not see.
   r = await replay([['2026-01-02', 82, 78, 81, 80], calm('2026-01-05')]);
   ck('a bar that opens BELOW the stop fills at the open, not the stop',
@@ -65,7 +65,7 @@ const calm = (d) => [d, 101, 99, 100, 100];
      Math.abs(r.price - 80) < 0.01 && r.gapped, `reported ${r.price}, gap=${r.gapped}`);
 
   // 5. Backward compatibility. A page loaded against a feed published before opens were
-  //    added receives 4-element bars. It must still report the breach, at the old price —
+  //    added receives 4-element bars. It must still report the breach, at the old price -
   //    degrading to the previous answer, never dropping the breach.
   r = await replay([['2026-01-02', 82, 78, 81], ['2026-01-05', 101, 99, 100]]);
   ck('a legacy 4-field bar still reports the breach at the stop price',

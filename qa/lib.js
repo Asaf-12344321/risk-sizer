@@ -3,7 +3,7 @@ const { JSDOM } = require('jsdom'); const fs = require('fs');
 // The tool ships as index.html. The risk-sizer.html fallback dates from when a second
 // working copy lived in ~/trading-tools; that directory was consolidated away on
 // 2026-08-04, but the fallback stays so a clone under either name still runs rather than
-// crashing on a missing path — a crash the runner would report as zero tests.
+// crashing on a missing path - a crash the runner would report as zero tests.
 const HTML_PATH = process.env.QA_HTML || [
   __dirname + '/../risk-sizer.html',
   __dirname + '/../index.html',
@@ -122,7 +122,7 @@ function boot({ capital = D_CAPITAL, maxspec = D_MAXSPEC, riskabs = D_RISK,
     stop:      () => money($('out-stopprice').textContent),
     stopSub:   () => $('out-stopsub').textContent,
     // The tool's OWN figures are authoritative. Re-deriving them from rounded display
-    // strings introduces error large enough to look like a cap breach — that mistake
+    // strings introduces error large enough to look like a cap breach - that mistake
     // produced 123 phantom failures the first time this suite ran.
     riskStated: () => { const m = /risking ₪([\d,]+)/.exec($('out-stopsub').textContent);
                         return m ? parseFloat(m[1].replace(/,/g, '')) : NaN; },
@@ -142,7 +142,7 @@ function boot({ capital = D_CAPITAL, maxspec = D_MAXSPEC, riskabs = D_RISK,
 
 let pass = 0; const fails = [];
 function ck(name, cond, detail = '') {
-  if (cond) { pass++; } else { fails.push(name + (detail ? '  — ' + detail : '')); }
+  if (cond) { pass++; } else { fails.push(name + (detail ? '  - ' + detail : '')); }
   console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? '  ' + detail : ''}`);
 }
 function report(suite) {

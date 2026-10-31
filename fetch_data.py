@@ -33,7 +33,7 @@ UNIVERSE_FILE  = "universe.csv"
 def sec_universe(limit):
     """Tickers + names from universe.csv, which is the SEC's own company_tickers.json
     flattened and committed here. Fetching it at runtime needs a User-Agent carrying
-    personal contact details, which does not belong in a public repo — and a committed
+    personal contact details, which does not belong in a public repo - and a committed
     list means one less thing that can fail mid-run. Refresh it by hand occasionally."""
     import csv
     out = []
@@ -58,7 +58,7 @@ def tracked():
 
 def wilder_atr(h, l, c, n=14):
     """True Range from explicit OHLC, then Wilder's smoothing. Never Yahoo's summary
-    metrics — those are undocumented and were not reproducible.
+    metrics - those are undocumented and were not reproducible.
 
     `ewm(alpha=1/n, adjust=False)` seeds on TR[0] where textbook Wilder seeds on the
     mean of the first n TRs. Verified identical to 0.000% on 10 tickers over the ~250-bar
@@ -78,7 +78,7 @@ def wilder_atr(h, l, c, n=14):
 
 
 # This file publishes beta as MEASURED and leaves policy to the page: `b` is present
-# only when a beta could actually be computed, and carries whatever value came out —
+# only when a beta could actually be computed, and carries whatever value came out -
 # including zero or negative. Deciding what to divide by lives in one place
 # (betaForSizing in index.html) rather than being half-applied on each side.
 #
@@ -102,7 +102,7 @@ def main():
             syms.append(k); names[k] = k
     print(f"universe: {len(syms)} tickers (limit {UNIVERSE_LIMIT}), {len(keep)} tracked for bars")
 
-    # SPY first — needed as the beta benchmark
+    # SPY first - needed as the beta benchmark
     spy = yf.download("SPY", period="1y", interval="1d", auto_adjust=True,
                       progress=False)["Close"]
     if isinstance(spy, pd.DataFrame):
@@ -136,7 +136,7 @@ def main():
                 # Beta against SPY from returns. Never ticker.info['beta']: that is one
                 # HTTP request per symbol (hours over 2,600 names) and is itself opaque.
                 # Variance of the benchmark must be taken over the SAME overlapping dates
-                # as the covariance — using the full SPY series as the denominator mixes
+                # as the covariance - using the full SPY series as the denominator mixes
                 # two different samples and skews beta for any short-history ticker.
                 r = c.pct_change().dropna()
                 j = r.index.intersection(spy_ret.index)
@@ -163,7 +163,7 @@ def main():
                     #
                     # Open is what makes a gap fill priceable. Without it the tracker can
                     # only test `low <= stop` and then claim the fill happened AT the stop
-                    # — which is false on any bar that opened below it, and overstates the
+                    # - which is false on any bar that opened below it, and overstates the
                     # exit on exactly the days the stop matters most.
                     bars_out[s] = [[d.strftime("%Y-%m-%d"), round(float(r_.High), 4),
                                     round(float(r_.Low), 4), round(float(r_.Close), 4),
@@ -198,7 +198,7 @@ def main():
     print(f"\nquotes.json: {len(quotes):,} tickers, {qkb:.0f} KB")
     nonpos = sum(1 for v in quotes.values() if v.get("b", 1) <= 0)
     print(f"beta: {len(quotes)-beta_est:,} measured ({nonpos} of them <= 0, real and kept), "
-          f"{beta_est} not measurable — page estimates those from ATR%")
+          f"{beta_est} not measurable - page estimates those from ATR%")
     print(f"bars/: {len(bars_out)} files")
     print(f"fx {fx} · skipped {fails} · {time.time()-t0:.0f}s total")
 

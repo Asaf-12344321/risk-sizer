@@ -1,4 +1,4 @@
-// EDGE CASES — degenerate and hostile inputs must fail safely, never silently wrongly.
+// EDGE CASES - degenerate and hostile inputs must fail safely, never silently wrongly.
 const { boot, ck, report } = require('./lib');
 const CAP = +(process.env.QA_CAPITAL || 100000), RISK = +(process.env.QA_RISK || 1300);
 
@@ -18,7 +18,7 @@ for (const [name, p, a, expect] of cases) {
   t.price(p, a);
   const sz = t.size(), txt = t.$('out-size').textContent;
   if (expect === 'blank') {
-    ck(`${name} → refuses to answer`, txt.includes('—'), `showed "${txt}"`);
+    ck(`${name} → refuses to answer`, txt.includes('-'), `showed "${txt}"`);
   } else {
     const st = t.stop(), sp = t.stopPctStated();
     ck(`${name} → answers within the caps`,
@@ -52,5 +52,5 @@ ck('feed unavailable → lookup explains itself', /unavailable|hasn.t loaded/i.t
 // setup gate
 const ns = boot({ capital: 0, maxspec: 0, riskabs: 0 });
 ns.price(100, 3);
-ck('no setup → refuses to size anything', ns.$('out-size').textContent.includes('—'));
+ck('no setup → refuses to size anything', ns.$('out-size').textContent.includes('-'));
 report('EDGE CASES');

@@ -1,4 +1,4 @@
-// INVARIANTS — properties that must hold for EVERY input, not just the ones I thought of.
+// INVARIANTS - properties that must hold for EVERY input, not just the ones I thought of.
 // This is the class of test that would have caught the step-function bug: no single
 // answer was wrong, the relationship BETWEEN answers was.
 const { boot, ck, report } = require('./lib');
@@ -72,7 +72,7 @@ ck('same ATR% gives the same size at any price level', scaleBad.length === 0,
 // ---------- 6. METAMORPHIC: known relationships between settings and output
 // pick a case where risk-based actually binds (high ATR), or the assertion is vacuous.
 // Beta must be supplied explicitly: at ATR 9% an unmeasured beta is estimated at 2.32,
-// whose cap (₪10,762) correctly binds once 1R doubles — which would make the position
+// whose cap (₪10,762) correctly binds once 1R doubles - which would make the position
 // beta-bound and the assertion untrue for a reason that has nothing to do with 1R.
 // beta 1.0 puts the beta cap at ₪25,000, clear of both sizes.
 const a = boot({ riskabs: RISK, maxspec: Math.round(CAP * 0.8) }); a.price(100, 9, 1.0);
@@ -112,7 +112,7 @@ ck('ladder: only rises, starts at the initial stop, hits breakeven at max(15%,3x
 // The footer told the user "the stop starts at 3x ATR" for months after the default moved
 // to 2.5x. Every other stale multiplier in this repo sat in a comment; this one reached a
 // person and described a rule the tool does not follow. It is now written from cfg, and
-// this asserts that it is — a hardcoded number would fail here the moment cfg changes.
+// this asserts that it is - a hardcoded number would fail here the moment cfg changes.
 {
   const t9 = boot();
   const initmult = +t9.$('cfg-initmult').value;
@@ -126,7 +126,7 @@ ck('ladder: only rises, starts at the initial stop, hits breakeven at max(15%,3x
      armTxt.indexOf('+' + armpct + '%') === 0, armTxt);
   ck('the footer does not present the arming floor as the whole trigger',
      armatr <= 0 || armTxt.indexOf(armatr + '× ATR') !== -1,
-     `arming is max(${armpct}%, ${armatr} x ATR%) — ${armTxt}`);
+     `arming is max(${armpct}%, ${armatr} x ATR%) - ${armTxt}`);
   // And it must follow a settings change, or it is only correct at the defaults.
   t9.set('cfg-initmult', '4');
   ck('the footer follows a settings change rather than being correct only at defaults',

@@ -45,7 +45,7 @@ jobs:
 
       - name: Fetch the published quotes feed
         # sweep and feed need a real quotes.json. run_all.sh falls back to curling
-        # raw.githubusercontent.com, which cannot work while the repo is private — take it
+        # raw.githubusercontent.com, which cannot work while the repo is private - take it
         # from the data branch over the authenticated checkout instead.
         run: |
           set -euo pipefail

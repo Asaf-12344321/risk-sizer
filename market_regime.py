@@ -720,8 +720,8 @@ def _kpis(rep: Report, checks: list[dict]) -> list[dict]:
     if s.vix is not None:
         word, _ = vix_band(s.vix)
         tone = {"ok": "good", "caution": "warn", "watch": "orange", "red": "bad"}.get(level.get("vix", "ok"), "good")
-        kpis.append({"key": "vix", "title": "Market Fear (VIX)", "value": f"{s.vix:.1f} — {word}", "value_tone": tone,
-                     "pill": "", "pill_tone": tone, "scale": VIX_SCALE})
+        kpis.append({"key": "vix", "title": "Market Fear (VIX)", "value": f"{s.vix:.1f}", "value_tone": tone,
+                     "pill": word, "pill_tone": tone, "scale": VIX_SCALE})
     if s.ret is not None:
         z = s.z or 0
         pill, pill_tone = (("Rare shock", "bad") if z <= -2.5 else ("Unusual drop", "warn") if z <= -1.5
@@ -778,7 +778,7 @@ _MARK = {"watch": " ⚠️", "caution": " ⚠️", "red": " 🚨"}
 
 
 def render_telegram(rep: Report, delayed: bool = False, html_markup: bool = True) -> str:
-    """The phone summary: bold anchors and bold numbers, one idea per line.  With html_markup=False
+    """The phone summary: bold anchors, green gains, red-marked drops, one idea per line.  With html_markup=False
     the tags are stripped (for the terminal)."""
     from html import escape
     vm = view_model(rep)
@@ -786,7 +786,19 @@ def render_telegram(rep: Report, delayed: bool = False, html_markup: bool = True
     lvl = {c["key"]: c["level"] for c in vm["checks"]}
     mark = lambda key: _MARK.get(lvl.get(key, "ok"), "")
     b = lambda t: f"<b>{t}</b>"
-    c = b          # numbers are bold, not <code>: Telegram's dark theme paints monospace text green
+
+    def c(text: str, value: float | None = None, good_if: float | None = None) -> str:
+        """Colour a number for Telegram, whose dark theme paints <code> bright green:
+        gains (and high win rates) go in <code> = green; drops stay bold and get a red marker; the rest is bold."""
+        if value is None:
+            return b(text)
+        if good_if is not None:                      # an unsigned figure such as a win rate
+            return f"<code>{text}</code>" if value >= good_if else b(text)
+        if value > 0:
+            return f"<code>{text}</code>"
+        if value < 0:
+            return f"🔻 {b(text)}"
+        return b(text)
     d = datetime.fromisoformat(s.date)
     head = (f"📊 {b(f'Nasdaq-100 Regime · {d:%-d %b %Y}')}" + (" ⚠️ data may be delayed" if delayed else "") + "\n"
             f"{TELEGRAM_ICON[vm['tone']]} {b(escape(rep.label))} ({rep.flags_on}/{rep.flags_known} red flags · "
@@ -795,11 +807,11 @@ def render_telegram(rep: Report, delayed: bool = False, html_markup: bool = True
     trend = ""
     if s.dist_sma is not None:
         worst = min((lvl.get(k, "ok") for k in ("trend", "slope")), key=lambda x: LEVEL_RANK[x])
-        trend = (f" | {c(_p(abs(s.dist_sma)))} {'above' if s.dist_sma >= 0 else 'below'} "
+        trend = (f" | {c(_p(s.dist_sma), s.dist_sma)} {'above' if s.dist_sma >= 0 else 'below'} "
                  f"{'rising' if (s.slope or 0) >= 0 else 'falling'} 200d{_MARK.get(worst, '')}")
     dd_mark = _MARK.get(lvl.get("drawdown", "ok"), "")
-    lines.append(f"• {b('Trend:')} {c(_p(s.dd))} from high{dd_mark}{trend}")
-    speed = f"{c(_p(s.fall20))} in 20d{mark('speed')}" if s.fall20 is not None else "20d move n/a"
+    lines.append(f"• {b('Trend:')} {c(_p(s.dd), s.dd)} from high{dd_mark}{trend}")
+    speed = f"{c(_p(s.fall20), s.fall20)} in 20d{mark('speed')}" if s.fall20 is not None else "20d move n/a"
     if s.vix is not None:
         word, _ = vix_band(s.vix)
         fear = f"VIX {b(f'{s.vix:.1f}')} ({word}){mark('vix')}"
@@ -820,15 +832,16 @@ def render_telegram(rep: Report, delayed: bool = False, html_markup: bool = True
     lines.append(f"• {b('Structure:')} {structure}")
     if s.ret is not None:
         shock = (f" (1-in-{s.shock_one_in:,.0f}d shock)" if s.shock_one_in and s.shock_one_in >= 2 else " (ordinary day)")
-        lines.append(f"• {b('Today:')} {c(_p(s.ret, digits=2))}{shock}")
+        lines.append(f"• {b('Today:')} {c(_p(s.ret, digits=2), s.ret)}{shock}")
     lines.append("")
     row = next((r for r in vm["analogs"]["rows"] if r["horizon"] == 60), None)
     if row:
         episodes = vm["analogs"]["episodes"]
         lines.append(f"🕰 {b(f'3-Month Historical Outlook ({episodes} episodes):')}"
                      + (" ⚠️ low confidence" if vm["analogs"]["low_confidence"] else ""))
-        lines.append(f"📈 Higher {b(_p(row['win_rate'], False, 0))} of the time (Typical: {b(_p(row['typical']))})")
-        lines.append(f"🛡️ Worst-case dip: {c(_p(row['worst_dip']))} | Severe crash risk (-20%): "
+        lines.append(f"📈 Higher {c(_p(row['win_rate'], False, 0), row['win_rate'], good_if=0.70)} of the time "
+                     f"(Typical: {c(_p(row['typical']), row['typical'])})")
+        lines.append(f"🛡️ Worst-case dip: {c(_p(row['worst_dip']), row['worst_dip'])} | Severe crash risk (-20%): "
                      f"{b(_p(row['crash_risk'], False, 0))}")
     else:
         lines.append("🕰 Not enough similar history for an outlook")
