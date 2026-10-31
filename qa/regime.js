@@ -6,18 +6,21 @@ const wait = (ms) => new Promise(r => setTimeout(r, ms));
 
 const vm = (over = {}) => Object.assign({
   title: 'Nasdaq-100 (NDX / QQQ) Market Regime', as_of: '2026-10-30', label: 'Systemic Stress / Bear Regime', tone: 'bad',
-  summary: 'Several statistical red flags of a deeper bear market are flashing at the same time.', flags_on: 2, flags_known: 7,
+  summary: 'Several statistical red flags of a deeper bear market are flashing at the same time.', flags_on: 2, flags_known: 6,
+  watch_count: 2,
   kpis: [
-    { key: 'drawdown', title: 'Pullback from 52w High', value: '-24.0%', note: 'Bear-market territory', tone: 'bad', scale: 'Normal pullback: 5–10% | Bear market: 20%+' },
-    { key: 'trend', title: 'Long-Term Trend (200d SMA)', value: '+1.6% Below & Falling', note: '', tone: 'bad', scale: 'Bullish above 200d SMA | Bearish below' },
-    { key: 'vix', title: 'Market Fear (VIX)', value: '34.0 — Panic', note: '', tone: 'bad', scale: '<18 Calm | 18–25 Caution | 25–30 High Stress | 30+ Panic' },
-    { key: 'today', title: "Today's Move", value: '-3.46%', note: '', tone: 'warn', scale: 'Shock rarity: ~1 in 115 trading days', raw: 'Raw size alone: ~1 in 40 days' }],
+    { key: 'drawdown', title: 'Pullback from 52w High', value: '-24.0%', value_tone: 'bad', pill: 'Bear-market territory', pill_tone: 'bad', scale: 'Normal pullback: 5–10% | Bear market: 20%+' },
+    { key: 'trend', title: 'Long-Term Trend (200d SMA)', value: '+1.6% Above & Rising', value_tone: 'good', pill: 'Thin cushion: watch', pill_tone: 'warn', scale: 'Bullish above 200d SMA | Bearish below' },
+    { key: 'vix', title: 'Market Fear (VIX)', value: '27.0 — High Stress', value_tone: 'orange', pill: '', pill_tone: 'orange', scale: '<18 Calm | 18–25 Caution | 25–30 High Stress | 30+ Panic' },
+    { key: 'today', title: "Today's Move", value: '-3.46%', value_tone: 'bad', pill: 'Rare shock', pill_tone: 'bad', scale: 'Shock rarity: ~1 in 115 trading days', raw: 'Raw size alone: ~1 in 40 days' }],
   checks: [
-    { key: 'below_sma', title: 'Long-Term Trend', ok: false, badge: 'RED FLAG', status: 'Price is 6.0% below the 200-day average' },
-    { key: 'high_vix', title: 'Market Fear (VIX)', ok: false, badge: 'RED FLAG', status: 'VIX is 34.0: institutional panic territory (30+)' },
-    { key: 'inverted', title: 'Fear Term Structure', ok: null, badge: 'NO DATA', status: 'No data for this date' },
-    { key: 'falling_sma', title: '200-Day Direction', ok: true, badge: 'OK', status: 'The 200-day line is rising (+1.63% in 20 days)' },
-    { key: 'narrow', title: 'Market Breadth', ok: true, badge: 'OK', status: 'Equal-weight vs QQQ: -1.7% over 60 days (not narrowing)' }],
+    { key: 'trend', title: 'Long-Term Trend', level: 'red', ok: false, badge: 'RED FLAG', status: 'Price is 6.0% below the 200-day average', gauge: 1, limit: 'Red flag if price drops below the 200-day line (0%)' },
+    { key: 'drawdown', title: 'Drawdown Depth', level: 'red', ok: false, badge: 'RED FLAG', status: '-24.0% from the 52-week high: past the -20% bear-market line', gauge: 1, limit: 'Red flag at -20% (official bear market)' },
+    { key: 'speed', title: 'Drop Speed', level: 'watch', ok: false, badge: 'WATCH', status: '-9.1% over the last 20 days: close to the -10% panic-speed line', gauge: 0.91, limit: 'Red flag at -10% within 20 days (panic speed)' },
+    { key: 'vix', title: 'Market Fear (VIX)', level: 'watch', ok: false, badge: 'WATCH', status: 'VIX is 27.0: high stress, close to panic (30)', gauge: 0.83, limit: 'Red flag at 30+ (institutional panic)' },
+    { key: 'term', title: 'Fear Term Structure', level: 'na', ok: null, badge: 'NO DATA', status: 'No data for this date', gauge: 0, limit: 'Red flag at 1.00 or above (inverted)' },
+    { key: 'slope', title: '200-Day Direction', level: 'caution', ok: false, badge: 'CAUTION', status: 'The 200-day line is only flattening upward (+0.30% in 20 days)', gauge: 0.8, limit: 'Red flag if the 200-day line turns down (below 0%)' },
+    { key: 'breadth', title: 'Market Breadth', level: 'ok', ok: true, badge: 'OK', status: 'Equal-weight vs QQQ: -0.7% over 60 days (not narrowing)', gauge: 0.54, limit: 'Red flag if equal-weight lags cap-weight by 3% over 60 days' }],
   analogs: { rows: [
       { horizon: 20, timeframe: '1 Month (20d)', win_rate: 0.74, typical: 0.034, worst_dip: -0.076, crash_risk: 0.0, n: 145 },
       { horizon: 60, timeframe: '3 Months (60d)', win_rate: 0.8, typical: -0.012, worst_dip: -0.088, crash_risk: 0.01, n: 145 },
@@ -47,25 +50,38 @@ function boot(responses, opts = {}) {
   await wait(150);
   const d = t.d, text = d.body.textContent;
   ck('title is the full index name', /Nasdaq-100 \(NDX \/ QQQ\) Market Regime/.test(d.querySelector('h1').textContent));
-  ck('regime label and plain-English summary are shown', /Systemic Stress \/ Bear Regime · 2 of 7 red flags/.test(text) && /red flags of a deeper bear market/.test(text));
+  ck('regime label and plain-English summary are shown', /Systemic Stress \/ Bear Regime · 2 of 6 red flags/.test(text) && /red flags of a deeper bear market/.test(text));
   const cards = [...d.querySelectorAll('.kpi')];
   ck('exactly four KPI cards', cards.length === 4);
   ck('each card carries its benchmark scale', cards.every(c => c.querySelector('.s').textContent.length > 10) &&
      /Normal pullback: 5–10% \| Bear market: 20%\+/.test(cards[0].textContent) && /<18 Calm \| 18–25 Caution \| 25–30 High Stress \| 30\+ Panic/.test(cards[2].textContent));
   ck('shock rarity sits under Today\'s Move', /Shock rarity: ~1 in 115 trading days/.test(cards[3].textContent));
-  ck('card tone classes follow the data', cards[0].classList.contains('bad') && cards[3].classList.contains('warn'));
+  ck('the banner counts red flags and watch items', /2 of 6 red flags · 2 watch/.test(text));
+  ck('a negative number is red', cards[0].querySelector('.v').classList.contains('bad') && cards[3].querySelector('.v').classList.contains('bad'));
+  ck('a positive number is green and VIX 25-30 is deep orange', cards[1].querySelector('.v').classList.contains('good') && cards[2].querySelector('.v').classList.contains('orange'));
+  ck('the status verdict is a separate pill with its own colour', cards[0].querySelector('.pill').textContent === 'Bear-market territory' &&
+     cards[1].querySelector('.pill').classList.contains('warn') && cards[1].querySelector('.pill').textContent === 'Thin cushion: watch');
+  const pillBeside = boot([{ status: 200, body: vm({ kpis: [{ key: 'drawdown', title: 'Pullback from 52w High', value: '-9.1%', value_tone: 'bad', pill: 'Normal pullback', pill_tone: 'good', scale: 's' }] }) }], { storedKey: 'k' });
+  await wait(150);
+  const dk = pillBeside.d.querySelector('.kpi');
+  ck('-9.1% is red while "Normal pullback" is green', dk.querySelector('.v').classList.contains('bad') && dk.querySelector('.pill').classList.contains('good'));
 
+  const grid = d.querySelector('.checks');
   const rows = [...d.querySelectorAll('.check')];
-  ck('one row per check', rows.length === 5);
-  ck('red flags are listed first, in red', rows[0].classList.contains('red') && rows[1].classList.contains('red') && !rows[2].classList.contains('red'));
-  ck('red rows use the RED FLAG badge, ok rows the OK badge, missing data its own badge',
-     /RED FLAG/.test(rows[0].textContent) && /OK/.test(rows[3].textContent) && /NO DATA/.test(rows[2].textContent));
-  ck('a green tick never appears next to a problem', rows.filter(r => r.classList.contains('red')).every(r => !/✅|✓/.test(r.textContent)) &&
-     rows.filter(r => /\bOK\b/.test(r.querySelector('.badge').textContent)).every(r => /✅/.test(r.querySelector('.badge').textContent)));
+  ck('all seven checks are visible on the main screen, not collapsed', rows.length === 7 && !grid.closest('details'));
+  ck('the checks sit in a two-column grid', /grid-template-columns:\s*1fr 1fr/.test(d.querySelector('style').textContent));
+  ck('red cards come first, then watch, then caution, no-data and ok', rows.map(r => r.className.replace('check ', '')).join(',') === 'red,red,watch,orange,na,caution,ok');
+  ck('badges use the right words', /RED FLAG/.test(rows[0].textContent) && /WATCH/.test(rows[2].textContent) && /CAUTION/.test(rows[5].textContent) &&
+     /NO DATA/.test(rows[4].textContent) && /OK/.test(rows[6].textContent));
+  ck('a green tick never appears next to a problem or a warning', rows.filter(r => !/ok/.test(r.className.replace('check ', ''))).every(r => !/\u2705/.test(r.textContent)));
+  ck('only the OK card has a green tick', /\u2705/.test(rows[6].textContent));
+  ck('every card has a gauge sized to how close the value is to its red line',
+     rows.map(r => r.querySelector('.gauge i').style.width).join(',') === '100%,100%,91%,83%,0%,80%,54%');
+  ck('every card says where its red flag is', rows.every(r => /^Red flag/.test(r.querySelector('.lim').textContent)));
   ck('the stored API key is sent', t.calls[0].key === 'k1' && t.calls[0].url === '/api/regime');
 
   const summaries = [...d.querySelectorAll('details > summary')].map(s => s.textContent);
-  ck('explainer for the 7 checks is collapsed by default', summaries.includes('ℹ️ What do these 7 checks & VIX levels mean?') &&
+  ck('explainer for the 7 checks is collapsed by default (the checks themselves are not)', summaries.includes('ℹ️ What do these 7 checks & VIX levels mean?') &&
      ![...d.querySelectorAll('details')].some(x => x.open));
   const explain = [...d.querySelectorAll('details')].find(x => /7 checks/.test(x.querySelector('summary').textContent));
   const etext = explain.textContent;
@@ -83,6 +99,8 @@ function boot(responses, opts = {}) {
   const body = [...table.querySelectorAll('tr')].slice(1).map(r => [...r.children].map(c => c.textContent));
   ck('three timeframes with win rate, typical return and crash risk', body.length === 3 && body[0][0] === '1 Month (20d)' && body[1][1] === '80%' &&
      body[1][2] === '-1.2%' && body[2][4] === '3%', JSON.stringify(body));
+  const win = [...table.querySelectorAll('tr')].slice(1).map(r => r.children[1].className);
+  ck('win rate is bold, with a green tint from 70% up', win[0] === 'win hi' && win[1] === 'win hi' && win[2] === 'win hi' && /fit/.test(table.closest('.wrap').className));
   const typ = [...table.querySelectorAll('tr')].slice(1).map(r => r.children[2].className);
   ck('typical return is green when positive and red when negative', typ[0] === 'pos' && typ[1] === 'neg');
   ck('the median explainer names the episode count', /Out of 32 similar historical episodes since 1990, the Median \(Typical\) Return sorts all outcomes from worst to best/.test(text) &&

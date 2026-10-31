@@ -49,8 +49,10 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import warnings
@@ -603,8 +605,93 @@ def vix_band(vix: float) -> tuple[str, str]:
     return "Panic", "bad"
 
 
-def _kpis(rep: Report) -> list[dict]:
+# --- the seven health checks, graded: ok / caution / watch / red (or na when there is no data) ------------
+WATCH = {"trend": 0.03, "slope": 0.005, "dd": -0.15, "fall": -0.075, "vix_caution": 20.0, "vix_watch": 25.0,
+         "term": 0.95, "breadth": -0.02}
+BADGES = {"ok": "OK", "caution": "CAUTION", "watch": "WATCH", "red": "RED FLAG", "na": "NO DATA"}
+LEVEL_RANK = {"red": 0, "watch": 1, "caution": 2, "na": 3, "ok": 4}
+
+
+def _clamp(x: float) -> float:
+    return max(0.0, min(1.0, x))
+
+
+def _checks(rep: Report) -> list[dict]:
+    """The 7 health checks.  Each has a level (ok / caution / watch / red / na), a plain status line, and a
+    gauge: 0 = comfortably far from its red-flag line, 1 = at or past it.  A red flag never looks fine,
+    and a value close to flipping shows as WATCH instead of hiding behind a green OK."""
     s = rep.snapshot
+    on = {f.key: f.on for f in rep.flags}
+    d = (lambda v: _p(v, digits=1))
+
+    def item(key, title, value, flag_key, fill, limit, ok_text, watch_text, red_text, level_fn):
+        flag = on[flag_key]
+        if flag is None or value is None:
+            return {"key": key, "title": title, "level": "na", "ok": None, "badge": BADGES["na"],
+                    "status": "No data for this date", "gauge": 0.0, "limit": limit}
+        level = "red" if flag else level_fn(value)
+        text = red_text if level == "red" else ok_text if level == "ok" else watch_text
+        return {"key": key, "title": title, "level": level, "ok": level == "ok" if level != "na" else None,
+                "badge": BADGES[level], "status": text, "gauge": 1.0 if level == "red" else _clamp(fill(value)), "limit": limit}
+
+    def lvl(watch_if):
+        return lambda v: "watch" if watch_if(v) else "ok"
+
+    out = [
+        item("trend", "Long-Term Trend", s.dist_sma, "below_sma", lambda v: (0.10 - v) / 0.10,
+             "Red flag if price drops below the 200-day line (0%)",
+             f"Price is {d(s.dist_sma)} above the 200-day average",
+             f"Price is {d(s.dist_sma)} above the 200-day average: a thin cushion",
+             f"Price is {d(abs(s.dist_sma or 0))} below the 200-day average",
+             lvl(lambda v: v < WATCH["trend"])),
+        item("slope", "200-Day Direction", s.slope, "falling_sma", lambda v: (0.015 - v) / 0.015,
+             "Red flag if the 200-day line turns down (below 0%)",
+             f"The 200-day line is rising ({_p(s.slope, digits=2)} in 20 days)",
+             f"The 200-day line is only flattening upward ({_p(s.slope, digits=2)} in 20 days)",
+             f"The 200-day line is falling ({_p(s.slope, digits=2)} in 20 days)",
+             lvl(lambda v: v < WATCH["slope"])),
+        item("drawdown", "Drawdown Depth", s.dd, "deep_dd", lambda v: -v / 0.20,
+             "Red flag at -20% (official bear market)",
+             f"{d(s.dd)} from the 52-week high (bear market starts at -20%)",
+             f"{d(s.dd)} from the 52-week high: approaching the -20% bear-market line",
+             f"{d(s.dd)} from the 52-week high: past the -20% bear-market line",
+             lvl(lambda v: v <= WATCH["dd"])),
+        item("speed", "Drop Speed", s.fall20, "fast_fall", lambda v: -v / 0.10,
+             "Red flag at -10% within 20 days (panic speed)",
+             f"{d(s.fall20)} over the last 20 days (alarm at -10%)",
+             f"{d(s.fall20)} over the last 20 days: close to the -10% panic-speed line",
+             f"{d(s.fall20)} within 20 days: a panic-speed drop",
+             lvl(lambda v: v <= WATCH["fall"])),
+        item("vix", "Market Fear (VIX)", s.vix, "high_vix", lambda v: (v - 12.0) / 18.0,
+             "Red flag at 30+ (institutional panic)",
+             f"VIX is {s.vix:.1f} (panic starts at 30)" if s.vix is not None else "",
+             (f"VIX is {s.vix:.1f}: " + ("high stress, close to panic (30)" if s.vix >= WATCH["vix_watch"]
+                                         else "elevated caution")) if s.vix is not None else "",
+             f"VIX is {s.vix:.1f}: institutional panic territory (30+)" if s.vix is not None else "",
+             lambda v: "watch" if v >= WATCH["vix_watch"] else "caution" if v >= WATCH["vix_caution"] else "ok"),
+        item("term", "Fear Term Structure", s.term, "inverted", lambda v: (v - 0.80) / 0.20,
+             "Red flag at 1.00 or above (inverted)",
+             f"VIX/VIX3M is {s.term:.2f} (normal: below 1.0)" if s.term is not None else "",
+             f"VIX/VIX3M is {s.term:.2f}: close to inversion (1.0)" if s.term is not None else "",
+             f"VIX/VIX3M is {s.term:.2f}: inverted, short-term fear above 3-month fear" if s.term is not None else "",
+             lvl(lambda v: v >= WATCH["term"])),
+        item("breadth", "Market Breadth", s.br_change, "narrow", lambda v: (0.02 - v) / 0.05,
+             "Red flag if equal-weight lags cap-weight by 3% over 60 days",
+             f"Equal-weight vs QQQ: {d(s.br_change)} over 60 days (not narrowing)" if s.br_change is not None else "",
+             f"Equal-weight vs QQQ: {d(s.br_change)} over 60 days: close to the narrowing line" if s.br_change is not None else "",
+             f"Equal-weight vs QQQ: {d(s.br_change)} over 60 days: only a few mega-caps are holding the index up"
+             if s.br_change is not None else "",
+             lvl(lambda v: v <= WATCH["breadth"])),
+    ]
+    return sorted(out, key=lambda c: (LEVEL_RANK[c["level"]], -c["gauge"]))
+
+
+def _kpis(rep: Report, checks: list[dict]) -> list[dict]:
+    """Four headline cards.  The VALUE is coloured by its sign (a minus is red); the status PILL carries the
+    regime verdict, so '-9.1%' can be red while 'Normal pullback' is green."""
+    s = rep.snapshot
+    level = {c["key"]: c["level"] for c in checks}
+    sign = lambda v: "bad" if v < 0 else "good"
     if s.dd > -0.05:
         dd_note, dd_tone = "Near the highs", "good"
     elif s.dd > -0.10:
@@ -613,67 +700,44 @@ def _kpis(rep: Report) -> list[dict]:
         dd_note, dd_tone = "Correction", "warn"
     else:
         dd_note, dd_tone = "Bear-market territory", "bad"
-    kpis = [{"key": "drawdown", "title": "Pullback from 52w High", "value": _p(s.dd), "note": dd_note, "tone": dd_tone,
-             "scale": "Normal pullback: 5–10% | Bear market: 20%+"}]
+    kpis = [{"key": "drawdown", "title": "Pullback from 52w High", "value": _p(s.dd), "value_tone": sign(s.dd),
+             "pill": dd_note, "pill_tone": dd_tone, "scale": "Normal pullback: 5–10% | Bear market: 20%+"}]
     if s.dist_sma is not None:
         above, rising = s.dist_sma >= 0, (s.slope or 0) >= 0
-        tone = "good" if above and rising else "bad" if not above and not rising else "warn"
+        trend_level = level.get("trend", "ok")
+        if not above:
+            pill, pill_tone = "Trend broken", "bad"
+        elif trend_level == "watch":
+            pill, pill_tone = "Thin cushion: watch", "warn"
+        elif not rising:
+            pill, pill_tone = "200d line falling", "warn"
+        else:
+            pill, pill_tone = "Comfortable cushion", "good"
         kpis.append({"key": "trend", "title": "Long-Term Trend (200d SMA)",
                      "value": f"{_p(s.dist_sma)} {'Above' if above else 'Below'} & {'Rising' if rising else 'Falling'}",
-                     "note": "", "tone": tone, "scale": "Bullish above 200d SMA | Bearish below"})
+                     "value_tone": "good" if above else "bad", "pill": pill, "pill_tone": pill_tone,
+                     "scale": "Bullish above 200d SMA | Bearish below"})
     if s.vix is not None:
-        word, tone = vix_band(s.vix)
-        kpis.append({"key": "vix", "title": "Market Fear (VIX)", "value": f"{s.vix:.1f} — {word}", "note": "",
-                     "tone": tone, "scale": VIX_SCALE})
+        word, _ = vix_band(s.vix)
+        tone = {"ok": "good", "caution": "warn", "watch": "orange", "red": "bad"}.get(level.get("vix", "ok"), "good")
+        kpis.append({"key": "vix", "title": "Market Fear (VIX)", "value": f"{s.vix:.1f} — {word}", "value_tone": tone,
+                     "pill": "", "pill_tone": tone, "scale": VIX_SCALE})
     if s.ret is not None:
-        tone = "bad" if (s.z or 0) <= -2.5 else "warn" if (s.z or 0) <= -1.5 else "good"
-        note = f"Shock rarity: ~{_one_in(s.shock_one_in).replace('1 in ', '1 in ').replace(' days', ' trading days')}" \
-            if s.shock_one_in and s.shock_one_in >= 2 else "An ordinary day"
-        kpis.append({"key": "today", "title": "Today's Move", "value": _p(s.ret, digits=2), "note": "",
-                     "tone": tone, "scale": note, "raw": f"Raw size alone: ~{_one_in(s.raw_one_in)}"})
+        z = s.z or 0
+        pill, pill_tone = (("Rare shock", "bad") if z <= -2.5 else ("Unusual drop", "warn") if z <= -1.5
+                           else ("Ordinary day", "good") if s.ret < 0 else ("Up day", "good"))
+        note = (f"Shock rarity: ~1 in {s.shock_one_in:,.0f} trading days"
+                if s.shock_one_in and s.shock_one_in >= 2 else "An ordinary day")
+        kpis.append({"key": "today", "title": "Today's Move", "value": _p(s.ret, digits=2), "value_tone": sign(s.ret),
+                     "pill": pill, "pill_tone": pill_tone, "scale": note,
+                     "raw": f"Raw size alone: ~{_one_in(s.raw_one_in)}"})
     return kpis
-
-
-def _checks(rep: Report) -> list[dict]:
-    """The 7 health checks in positive/clear terms.  A red flag never wears a green tick."""
-    s = rep.snapshot
-    on = {f.key: f.on for f in rep.flags}
-    def item(key, title, ok_text, red_text, na_text="No data for this date"):
-        flag = on[key]
-        if flag is None:
-            return {"key": key, "title": title, "ok": None, "badge": "NO DATA", "status": na_text}
-        return {"key": key, "title": title, "ok": not flag, "badge": "RED FLAG" if flag else "OK",
-                "status": red_text if flag else ok_text}
-    d = (lambda v: _p(v, digits=1))
-    out = [
-        item("below_sma", "Long-Term Trend",
-             f"Price is {d(s.dist_sma)} above the 200-day average", f"Price is {d(abs(s.dist_sma or 0))} below the 200-day average"),
-        item("falling_sma", "200-Day Direction",
-             f"The 200-day line is rising ({_p(s.slope, digits=2)} in 20 days)",
-             f"The 200-day line is falling ({_p(s.slope, digits=2)} in 20 days)"),
-        item("deep_dd", "Drawdown Depth",
-             f"{d(s.dd)} from the 52-week high (bear market starts at -20%)",
-             f"{d(s.dd)} from the 52-week high: past the -20% bear-market line"),
-        item("fast_fall", "Drop Speed",
-             f"{d(s.fall20)} over the last 20 days (alarm at -10%)",
-             f"{d(s.fall20)} within 20 days: a panic-speed drop"),
-        item("high_vix", "Market Fear (VIX)",
-             f"VIX is {s.vix:.1f} (panic starts at 30)" if s.vix is not None else "",
-             f"VIX is {s.vix:.1f}: institutional panic territory (30+)" if s.vix is not None else ""),
-        item("inverted", "Fear Term Structure",
-             f"VIX/VIX3M is {s.term:.2f} (normal: below 1.0)" if s.term is not None else "",
-             f"VIX/VIX3M is {s.term:.2f}: inverted, short-term fear above 3-month fear" if s.term is not None else ""),
-        item("narrow", "Market Breadth",
-             f"Equal-weight vs QQQ: {d(s.br_change)} over 60 days (not narrowing)" if s.br_change is not None else "",
-             f"Equal-weight vs QQQ: {d(s.br_change)} over 60 days: only a few mega-caps are holding the index up"
-             if s.br_change is not None else ""),
-    ]
-    return sorted(out, key=lambda c: 0 if c["ok"] is False else 1 if c["ok"] is None else 2)
 
 
 def view_model(rep: Report) -> dict:
     """Everything a screen needs, in plain language.  The web page and the Telegram text both read this."""
     s, a = rep.snapshot, rep.analogs
+    checks = _checks(rep)
     rows = []
     for h in a.horizons:
         if not h.n:
@@ -685,7 +749,9 @@ def view_model(rep: Report) -> dict:
     return {
         "title": "Nasdaq-100 (NDX / QQQ) Market Regime", "as_of": s.date, "label": rep.label,
         "tone": TONES[rep.label], "summary": SUMMARIES[rep.label], "flags_on": rep.flags_on,
-        "flags_known": rep.flags_known, "kpis": _kpis(rep), "checks": _checks(rep),
+        "flags_known": rep.flags_known,
+        "watch_count": sum(1 for c in checks if c["level"] in ("watch", "caution")),
+        "kpis": _kpis(rep, checks), "checks": checks,
         "analogs": {"rows": rows, "days": a.days, "episodes": a.episodes, "level": a.level,
                     "matched_on": f"{rep.trend_state}; drawdown {rep.dd_bucket}; {rep.vix_bucket}",
                     "low_confidence": a.low_confidence, "first_date": a.first_date, "last_date": a.last_date},
@@ -708,63 +774,103 @@ def dashboard_url() -> str | None:
     return f"{base}/regime" if base.startswith("https://") else None
 
 
-def render_telegram(rep: Report, delayed: bool = False) -> str:
-    """The six-line executive summary, in plain English.  `delayed` flags data older than the last session."""
+_MARK = {"watch": " ⚠️", "caution": " ⚠️", "red": " 🚨"}
+
+
+def render_telegram(rep: Report, delayed: bool = False, html_markup: bool = True) -> str:
+    """The phone summary: bold anchors, monospace number pills, one idea per line.  With html_markup=False
+    the tags are stripped (for the terminal)."""
+    from html import escape
     vm = view_model(rep)
     s = rep.snapshot
-    icon = TELEGRAM_ICON[vm["tone"]]
+    lvl = {c["key"]: c["level"] for c in vm["checks"]}
+    mark = lambda key: _MARK.get(lvl.get(key, "ok"), "")
+    b, c = (lambda t: f"<b>{t}</b>"), (lambda t: f"<code>{t}</code>")
     d = datetime.fromisoformat(s.date)
-    trend = "" if s.dist_sma is None else (
-        f" · {_p(abs(s.dist_sma))} {'above' if s.dist_sma >= 0 else 'below'} a "
-        f"{'rising' if (s.slope or 0) >= 0 else 'falling'} 200-day line")
-    fear = "Fear data unavailable"
+    head = (f"📊 {b(f'Nasdaq-100 Regime · {d:%-d %b %Y}')}" + (" ⚠️ data may be delayed" if delayed else "") + "\n"
+            f"{TELEGRAM_ICON[vm['tone']]} {b(escape(rep.label))} ({rep.flags_on}/{rep.flags_known} red flags · "
+            f"{vm['watch_count']} watch)")
+    lines = [head, ""]
+    trend = ""
+    if s.dist_sma is not None:
+        worst = min((lvl.get(k, "ok") for k in ("trend", "slope")), key=lambda x: LEVEL_RANK[x])
+        trend = (f" | {c(_p(abs(s.dist_sma)))} {'above' if s.dist_sma >= 0 else 'below'} "
+                 f"{'rising' if (s.slope or 0) >= 0 else 'falling'} 200d{_MARK.get(worst, '')}")
+    dd_mark = _MARK.get(lvl.get("drawdown", "ok"), "")
+    lines.append(f"• {b('Trend:')} {c(_p(s.dd))} from high{dd_mark}{trend}")
+    speed = f"{c(_p(s.fall20))} in 20d{mark('speed')}" if s.fall20 is not None else "20d move n/a"
     if s.vix is not None:
         word, _ = vix_band(s.vix)
-        fear = f"VIX {s.vix:.1f} ({word})"
-        if s.term is not None:
-            fear += ", curve " + ("INVERTED" if s.inverted else "normal")
-        if s.narrow is not None:
-            fear += " · breadth " + ("narrowing" if s.narrow else "ok")
-    if s.ret is not None:
-        today = f"Today {_p(s.ret, digits=2)}" + (f": a 1-in-{s.shock_one_in:,.0f}-day shock" if s.shock_one_in and s.shock_one_in >= 2
-                                                   else ": an ordinary day")
+        fear = f"VIX {b(f'{s.vix:.1f}')} ({word}){mark('vix')}"
     else:
-        today = "Today: no data"
+        fear = "VIX n/a"
+    lines.append(f"• {b('Speed & Stress:')} {speed} | {fear}")
+    parts = []
+    for key, name in (("term", "VIX curve"), ("breadth", "Breadth")):
+        if lvl.get(key) == "na":
+            parts.append((name, "n/a"))
+        else:
+            parts.append((name, {"ok": "OK", "caution": "⚠️ near the line", "watch": "⚠️ near the line",
+                                 "red": "🚨 " + ("inverted" if key == "term" else "narrowing")}[lvl[key]]))
+    if all(v == "OK" for _, v in parts):
+        structure = "VIX curve & Breadth OK"
+    else:
+        structure = " | ".join(f"{n} {v}" for n, v in parts)
+    lines.append(f"• {b('Structure:')} {structure}")
+    if s.ret is not None:
+        shock = (f" (1-in-{s.shock_one_in:,.0f}d shock)" if s.shock_one_in and s.shock_one_in >= 2 else " (ordinary day)")
+        lines.append(f"• {b('Today:')} {c(_p(s.ret, digits=2))}{shock}")
+    lines.append("")
     row = next((r for r in vm["analogs"]["rows"] if r["horizon"] == 60), None)
-    hist = "After similar days: not enough history"
     if row:
-        hist = (f"After similar days, 3 months later: higher {_p(row['win_rate'], False, 0)} of the time "
-                f"(typical {_p(row['typical'])}); severe crash risk {_p(row['crash_risk'], False, 0)}")
-        if vm["analogs"]["low_confidence"]:
-            hist += " ⚠️ low confidence"
-    return "\n".join([
-        f"📊 Nasdaq-100 Market Regime · {d:%-d %b %Y}" + (" ⚠️ data may be delayed" if delayed else ""),
-        f"{icon} {rep.label} · {rep.flags_on} of {rep.flags_known} red flags",
-        f"📉 {_p(s.dd)} from 52-week high{trend}",
-        f"😐 {fear}",
-        f"⚡ {today}",
-        f"🕰 {hist}",
-    ])
+        episodes = vm["analogs"]["episodes"]
+        lines.append(f"🕰 {b(f'3-Month Historical Outlook ({episodes} episodes):')}"
+                     + (" ⚠️ low confidence" if vm["analogs"]["low_confidence"] else ""))
+        lines.append(f"📈 Higher {b(_p(row['win_rate'], False, 0))} of the time (Typical: {b(_p(row['typical']))})")
+        lines.append(f"🛡️ Worst-case dip: {c(_p(row['worst_dip']))} | Severe crash risk (-20%): "
+                     f"{b(_p(row['crash_risk'], False, 0))}")
+    else:
+        lines.append("🕰 Not enough similar history for an outlook")
+    text = "\n".join(lines)
+    if not html_markup:
+        from html import unescape
+        text = unescape(re.sub(r"</?(b|code)>", "", text))
+    return text
 
 
 def to_json(rep: Report) -> str:
     return json.dumps(asdict(rep), indent=2, default=lambda o: None if (isinstance(o, float) and math.isnan(o)) else str(o))
 
 
-def send_telegram(text: str, button_url: str | None = None) -> None:
+def send_telegram(text: str, button_url: str | None = None, html: bool = True) -> None:
+    """Post to Telegram.  `text` is HTML (<b>, <code>) by default; if Telegram rejects the markup the
+    message is resent once as plain text rather than lost."""
     token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
     if not (token and chat):
         raise RuntimeError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set to use --send")
-    params = {"chat_id": chat, "text": text, "disable_web_page_preview": "true"}
+    markup = None
     if button_url:
-        params["reply_markup"] = json.dumps({"inline_keyboard": [[
-            {"text": "🔗 Open Full Market Regime Dashboard", "url": button_url}]]})
-    body = urllib.parse.urlencode(params).encode()
-    try:
+        markup = json.dumps({"inline_keyboard": [[{"text": "🔗 Open Full Market Regime Dashboard", "url": button_url}]]})
+
+    def post(body_text: str, parse_html: bool) -> None:
+        params = {"chat_id": chat, "text": body_text, "disable_web_page_preview": "true"}
+        if parse_html:
+            params["parse_mode"] = "HTML"
+        if markup:
+            params["reply_markup"] = markup
         with urllib.request.urlopen(urllib.request.Request(
-                f"https://api.telegram.org/bot{token}/sendMessage", data=body), timeout=20) as r:
+                f"https://api.telegram.org/bot{token}/sendMessage", data=urllib.parse.urlencode(params).encode()),
+                timeout=20) as r:
             if r.status != 200:
                 raise RuntimeError(f"telegram HTTP {r.status}")
+    try:
+        try:
+            post(text, html)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 400 or not html:
+                raise
+            from html import unescape
+            post(unescape(re.sub(r"</?(b|code)>", "", text)), False)
     except Exception as exc:                       # never echo the URL: it contains the bot token
         raise RuntimeError(f"telegram send failed ({type(exc).__name__})") from None
 
@@ -855,7 +961,7 @@ def daily(*, now: datetime | None = None, fetch: Callable[[str], pd.Series] | No
                 return 1
             sleep(5 * (attempt + 1))
     write_last_sent(cache_dir, rep.snapshot.date)
-    print(text)
+    print(re.sub(r"</?(b|code)>", "", text))
     return 0
 
 
@@ -897,7 +1003,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.json:
         print(to_json(rep))
     elif a.telegram or a.send:
-        print(render_telegram(rep))
+        print(render_telegram(rep, html_markup=False))
     else:
         print(render_text(rep, episodes=a.episodes))
     if a.send:

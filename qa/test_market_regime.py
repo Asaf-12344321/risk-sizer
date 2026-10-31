@@ -310,47 +310,110 @@ class ViewModelTests(unittest.TestCase):
         base.update(kw)
         return m.Snapshot(**base)
 
-    def rep(self, snap, on):
-        """A Report with the seven flags set from `on` (key -> True/False/None)."""
+    @staticmethod
+    def flags_for(s):
+        """The seven red-flag booleans exactly as the rules define them."""
+        none = lambda v, f: None if v is None else f(v)
+        return {"below_sma": none(s.dist_sma, lambda v: v < 0), "falling_sma": none(s.slope, lambda v: v < 0),
+                "deep_dd": none(s.dd, lambda v: v <= -0.20), "fast_fall": none(s.fall20, lambda v: v <= -0.10),
+                "high_vix": none(s.vix, lambda v: v >= 30), "inverted": none(s.term, lambda v: v >= 1.0),
+                "narrow": s.narrow}
+
+    def rep(self, snap, on=None):
+        on = self.flags_for(snap) if on is None else on
         keys = ["below_sma", "falling_sma", "deep_dd", "fast_fall", "high_vix", "inverted", "narrow"]
-        flags = [m.Flag(k, k, on.get(k, False)) for k in keys]
-        known = [f for f in flags if f.on is not None]
-        from types import SimpleNamespace
+        flags = [m.Flag(k, k, on.get(k)) for k in keys]
         analogs = m.AnalogResult("exact match", 146, 32, False, 0.65, "1990-03-16", "2026-10-23", horizons=[
             m.HorizonStats(20, 145, -0.032, 0.034, 0.088, -0.076, -0.021, 0.0, 0.03, 0.0, 0.26, 0.014, 0.034),
             m.HorizonStats(60, 145, -0.052, 0.074, 0.175, -0.088, -0.037, 0.0, 0.06, 0.01, 0.20, 0.066, 0.07),
             m.HorizonStats(120, 139, -0.036, 0.100, 0.326, -0.101, -0.041, 0.0, 0.11, 0.03, 0.19, 0.113, 0.10)])
-        return m.Report(label=m.LABEL_PULLBACK, snapshot=snap, flags=flags, flags_on=sum(1 for f in flags if f.on),
-                        flags_known=len(known), trend_state="above a rising 200d average", dd_bucket="-12% to -7%",
-                        vix_bucket="VIX 15-20", analogs=analogs, notes=[])
+        return m.Report(label=m.LABEL_PULLBACK, snapshot=snap, flags=flags, flags_on=sum(1 for v in on.values() if v),
+                        flags_known=sum(1 for v in on.values() if v is not None),
+                        trend_state="above a rising 200d average", dd_bucket="-12% to -7%", vix_bucket="VIX 15-20",
+                        analogs=analogs, notes=[])
 
-    def test_checks_are_positive_when_fine_and_a_red_flag_floats_to_the_top(self):
-        rep = self.rep(self.snap(dist_sma=-0.06, slope=-0.01, vix=34.0, term=1.1, dd=-0.22, fall20=-0.12),
-                       {"below_sma": True, "falling_sma": True, "deep_dd": True, "fast_fall": True,
-                        "high_vix": True, "inverted": True, "narrow": False})
-        checks = m._checks(rep)
-        self.assertEqual([c["ok"] for c in checks], [False] * 6 + [True])      # reds first, the one OK last
-        self.assertTrue(all(c["badge"] == "RED FLAG" for c in checks[:6]))
-        self.assertEqual(checks[-1]["badge"], "OK")
-        trend = next(c for c in checks if c["key"] == "below_sma")
-        self.assertIn("below the 200-day average", trend["status"])
+    def level(self, key, **kw):
+        s = self.snap(**kw)
+        return next(c for c in m._checks(self.rep(s)) if c["key"] == key)
 
-    def test_an_ok_check_never_describes_a_problem(self):
-        checks = m._checks(self.rep(self.snap(), {}))
-        self.assertTrue(all(c["badge"] == "OK" for c in checks))
-        for c in checks:
-            for bad in ("below the 200", "falling", "inverted", "panic-speed", "past the", "only a few"):
-                self.assertNotIn(bad, c["status"])
-        self.assertIn("above the 200-day average", next(c for c in checks if c["key"] == "below_sma")["status"])
+    # --- graded checks: exactly the thresholds you specified
+    def test_trend_levels(self):
+        self.assertEqual([self.level("trend", dist_sma=v)["level"] for v in (0.10, 0.0301, 0.029, 0.0, -0.001)],
+                         ["ok", "ok", "watch", "watch", "red"])
+
+    def test_slope_levels(self):
+        self.assertEqual([self.level("slope", slope=v)["level"] for v in (0.02, 0.0051, 0.004, 0.0, -0.001)],
+                         ["ok", "ok", "watch", "watch", "red"])
+
+    def test_drawdown_levels(self):
+        self.assertEqual([self.level("drawdown", dd=v)["level"] for v in (-0.02, -0.149, -0.15, -0.199, -0.20, -0.30)],
+                         ["ok", "ok", "watch", "watch", "red", "red"])
+
+    def test_drop_speed_levels(self):
+        self.assertEqual([self.level("speed", fall20=v)["level"] for v in (-0.02, -0.074, -0.075, -0.091, -0.0999, -0.10)],
+                         ["ok", "ok", "watch", "watch", "watch", "red"])
+
+    def test_vix_levels(self):
+        self.assertEqual([self.level("vix", vix=v)["level"] for v in (12.0, 19.99, 20.0, 24.99, 25.0, 29.99, 30.0)],
+                         ["ok", "ok", "caution", "caution", "watch", "watch", "red"])
+
+    def test_term_structure_levels(self):
+        self.assertEqual([self.level("term", term=v, inverted=v >= 1.0)["level"] for v in (0.80, 0.949, 0.95, 0.999, 1.0, 1.3)],
+                         ["ok", "ok", "watch", "watch", "red", "red"])
+
+    def test_breadth_levels(self):
+        lv = lambda ch, narrow: self.level("breadth", br_change=ch, narrow=narrow)["level"]
+        self.assertEqual([lv(0.02, False), lv(-0.019, False), lv(-0.02, False), lv(-0.029, False), lv(-0.035, True)],
+                         ["ok", "ok", "watch", "watch", "red"])
+
+    def test_todays_numbers_put_drop_speed_and_trend_on_watch(self):
+        checks = {c["key"]: c for c in m._checks(self.rep(self.snap()))}
+        watch = sorted(k for k, c in checks.items() if c["level"] == "watch")
+        self.assertEqual(watch, ["speed", "trend"])
+        self.assertTrue(all(c["level"] in ("ok", "watch") for c in checks.values()))
+        self.assertEqual(m.view_model(self.rep(self.snap()))["watch_count"], 2)
+
+    def test_checks_sort_red_then_watch_then_ok(self):
+        s = self.snap(dist_sma=-0.06, slope=0.003, dd=-0.10, fall20=-0.12, vix=22.0, term=0.97, inverted=False)
+        levels = [c["level"] for c in m._checks(self.rep(s))]
+        self.assertEqual(levels, sorted(levels, key=lambda x: m.LEVEL_RANK[x]))
+        self.assertEqual(levels[:2], ["red", "red"])
+        self.assertEqual(levels[-1], "ok")
+
+    def test_gauges_show_how_close_each_value_is_to_its_red_line(self):
+        c = {x["key"]: x for x in m._checks(self.rep(self.snap()))}
+        self.assertAlmostEqual(c["speed"]["gauge"], 0.91, places=2)
+        self.assertAlmostEqual(c["trend"]["gauge"], 0.84, places=2)
+        self.assertAlmostEqual(c["drawdown"]["gauge"], 0.455, places=3)
+        self.assertEqual(c["slope"]["gauge"], 0.0)                              # far from flipping: empty bar
+        red = self.level("trend", dist_sma=-0.05)
+        self.assertEqual(red["gauge"], 1.0)
+        self.assertTrue(all(0.0 <= x["gauge"] <= 1.0 for x in c.values()))
+        self.assertTrue(all(x["limit"].startswith("Red flag") for x in c.values()))
+
+    def test_status_text_never_calls_a_problem_fine(self):
+        s = self.snap(dist_sma=-0.06, slope=-0.01, vix=34.0, term=1.1, dd=-0.22, fall20=-0.12, br_change=-0.04, narrow=True)
+        for c in m._checks(self.rep(s)):
+            self.assertEqual(c["level"], "red")
+            self.assertEqual(c["badge"], "RED FLAG")
+        ok = {c["key"]: c["status"] for c in m._checks(self.rep(self.snap(dist_sma=0.08, slope=0.01, dd=-0.02, fall20=-0.01,
+                                                                       vix=14.0, term=0.85, br_change=0.01)))}
+        self.assertIn("above the 200-day average", ok["trend"])
+        for text in ok.values():
+            for bad in ("below the 200", "falling", "inverted", "panic-speed", "past the", "only a few", "close to"):
+                self.assertNotIn(bad, text)
 
     def test_unavailable_checks_say_no_data_not_ok(self):
-        rep = self.rep(self.snap(term=None, inverted=None, br_change=None, narrow=None), {"inverted": None, "narrow": None})
-        by = {c["key"]: c for c in m._checks(rep)}
-        self.assertEqual(by["inverted"]["badge"], "NO DATA")
-        self.assertIsNone(by["narrow"]["ok"])
+        s = self.snap(term=None, inverted=None, br_change=None, narrow=None)
+        by = {c["key"]: c for c in m._checks(self.rep(s))}
+        self.assertEqual(by["term"]["badge"], "NO DATA")
+        self.assertEqual(by["breadth"]["level"], "na")
+        self.assertIsNone(by["breadth"]["ok"])
 
+    # --- KPI cards: the number is coloured by its sign, the pill carries the verdict
     def test_four_kpi_cards_with_scales(self):
-        k = {c["key"]: c for c in m._kpis(self.rep(self.snap(), {}))}
+        vm = m.view_model(self.rep(self.snap()))
+        k = {c["key"]: c for c in vm["kpis"]}
         self.assertEqual(list(k), ["drawdown", "trend", "vix", "today"])
         self.assertEqual(k["drawdown"]["value"], "-9.1%")
         self.assertEqual(k["drawdown"]["scale"], "Normal pullback: 5–10% | Bear market: 20%+")
@@ -361,15 +424,27 @@ class ViewModelTests(unittest.TestCase):
         self.assertEqual(k["today"]["value"], "-3.46%")
         self.assertEqual(k["today"]["scale"], "Shock rarity: ~1 in 115 trading days")
 
-    def test_kpi_tones(self):
-        tone = lambda **kw: {c["key"]: c["tone"] for c in m._kpis(self.rep(self.snap(**kw), {}))}
-        self.assertEqual(tone(dd=-0.03)["drawdown"], "good")
-        self.assertEqual(tone(dd=-0.15)["drawdown"], "warn")
-        self.assertEqual(tone(dd=-0.25)["drawdown"], "bad")
-        self.assertEqual(tone(dist_sma=-0.05, slope=-0.02)["trend"], "bad")
-        self.assertEqual(tone(dist_sma=-0.02, slope=0.01)["trend"], "warn")
-        self.assertEqual(tone(vix=35.0)["vix"], "bad")
-        self.assertEqual(tone(z=-3.0)["today"], "bad")
+    def test_a_negative_number_is_red_while_a_healthy_status_stays_green(self):
+        k = {c["key"]: c for c in m.view_model(self.rep(self.snap()))["kpis"]}
+        self.assertEqual((k["drawdown"]["value_tone"], k["drawdown"]["pill"], k["drawdown"]["pill_tone"]),
+                         ("bad", "Normal pullback", "good"))
+        self.assertEqual(k["today"]["value_tone"], "bad")
+        up = {c["key"]: c for c in m.view_model(self.rep(self.snap(ret=0.012, z=0.8)))["kpis"]}
+        self.assertEqual(up["today"]["value_tone"], "good")
+        self.assertEqual(k["trend"]["value_tone"], "good")                      # a positive number
+
+    def test_kpi_pills_follow_the_regime(self):
+        pill = lambda key, **kw: {c["key"]: c for c in m.view_model(self.rep(self.snap(**kw)))["kpis"]}[key]
+        self.assertEqual(pill("drawdown", dd=-0.03)["pill_tone"], "good")
+        self.assertEqual(pill("drawdown", dd=-0.15)["pill_tone"], "warn")
+        self.assertEqual(pill("drawdown", dd=-0.25)["pill_tone"], "bad")
+        self.assertEqual(pill("trend", dist_sma=-0.05, slope=-0.02)["pill"], "Trend broken")
+        self.assertEqual(pill("trend", dist_sma=0.016)["pill"], "Thin cushion: watch")
+        self.assertEqual(pill("trend", dist_sma=0.08)["pill"], "Comfortable cushion")
+        self.assertEqual(pill("today", z=-3.0)["pill"], "Rare shock")
+        self.assertEqual(pill("vix", vix=35.0)["value_tone"], "bad")
+        self.assertEqual(pill("vix", vix=27.0)["value_tone"], "orange")
+        self.assertEqual(pill("vix", vix=22.0)["value_tone"], "warn")
 
     def test_vix_bands_follow_the_published_scale(self):
         self.assertEqual([m.vix_band(v)[0] for v in (12, 17.9, 18, 21.9, 22, 24.9, 25, 29.9, 30, 60)],
@@ -377,38 +452,61 @@ class ViewModelTests(unittest.TestCase):
                           "High Stress", "Panic", "Panic"])
 
     def test_analog_rows_are_simple_and_win_rate_is_the_complement_of_ended_lower(self):
-        vm = m.view_model(self.rep(self.snap(), {}))
+        vm = m.view_model(self.rep(self.snap()))
         rows = vm["analogs"]["rows"]
         self.assertEqual([r["timeframe"] for r in rows], ["1 Month (20d)", "3 Months (60d)", "6 Months (120d)"])
         self.assertAlmostEqual(rows[1]["win_rate"], 0.80)
         self.assertEqual((rows[1]["typical"], rows[1]["worst_dip"], rows[1]["crash_risk"]), (0.074, -0.088, 0.01))
         self.assertEqual(vm["title"], "Nasdaq-100 (NDX / QQQ) Market Regime")
         self.assertEqual(len(vm["raw"]["horizons"]), 3)
-        import json
         json.dumps(vm)                                                          # the web API serialises it as is
 
-    def test_telegram_summary_is_six_plain_english_lines(self):
-        text = m.render_telegram(self.rep(self.snap(), {}))
-        lines = text.splitlines()
-        self.assertEqual(len(lines), 6)
-        self.assertIn("Nasdaq-100 Market Regime", lines[0])
-        self.assertIn("0 of 7 red flags", lines[1])
-        self.assertIn("-9.1% from 52-week high", lines[2])
-        self.assertIn("rising 200-day line", lines[2])
-        self.assertIn("VIX 19.4 (Mild Caution)", lines[3])
-        self.assertIn("1-in-115-day shock", lines[4])
-        self.assertIn("higher 80% of the time", lines[5])
-        self.assertNotIn("p10", text)
-        self.assertNotIn("|", text)                                             # no ASCII tables
+    # --- Telegram: the agreed layout, exactly
+    EXPECTED_HTML = "\n".join([
+        "📊 <b>Nasdaq-100 Regime · 30 Oct 2026</b>",
+        "🟢 <b>Normal Bull-Market Pullback</b> (0/7 red flags · 2 watch)",
+        "",
+        "• <b>Trend:</b> <code>-9.1%</code> from high | <code>+1.6%</code> above rising 200d ⚠️",
+        "• <b>Speed & Stress:</b> <code>-9.1%</code> in 20d ⚠️ | VIX <b>19.4</b> (Mild Caution)",
+        "• <b>Structure:</b> VIX curve & Breadth OK",
+        "• <b>Today:</b> <code>-3.46%</code> (1-in-115d shock)",
+        "",
+        "🕰 <b>3-Month Historical Outlook (32 episodes):</b>",
+        "📈 Higher <b>80%</b> of the time (Typical: <b>+7.4%</b>)",
+        "🛡️ Worst-case dip: <code>-8.8%</code> | Severe crash risk (-20%): <b>1%</b>"])
 
-    def test_dashboard_url_and_the_send_button(self):
-        import os, urllib.parse
+    def test_telegram_layout_is_exactly_the_agreed_one(self):
+        self.assertEqual(m.render_telegram(self.rep(self.snap())), self.EXPECTED_HTML)
+
+    def test_telegram_plain_version_for_the_terminal_has_no_tags(self):
+        plain = m.render_telegram(self.rep(self.snap()), html_markup=False)
+        self.assertNotIn("<", plain)
+        self.assertIn("• Trend: -9.1% from high | +1.6% above rising 200d ⚠️", plain)
+        self.assertIn("• Speed & Stress: -9.1% in 20d ⚠️ | VIX 19.4 (Mild Caution)", plain)
+
+    def test_telegram_flags_problems_in_the_right_places(self):
+        s = self.snap(dist_sma=-0.05, slope=-0.01, dd=-0.22, fall20=-0.12, vix=34.0, term=1.1, inverted=True,
+                      br_change=-0.04, narrow=True)
+        text = m.render_telegram(self.rep(s), delayed=True)
+        self.assertIn("data may be delayed", text.splitlines()[0])
+        self.assertIn("🚨", text.split("Trend:")[1].split("\n")[0])
+        self.assertIn("🚨", text.split("Speed & Stress:")[1].split("\n")[0])
+        self.assertIn("VIX curve 🚨 inverted | Breadth 🚨 narrowing", text)
+        self.assertIn("7/7 red flags", text)
+        self.assertIn("below falling 200d", text)
+
+    def test_telegram_without_vix3m_or_breadth_says_so(self):
+        s = self.snap(term=None, inverted=None, br_change=None, narrow=None)
+        self.assertIn("VIX curve n/a | Breadth n/a", m.render_telegram(self.rep(s)))
+
+    def test_dashboard_url_and_the_send_button_and_html_mode(self):
+        import urllib.parse, urllib.error
         from unittest import mock
         with mock.patch.dict(os.environ, {"RISK_SIZER_PUBLIC_URL": "https://example.test/"}, clear=True):
             self.assertEqual(m.dashboard_url(), "https://example.test/regime")
         with mock.patch.dict(os.environ, {"RISK_SIZER_PUBLIC_URL": "http://insecure"}, clear=True):
             self.assertIsNone(m.dashboard_url())
-        captured = {}
+        bodies = []
 
         class Resp:
             status = 200
@@ -416,14 +514,30 @@ class ViewModelTests(unittest.TestCase):
             def __exit__(self, *a): return False
 
         def fake(req, timeout=None):
-            captured["body"] = urllib.parse.parse_qs(req.data.decode())
+            bodies.append(urllib.parse.parse_qs(req.data.decode()))
             return Resp()
         with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "T", "TELEGRAM_CHAT_ID": "1"}), \
                 mock.patch("urllib.request.urlopen", side_effect=fake):
-            m.send_telegram("hello", "https://example.test/regime")
-        markup = json.loads(captured["body"]["reply_markup"][0])
+            m.send_telegram("<b>hello</b>", "https://example.test/regime")
+        self.assertEqual(bodies[0]["parse_mode"], ["HTML"])
+        markup = json.loads(bodies[0]["reply_markup"][0])
         self.assertEqual(markup["inline_keyboard"][0][0]["text"], "🔗 Open Full Market Regime Dashboard")
         self.assertEqual(markup["inline_keyboard"][0][0]["url"], "https://example.test/regime")
+
+        calls = []
+
+        def reject_markup(req, timeout=None):
+            body = urllib.parse.parse_qs(req.data.decode())
+            calls.append(body)
+            if "parse_mode" in body:
+                raise urllib.error.HTTPError("u", 400, "bad entities", {}, None)
+            return Resp()
+        with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "T", "TELEGRAM_CHAT_ID": "1"}), \
+                mock.patch("urllib.request.urlopen", side_effect=reject_markup):
+            m.send_telegram("<b>hello</b> &amp; <code>x</code>", "https://example.test/regime")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1]["text"], ["hello & x"])                       # resent as plain text, button kept
+        self.assertIn("reply_markup", calls[1])
 
     def test_cli_has_no_html_export_any_more(self):
         import contextlib, io
@@ -437,6 +551,7 @@ class ViewModelTests(unittest.TestCase):
             vm = m.compute_view()
         self.assertEqual(len(vm["kpis"]), 4)
         self.assertEqual(len(vm["checks"]), 7)
+        self.assertIn("watch_count", vm)
 
 
 class DailyJobTests(unittest.TestCase):
@@ -472,7 +587,8 @@ class DailyJobTests(unittest.TestCase):
             self.assertEqual(self.run_daily(), 0)
         self.assertEqual(len(self.sent), 1)
         text, url = self.sent[0]
-        self.assertEqual(len(text.splitlines()), 6)
+        self.assertIn("Nasdaq-100 Regime", text.splitlines()[0])
+        self.assertIn("<b>", text)                                  # sent as HTML
         self.assertEqual(url, "https://example.test/regime")
         self.assertNotIn("delayed", text)
         self.assertEqual(m.read_last_sent(self.cache), "2026-11-02")
