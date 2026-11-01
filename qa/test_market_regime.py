@@ -762,6 +762,65 @@ class ViewModelTests(unittest.TestCase):
         self.assertIn("watch_count", vm)
 
 
+
+class CliTests(unittest.TestCase):
+    """main() is the entry point systemd and the user run; it once drifted from analyze() unnoticed."""
+
+    def setUp(self):
+        full = synthetic(end="2026-10-30", seed=3)
+        self.series = {k: v for k, v in full.items()}
+        self.sent = []
+
+    def run_main(self, argv, load=None, send=None):
+        import contextlib
+        import io
+        from unittest import mock
+        buf, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(m, "load_series", load or (lambda refresh=False: (self.series, []))), \
+             mock.patch.object(m, "send_telegram", send or (lambda text, url=None, html=True: self.sent.append((text, url)))), \
+             contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            rc = m.main(argv)
+        return rc, buf.getvalue(), err.getvalue()
+
+    def test_default_run_prints_the_text_report(self):
+        rc, out, _ = self.run_main([])
+        self.assertEqual(rc, 0)
+        self.assertIn("MARKET REGIME", out)
+        self.assertEqual(self.sent, [])
+
+    def test_send_posts_the_html_summary_once_and_prints_the_plain_one(self):
+        rc, out, _ = self.run_main(["--send"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(self.sent), 1)
+        text, _url = self.sent[0]
+        self.assertIn("Nasdaq-100 Regime", text.splitlines()[0])
+        self.assertIn("<b>", text)
+        self.assertNotIn("<b>", out)
+
+    def test_send_failure_exits_nonzero(self):
+        def boom(text, url=None, html=True):
+            raise RuntimeError("telegram sendMessage failed")
+        rc, _, err = self.run_main(["--send"], send=boom)
+        self.assertEqual(rc, 1)
+        self.assertIn("telegram sendMessage failed", err)
+
+    def test_json_and_telegram_flags_run(self):
+        rc, out, _ = self.run_main(["--json"])
+        self.assertEqual(rc, 0)
+        json.loads(out)
+        rc, out, _ = self.run_main(["--telegram"])
+        self.assertEqual(rc, 0)
+        self.assertIn("Nasdaq-100 Regime", out)
+
+    def test_data_failure_exits_nonzero_without_sending(self):
+        def bad(refresh=False):
+            raise RuntimeError("no data")
+        rc, _, err = self.run_main(["--send"], load=bad)
+        self.assertEqual(rc, 1)
+        self.assertIn("no data", err)
+        self.assertEqual(self.sent, [])
+
+
 class DailyJobTests(unittest.TestCase):
     NOW = datetime(2026, 11, 3, 1, 10, tzinfo=NY)             # Tuesday 01:10 New York: Monday's bar is the latest final one
 

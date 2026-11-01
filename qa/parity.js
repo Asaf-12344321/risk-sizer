@@ -73,8 +73,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     await wait(250);
     const txt = inst.$('posList').textContent.replace(/\s+/g, ' ');
     // Armed shows as the stop having moved up to entry (break-even) or beyond.
-    const m = /stop now([\d.]+)/.exec(txt);
-    const jsStop = m ? parseFloat(m[1]) : NaN;
+    const m = /Current stop\s*[$\u20aa]?\s*([\d,.]+)/.exec(txt);
+    const jsStop = m ? parseFloat(m[1].replace(/,/g, '')) : NaN;
     const jsArmed = Number.isFinite(jsStop) && jsStop >= sp.price - 0.01;
     const ok = jsArmed === sp.py_armed;
     if (!ok) armBad2++;
