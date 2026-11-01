@@ -813,7 +813,7 @@ def _set_model(res: AnalogResult) -> dict:
 TAKEAWAYS = {
     "better": "💡 Bottom line: Historically, this setup beats a random market day on every metric - higher typical return with lower crash risk.",
     "volatile": "💡 Bottom line: Higher historical upside than an average day, but comes with elevated short-term drawdown risk - expect volatility.",
-    "weaker": "💡 Bottom line: Historically weaker odds than an average market day with elevated crash risk - patience and defense are favored.",
+    "weaker": "💡 Bottom line: Historically weaker odds than an average market day with elevated crash risk - lower returns paired with wider tail exposure.",
     "inline": "💡 Bottom line: Historical odds are roughly in line with an average market day - no unusual edge or tail risk.",
 }
 TAKE_RETURN, TAKE_CRASH, TAKE_DIP = 0.01, 0.015, 0.02     # gaps smaller than this count as "roughly in line"
