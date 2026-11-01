@@ -79,11 +79,10 @@
   .wrap.fit { display: inline-block; max-width: 100%; }
   .wrap.fit table { width: auto; } .wrap.fit th, .wrap.fit td { padding: 9px 18px; }
   td.win { font-weight: 700; } td.win.hi { background: var(--good-bg); color: var(--good); border-radius: 6px; }
-  td.win small { display: block; font-weight: 400; color: var(--dim); font-size: 11px; }
+  td small.base { display: block; font-weight: 400; color: var(--dim); font-size: 11px; }
   tr.era th { text-align: left; background: var(--bg); color: var(--fg); font-size: 13px; padding-top: 12px; }
   tr.era small { color: var(--dim); font-weight: 400; }
   .spread { color: var(--dim); font-size: 13px; margin: 0 0 8px; } .spread b { color: var(--fg); }
-  .compare { margin: 10px 0 0; padding: 10px 14px; border-radius: var(--radius); background: var(--card); border: 1px solid var(--line); font-size: 14px; }
   .sub { color: var(--dim); font-size: 13px; margin: 0 0 8px; }
   .state { text-align: center; color: var(--dim); padding: 60px 0; }
   .err { background: var(--bad-bg); color: var(--bad); border-radius: var(--radius); padding: 12px 14px; margin: 14px 0; }
@@ -202,27 +201,35 @@
     return d;
   }
 
+  function baseSmall(text) { return el("small", "base", "all days " + text); }
+
   function analogTable(vm) {
     var wrap = el("div", "wrap fit"), t = el("table"), head = el("tr");
-    ["Timeframe", "Win Rate (% ended higher)", "Typical Return (Median)", "Worst-Case Dip (worst 10%)", "Severe Crash Risk (further -20%)"]
+    ["Timeframe", "% Ended Higher (shrunk)", "Typical Return (Median)", "Worst-Case Dip (p10)", "Severe Crash Risk (-20%)"]
       .forEach(function (x) { head.appendChild(el("th", null, x)); });
     t.appendChild(head);
     vm.analogs.sets.forEach(function (set) {
       var era = el("tr", "era"), th = el("th");
       th.colSpan = 5;
       th.appendChild(document.createTextNode(set.title + " "));
-      th.appendChild(el("small", null, "\u00B7 " + set.episodes + " episodes \u00B7 " + set.level + (set.low_confidence ? " \u00B7 low confidence" : "")));
+      th.appendChild(el("small", null, "\u00B7 " + set.episodes + " separate episodes" + (set.low_confidence ? " \u00B7 LOW SAMPLE" : "")));
       era.appendChild(th);
       t.appendChild(era);
       set.rows.forEach(function (r) {
         var tr = el("tr");
-        tr.appendChild(el("td", null, r.timeframe));
+        tr.appendChild(el("td", null, r.timeframe + (r.low_sample ? " \u26A0\uFE0F" : "")));
         var win = el("td", "win" + (r.win_rate >= 0.7 ? " hi" : ""), pct(r.win_rate, false, 0));
-        if (r.win_lo !== null && r.win_lo !== undefined) win.appendChild(el("small", null, "~" + pct(r.win_lo, false, 0).replace("%", "") + "-" + pct(r.win_hi, false, 0)));
+        win.appendChild(baseSmall(pct(r.base_win_rate, false, 0)));
         tr.appendChild(win);
-        tr.appendChild(el("td", tone(r.typical), pct(r.typical)));
-        tr.appendChild(el("td", "neg", pct(r.worst_dip)));
-        tr.appendChild(el("td", null, pct(r.crash_risk, false, 0)));
+        var typ = el("td", tone(r.typical), pct(r.typical));
+        typ.appendChild(baseSmall(pct(r.base_typical)));
+        tr.appendChild(typ);
+        var dip = el("td", "neg", pct(r.worst_dip));
+        dip.appendChild(baseSmall(pct(r.base_worst_dip)));
+        tr.appendChild(dip);
+        var crash = el("td", null, pct(r.crash_risk, false, 0));
+        crash.appendChild(baseSmall(pct(r.base_crash_risk, false, 0)));
+        tr.appendChild(crash);
         t.appendChild(tr);
       });
     });
@@ -242,11 +249,11 @@
   }
 
   function readTable(vm) {
-    var d = el("details"), n = vm.analogs.sets[0].episodes;
+    var d = el("details"), set = vm.analogs.sets[0], n = set.episodes;
     d.appendChild(el("summary", null, "\u2139\uFE0F How to read this table (What is Median Return?)"));
-    d.appendChild(el("p", null, "Out of " + n + " similar historical episodes since 1990, the Median (Typical) Return sorts all outcomes from worst to best and picks the exact middle case - so half of historical times did better than this number, and half did worse. It avoids distortion from extreme outliers."));
-    d.appendChild(el("p", null, "Win Rate is the share of similar days that ended higher after that time; the small grey range under it is the 90% range if you resample whole episodes (a few episodes can swing it a lot). Worst-Case Dip is the further drop from today\u2019s close that the worst 10% of cases suffered before recovering. Severe Crash Risk is how often a further 20% drop developed."));
-    d.appendChild(el("p", null, "How the similar days are found: every past day is scored by how close it was to today on the 200d cushion, 200d slope, drawdown, 20-day drop speed, VIX and VIX versus its 60-day average (the Modern Era also uses the real VIX/VIX3M curve and equal-weight breadth). Only days on the same side of the 200d line count, and the closest ~90 are used."));
+    d.appendChild(el("p", null, "Out of " + n + " separate similar episodes since 1990 (each counts once, through its closest day), the Median (Typical) Return sorts all outcomes from worst to best and picks the exact middle case - so half of historical times did better than this number, and half did worse."));
+    d.appendChild(el("p", null, "% Ended Higher and Severe Crash Risk are episode-weighted and shrunk toward the historical base rate: with few episodes the number stays close to the grey \u201Call days\u201D figure under it, and moves away from it only as evidence builds (blend: episodes / (episodes + " + set.shrink_m + ")). In testing, unshrunk rates from about ten episodes were noisier than the base rate itself. If a number is clearly better or worse than its grey reference, today\u2019s setup differs from an average day. Worst-Case Dip is the further drop from today\u2019s close that the worst 10% of episodes suffered."));
+    d.appendChild(el("p", null, "How the similar days are found: every past day is ranked against history on two equal-weight groups - price (drawdown from the 52-week high and distance from the 200-day line) and fear (VIX and VIX versus its 60-day average). Only days whose outcome has already happened can match; the 120 closest are grouped into episodes at least 20 trading days apart. Slope, drop speed, the VIX curve and breadth are shown in the checks above but not used for matching, because they added no skill when tested."));
     return d;
   }
 
@@ -258,23 +265,23 @@
       d.appendChild(el("p", "spread", set.title));
       var w1 = el("div", "wrap small"), t = el("table"), h1 = el("tr");
       ["Horizon", "Return p10", "Return median", "Return p90", "Drop p10 (worst)", "Drop median", "Drop p90",
-       "-10% more", "-20% more", "-20% (all days)", "Ended lower", "n"].forEach(function (x) { h1.appendChild(el("th", null, x)); });
+       "-10% more (shrunk)", "-20% more (shrunk)", "-20% (all days)", "Ended lower (shrunk)", "Episodes"].forEach(function (x) { h1.appendChild(el("th", null, x)); });
       t.appendChild(h1);
       set.raw.horizons.forEach(function (r) {
         var tr = el("tr"), cells = [r.horizon + " days", pct(r.ret_p10), pct(r.ret_p50), pct(r.ret_p90), pct(r.dd_p10), pct(r.dd_p50),
-          pct(r.dd_p90), pct(r.p_down10, false, 0), pct(r.p_crash20, false, 0), pct(r.base_p_crash20, false, 1), pct(r.p_negative, false, 0), r.n];
+          pct(r.dd_p90), pct(r.down10, false, 0), pct(r.crash20, false, 0), pct(r.base_crash20, false, 1), pct(1 - r.win, false, 0), r.n];
         cells.forEach(function (c) { tr.appendChild(el("td", null, String(c))); });
         t.appendChild(tr);
       });
       w1.appendChild(t);
       d.appendChild(w1);
-      d.appendChild(el("p", "sub", "Episodes (outcome counted from each episode\u2019s first day)"));
+      d.appendChild(el("p", "sub", "Episodes (outcome counted from each episode\u2019s closest matching day)"));
       var w2 = el("div", "wrap small"), t2 = el("table"), h2 = el("tr");
-      ["Start", "End", "Days", "60 days later", "Worst drop within 120 days"].forEach(function (x) { h2.appendChild(el("th", null, x)); });
+      ["Start", "End", "Days", "Matched day", "60 days later", "Worst drop within 120 days"].forEach(function (x) { h2.appendChild(el("th", null, x)); });
       t2.appendChild(h2);
       set.raw.episodes.forEach(function (e) {
         var tr = el("tr");
-        [e.start, e.end, e.days, pct(e.ret_60d), pct(e.worst_dd_120d)].forEach(function (c) { tr.appendChild(el("td", null, String(c))); });
+        [e.start, e.end, e.days, e.match, pct(e.ret_60d), pct(e.worst_dd_120d)].forEach(function (c) { tr.appendChild(el("td", null, String(c))); });
         t2.appendChild(tr);
       });
       w2.appendChild(t2);
@@ -296,14 +303,13 @@
     app.appendChild(checks(vm));
     app.appendChild(explainChecks());
     app.appendChild(section("What happened after similar days since 1990"));
-    app.appendChild(el("p", "sub", "The days since 1990 closest to today, matched on 200d cushion, 200d slope, drawdown, 20-day drop speed and VIX. Full History is shown next to the Modern Era so you can see whether the older years skew the odds."));
+    app.appendChild(el("p", "sub", "The days since 1990 closest to today, matched on price (drawdown, distance from the 200d line) and fear (VIX). Each separate episode counts once, and probabilities are shrunk toward the historical base rate; the grey figure under each number is what an average day since 1990 did."));
     app.appendChild(spreadLines(vm));
     app.appendChild(analogTable(vm));
-    if (vm.analogs.compare) app.appendChild(el("p", "compare", vm.analogs.compare.text));
     app.appendChild(readTable(vm));
     app.appendChild(rawSection(vm));
     var notes = vm.notes.slice();
-    notes.push("Statistics describe the past, not a prediction. Overlapping days are not independent, so trust the episode count.");
+    notes.push("Statistics describe the past, not a prediction. Trust the episode count, not the day count.");
     notes.forEach(function (n) { app.appendChild(el("p", "sub", "• " + n)); });
   }
 

@@ -22,19 +22,19 @@ Method (rule-based, no machine learning):
       Elevated Volatility      3+ flags, or down 10%+, or VIX 25+
       Calm / Near Highs        within 3% of the high and no flags
       Normal Pullback          everything else
-  * Analogs by nearest neighbours, not hard buckets: every past day is scored by its weighted distance
-    to today across the same dimensions (200d cushion, 200d slope, drawdown, 20-day drop speed, VIX,
-    VIX vs its 60-day average).  The closest ~90 days are the analogs, subject to
-      - a hard boundary: above the 200d SMA only matches days above it (and below matches below)
-      - per-dimension caps around today's value (e.g. drawdown within 4 points), widened step by step
-        only if fewer than 15 separate episodes are found; the page says "Tight" or "Widened"
-    Two sets are always shown side by side: Full History (1990+, core dimensions only, so the
-    dot-com crash stays in) and Modern Era (2006+, which also matches on the real VIX/VIX3M term
-    structure and QQEW/QQQ breadth).
-  * For 20, 60 and 120 trading days ahead: the 10th/50th/90th percentile of the forward return and
-    of the maximum further drawdown from today's close, the share that ended higher with a 90% range
-    (resampling whole episodes), and the historical probability of a further 10% / 20% drop.  Daily
-    samples overlap heavily, so the report counts independent EPISODES; trust that number more.
+  * Analogs by nearest neighbours, not hard buckets: every past day since 1990 is scored by its distance to
+    today in percentile-RANK space on two equal-weight groups: price (drawdown from the 52w high, distance
+    from the 200d SMA) and fear (log VIX, log VIX vs its 60-day average).  Ranks mean extremes (VIX 80)
+    still find neighbours.  Slope, drop speed, VIX/VIX3M and breadth stay in the health checks only: in the
+    walk-forward test they added no skill as matching dimensions.
+      - only days whose outcome has already happened are candidates; the 120 closest are taken
+      - they are grouped into episodes (20 trading days apart) and each episode counts ONCE, through its
+        closest day
+  * For 20, 60 and 120 trading days ahead: the 10th/50th/90th percentile of the forward return and of the
+    maximum further drawdown from today's close, the share that ended higher, and the chance of a further
+    10% / 20% drop.  The three probabilities are shrunk toward the all-days base rate,
+    p = (E*p_raw + 12*base) / (E + 12) with E = episodes, because raw rates from ~10 episodes were noisier
+    than the base rate itself.  Fewer than 8 episodes raises a LOW SAMPLE warning.
 
 No look-ahead: every feature on day t uses data up to t only; forward outcomes are only read for
 days whose horizon had already completed by the analysis date.
@@ -92,8 +92,9 @@ RULES = {
     "fall_window": 20,
     "fast_fall": -0.10,             # a >=10% fall within 20 days is a "fast" drawdown
     "deep_dd": -0.20,
-    "vix_high": 30.0,
+    "vix_calm": 18.0,               # one VIX ladder everywhere: <18 calm | 18-25 caution | 25-30 high stress | 30+ panic
     "vix_correction": 25.0,
+    "vix_high": 30.0,
     "inversion": 1.0,               # VIX / VIX3M at or above this = inverted term structure
     "breadth_days": 60,
     "breadth_drop": -0.03,          # equal-weight lagging cap-weight by 3% over 60 days ...
@@ -104,18 +105,14 @@ RULES = {
     "bear_flags": 4,
     "capitulation_dd": -0.30,       # down 30% from the 52w high is a bear regime whatever the averages say
     "stress_flags": 3,
+    "stretched": 0.30,              # price this far above the 200d average is "stretched" (the calm labels cannot see it)
+    "recovery_cushion": 0.05,       # ... and this far above a RISING 200d average with a deep drawdown reads as a recovery
 }
-DD_EDGES = [-0.30, -0.20, -0.12, -0.07, -0.03]      # drawdown buckets, deepest first
-DD_NAMES = ["worse than -30%", "-30% to -20%", "-20% to -12%", "-12% to -7%", "-7% to -3%", "above -3%"]
-VIX_EDGES = [15.0, 20.0, 25.0, 35.0]
-VIX_NAMES = ["VIX under 15", "VIX 15-20", "VIX 20-25", "VIX 25-35", "VIX 35+"]
-TREND_NAMES = ["above a rising 200d average", "above a falling 200d average",
-               "below a rising 200d average", "below a falling 200d average"]
 LABEL_CALM = "Calm Uptrend / Near Highs"
 LABEL_PULLBACK = "Normal Bull-Market Pullback"
 LABEL_ELEVATED = "Elevated Volatility Correction"
 LABEL_BEAR = "Systemic Stress / Bear Regime"
-MIN_DAYS, MIN_EPISODES, EPISODE_GAP = 60, 4, 20
+EPISODE_GAP = 20
 
 
 # =============================================================================== data ===========
@@ -227,18 +224,8 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     f["br_change"] = ratio / ratio.shift(r["breadth_days"]) - 1
     f["br_below"] = ratio < ratio.rolling(r["breadth_avg_days"], min_periods=r["breadth_avg_days"]).mean()
     f["br_ratio"] = ratio
-    # discrete state used for matching analogs
-    trend = np.full(len(f), np.nan)
-    up, rising = (f["dist_sma"] >= 0), (f["slope"] >= 0)
-    known = f["dist_sma"].notna() & f["slope"].notna()
-    trend[(known & up & rising).to_numpy()] = 0
-    trend[(known & up & ~rising).to_numpy()] = 1
-    trend[(known & ~up & rising).to_numpy()] = 2
-    trend[(known & ~up & ~rising).to_numpy()] = 3
-    f["trend"] = trend
-    f["dd_bin"] = np.where(f["dd"].notna(), np.digitize(f["dd"].fillna(0), DD_EDGES), np.nan)
-    f["vix_bin"] = np.where(f["vix"].notna(), np.digitize(f["vix"].fillna(0), VIX_EDGES), np.nan)
-    f["inv"] = np.where(f["term"].notna(), (f["term"] >= r["inversion"]).astype(float), np.nan)
+    f["lvix"] = np.log(f["vix"])                             # matching works in log space: 10 to 20 is as big a move as 40 to 80
+    f["lproxy"] = np.log(f["proxy"])
     narrow = (f["br_change"] <= r["breadth_drop"]) & f["br_below"]
     f["narrow"] = np.where(f["br_change"].notna() & f["br_below"].notna(), narrow.astype(float), np.nan)
     return f
@@ -302,33 +289,38 @@ def classify(row: pd.Series, flags: list[Flag]) -> str:
 @dataclass
 class HorizonStats:
     horizon: int
-    n: int
+    n: int                             # separate EPISODES behind the numbers (each counts once)
+    days: int = 0                      # matched days the episodes were picked from
     ret_p10: float | None = None
     ret_p50: float | None = None
     ret_p90: float | None = None
-    dd_p10: float | None = None        # the bad-luck end: the deepest further drawdown in 10% of cases
+    dd_p10: float | None = None        # the bad-luck end: the deepest further drawdown in 10% of episodes
     dd_p50: float | None = None
     dd_p90: float | None = None
-    p_down10: float | None = None      # P(a further 10% drop within the horizon)
-    p_crash20: float | None = None     # P(a further 20% drop within the horizon)
-    p_negative: float | None = None
-    base_p_crash20: float | None = None     # the same probability over ALL days since 1990
+    win_raw: float | None = None       # share of episodes that ended higher (unshrunk)
+    down10_raw: float | None = None    # share with a further 10% drop within the horizon
+    crash20_raw: float | None = None   # share with a further 20% drop within the horizon
+    win: float | None = None           # the same three, shrunk toward the all-days base rate
+    down10: float | None = None
+    crash20: float | None = None
+    base_win: float | None = None      # unconditional rates over every finished day since 1990
+    base_down10: float | None = None
+    base_crash20: float | None = None
     base_ret_p50: float | None = None
-    win_lo: float | None = None        # 90% range of the share that ended higher (episodes resampled)
-    win_hi: float | None = None
+    base_dd_p10: float | None = None
+    low_sample: bool = False           # fewer than KNN["warn_episodes"] episodes
 
 
 @dataclass
 class AnalogResult:
-    key: str                           # "full" | "modern"
+    key: str
     title: str
-    level: str                         # "Tight match" | "Widened match (x1.3)"
     days: int
-    episodes: int
+    episodes: int                      # separate episodes at the 60-day horizon (the headline one)
     low_confidence: bool
     first_date: str | None
     last_date: str | None
-    spread: str = ""                   # "Matched 22 episodes (90 days): drawdown -12.2% to -6.5%, ..."
+    spread: str = ""                   # "Matched 22 episodes (120 days): drawdown -12.2% to -6.5%, ..."
     ranges: dict = field(default_factory=dict)
     horizons: list[HorizonStats] = field(default_factory=list)
     episode_table: list[dict] = field(default_factory=list)
@@ -349,145 +341,134 @@ def _episodes(positions: np.ndarray, gap: int = EPISODE_GAP) -> list[tuple[int, 
 
 
 # --- nearest-neighbour matching --------------------------------------------------------------
-KNN = {"k": 90, "min_episodes": 15, "low_episodes": 8, "scale_steps": (1.0, 1.3, 1.7), "boot": 2000}
-FULL_FEATURES = {"dist_sma": 1.5, "slope": 1.0, "dd": 1.5, "fall20": 1.5, "vix": 1.0, "proxy": 1.0}
-MODERN_FEATURES = {**FULL_FEATURES, "term": 1.0, "br_change": 0.75}     # weights: the 200d cushion, 20d drop speed and
-CAPS = {"dist_sma": 0.04, "dd": 0.04, "fall20": 0.035, "vix": 5.0, "proxy": 0.25,   # drawdown count 50% more
-        "term": 0.08, "br_change": 0.03}                                     # hard caps around today's value, in natural units
-MODERN_START = pd.Timestamp("2006-09-01")
-ERAS = {"full": ("Full History (1990+)", FULL_FEATURES, SAMPLE_START),
-        "modern": ("Modern Era (2006+, real VIX/VIX3M & QQEW breadth)", MODERN_FEATURES, MODERN_START)}
-FEATURE_LABELS = {"dd": ("drawdown", "pct"), "dist_sma": ("200d cushion", "pct"), "fall20": ("20d speed", "pct"),
-                  "vix": ("VIX", "num"), "proxy": ("VIX vs 60d average", "x"), "slope": ("200d slope", "pct2"),
-                  "term": ("VIX/VIX3M", "x"), "br_change": ("breadth", "pct")}
-SPREAD_ORDER = ["dd", "dist_sma", "fall20", "vix", "proxy", "term", "br_change"]
+# Walk-forward tested on 1,500+ dates since 1996 (see the audit notes): matching on percentile RANKS, one
+# price group and one volatility group of equal weight, one observation per episode, and probabilities
+# shrunk toward the base rate.  Raw hit rates from ~10 episodes were worse than quoting the base rate.
+KNN = {"k": 120, "gap": EPISODE_GAP, "warn_episodes": 8, "shrink_m": 12.0}
+MATCH_GROUPS = ((1.0, ("dd", "dist_sma")), (1.0, ("lvix", "lproxy")))     # (group weight, features)
+MATCH_COLUMNS = tuple(c for _, cols in MATCH_GROUPS for c in cols)
+FEATURE_LABELS = {"dd": ("drawdown", "pct"), "dist_sma": ("200d cushion", "pct"),
+                  "vix": ("VIX", "num"), "proxy": ("VIX vs 60d average", "x")}
+SPREAD_ORDER = ["dd", "dist_sma", "vix", "proxy"]
 
 
 def _fmt_feature(kind: str, v: float) -> str:
     return {"pct": f"{v * 100:+.1f}%", "pct2": f"{v * 100:+.2f}%", "num": f"{v:.1f}", "x": f"{v:.2f}"}[kind]
 
 
-def knn_select(f: pd.DataFrame, features: Mapping[str, float], start: pd.Timestamp, scale: float,
-               k: int = KNN["k"]) -> np.ndarray | None:
-    """Boolean mask of the k days closest to today (the last row).  Returns None when today's row lacks
-    any dimension.  Distance: weighted Euclidean on robust-standardised dimensions (median / IQR);
-    same side of the 200d SMA is mandatory; every dimension with a cap must lie within cap * scale."""
-    cols = list(features)
-    X = f[cols]
-    cur = X.iloc[-1]
-    if cur.isna().any():
+def _rank_distance(f: pd.DataFrame, start: pd.Timestamp) -> tuple[np.ndarray, np.ndarray] | None:
+    """Squared distance of every day to today (the last row) in percentile-rank space, and a mask of days
+    whose matching features are all known.  Each group's squared gaps are averaged over its features, so a
+    group counts the same however many features it holds.  Ranks are taken against the history up to today
+    only, so the scale adapts to extremes (VIX 80 is simply 'the top percentile') and nothing leaks."""
+    X = f[list(MATCH_COLUMNS)].to_numpy(dtype=float)
+    if np.isnan(X[-1]).any():
         return None
-    ok = (f.index >= start) & X.notna().all(axis=1).to_numpy()
-    ok[-1] = False
-    if ok.sum() < 100:
+    known = (f.index >= start) & ~np.isnan(X).any(axis=1)
+    if known.sum() < 200:
         return None
-    sample = X[ok]
-    center = sample.median()
-    spread = ((sample.quantile(0.75) - sample.quantile(0.25)) / 1.349).replace(0, 1.0)
-    weights = pd.Series(features)
-    z_diff = ((X - cur) / spread).abs()
-    dist = np.array(np.sqrt(((z_diff ** 2) * (weights ** 2)).sum(axis=1)), dtype=float)
-    same_side = ((f["dist_sma"] >= 0) == (f["dist_sma"].iloc[-1] >= 0)).to_numpy()
-    dist[~(ok & same_side)] = np.inf
-    natural = (X - cur).abs()
-    for col, cap in CAPS.items():
-        if col in cols:
-            dist[(natural[col] > cap * scale).to_numpy()] = np.inf
-    chosen = np.argsort(dist)[:k]
-    chosen = chosen[np.isfinite(dist[chosen])]
-    mask = np.zeros(len(f), dtype=bool)
-    mask[chosen] = True
-    return mask
+    ranks = np.empty_like(X)
+    for j in range(X.shape[1]):
+        ref = np.sort(X[known, j])
+        ranks[:, j] = (np.searchsorted(ref, X[:, j], "left") + np.searchsorted(ref, X[:, j], "right")) / (2 * len(ref))
+    gaps = (ranks - ranks[-1]) ** 2
+    dist, j = np.zeros(len(f)), 0
+    for weight, cols in MATCH_GROUPS:
+        dist += weight * gaps[:, j:j + len(cols)].mean(axis=1)
+        j += len(cols)
+    return dist, known
+
+
+def knn_episodes(f: pd.DataFrame, horizon: int, start: pd.Timestamp = SAMPLE_START, k: int = KNN["k"],
+                 gap: int = KNN["gap"]) -> dict | None:
+    """The k closest days whose `horizon`-day outcome has ALREADY happened (chosen before ranking, so recent
+    unfinished days cannot crowd out real analogs), grouped into episodes; each episode is represented by
+    its single closest day.  Returns None when today lacks a matching dimension or history is too short."""
+    ranked = _rank_distance(f, start)
+    if ranked is None:
+        return None
+    dist, known = ranked
+    last = len(f) - 1
+    cand = np.flatnonzero(known & (np.arange(len(f)) <= last - horizon))
+    if len(cand) < k:
+        return None
+    sel = np.sort(cand[np.argpartition(dist[cand], k - 1)[:k]])
+    reps, spans = [], []
+    for a, b in _episodes(sel, gap):
+        seg = sel[(sel >= a) & (sel <= b)]
+        reps.append(int(seg[np.argmin(dist[seg])]))
+        spans.append((a, b, len(seg)))
+    return {"days": sel, "reps": np.array(reps), "spans": spans}
 
 
 def _pct(a: np.ndarray, q: float) -> float:
     return float(np.percentile(a, q)) if len(a) else float("nan")
 
 
-def win_range(f: pd.DataFrame, mask: np.ndarray, horizon: int, boot: int = KNN["boot"],
-              seed: int = 7) -> tuple[float, float] | None:
-    """90% range of the share of analogs that ended higher, resampling whole EPISODES (days inside one
-    episode are nearly the same observation).  None when there are too few episodes to say anything."""
-    fwd = forward_outcomes(f["close"], horizon)[0].to_numpy()
-    wins, counts = [], []
-    for s0, e0 in _episodes(np.flatnonzero(mask)):
-        seg = fwd[s0:e0 + 1][mask[s0:e0 + 1]]
-        seg = seg[np.isfinite(seg)]
-        if len(seg):
-            wins.append(float((seg > 0).sum()))
-            counts.append(float(len(seg)))
-    if len(wins) < 4:
-        return None
-    w, c = np.array(wins), np.array(counts)
-    idx = np.random.default_rng(seed).integers(0, len(w), size=(boot, len(w)))
-    rates = w[idx].sum(axis=1) / c[idx].sum(axis=1)
-    return float(np.percentile(rates, 5)), float(np.percentile(rates, 95))
+def shrink(p: float, episodes: int, base: float, m: float = KNN["shrink_m"]) -> float:
+    """Empirical-Bayes blend: with few episodes the answer stays near the base rate, with many it follows the data."""
+    return (episodes * p + m * base) / (episodes + m)
 
 
-def analog_stats(f: pd.DataFrame, mask: np.ndarray, key: str, title: str, level: str, low_conf: bool,
-                 features: Mapping[str, float], horizons=HORIZONS) -> AnalogResult:
+def analog_stats(f: pd.DataFrame, horizons=HORIZONS) -> AnalogResult | None:
     close = f["close"]
-    pos = np.flatnonzero(mask)
-    eps = _episodes(pos)
-    ranges = {}
-    for col in SPREAD_ORDER:
-        if col in features and col in f.columns and mask.any():
-            name, kind = FEATURE_LABELS[col]
-            ranges[col] = {"label": name, "lo": float(f[col][mask].min()), "hi": float(f[col][mask].max()), "kind": kind}
-    spread = (f"Matched {len(eps)} episodes ({int(mask.sum())} days): "
-              + ", ".join(f"{r['label']} {_fmt_feature(r['kind'], r['lo'])} to {_fmt_feature(r['kind'], r['hi'])}"
-                          for r in ranges.values())) if ranges else ""
-    res = AnalogResult(
-        key=key, title=title, level=level, days=int(mask.sum()), episodes=len(eps), low_confidence=low_conf,
-        first_date=str(f.index[pos[0]].date()) if len(pos) else None,
-        last_date=str(f.index[pos[-1]].date()) if len(pos) else None, spread=spread, ranges=ranges)
-    sample_all = (f.index >= SAMPLE_START)
+    start_ok = f.index >= SAMPLE_START
+    res_h, sel60 = [], None
     for h in horizons:
+        pick = knn_episodes(f, h)
+        if pick is None:
+            return None
         fwd, mdd = forward_outcomes(close, h)
         fwd_a, mdd_a = fwd.to_numpy(), mdd.to_numpy()
-        ok = mask & np.isfinite(fwd_a) & np.isfinite(mdd_a)
-        a_ret, a_dd = fwd_a[ok], mdd_a[ok]
-        base = sample_all & np.isfinite(fwd_a) & np.isfinite(mdd_a)
-        hs = HorizonStats(horizon=h, n=int(ok.sum()))
-        if hs.n:
-            hs.ret_p10, hs.ret_p50, hs.ret_p90 = (_pct(a_ret, q) for q in (10, 50, 90))
-            hs.dd_p10, hs.dd_p50, hs.dd_p90 = (_pct(a_dd, q) for q in (10, 50, 90))
-            hs.p_down10 = float((a_dd <= -0.10).mean())
-            hs.p_crash20 = float((a_dd <= -0.20).mean())
-            hs.p_negative = float((a_ret < 0).mean())
-            rng = win_range(f, mask, h)
-            if rng:
-                hs.win_lo, hs.win_hi = rng
-        if base.any():
-            hs.base_p_crash20 = float((mdd_a[base] <= -0.20).mean())
-            hs.base_ret_p50 = _pct(fwd_a[base], 50)
-        res.horizons.append(hs)
-    # one line per episode: what happened after its FIRST day (a fair, non-overlapping view)
+        a_ret, a_dd = fwd_a[pick["reps"]], mdd_a[pick["reps"]]
+        n = len(pick["reps"])
+        base = start_ok & np.isfinite(fwd_a) & np.isfinite(mdd_a)
+        hs = HorizonStats(horizon=h, n=n, days=len(pick["days"]), low_sample=n < KNN["warn_episodes"])
+        hs.ret_p10, hs.ret_p50, hs.ret_p90 = (_pct(a_ret, q) for q in (10, 50, 90))
+        hs.dd_p10, hs.dd_p50, hs.dd_p90 = (_pct(a_dd, q) for q in (10, 50, 90))
+        hs.win_raw = float((a_ret > 0).mean())
+        hs.down10_raw = float((a_dd <= -0.10).mean())
+        hs.crash20_raw = float((a_dd <= -0.20).mean())
+        hs.base_win = float((fwd_a[base] > 0).mean())
+        hs.base_down10 = float((mdd_a[base] <= -0.10).mean())
+        hs.base_crash20 = float((mdd_a[base] <= -0.20).mean())
+        hs.base_ret_p50 = _pct(fwd_a[base], 50)
+        hs.base_dd_p10 = _pct(mdd_a[base], 10)
+        hs.win = shrink(hs.win_raw, n, hs.base_win)
+        hs.down10 = shrink(hs.down10_raw, n, hs.base_down10)
+        hs.crash20 = shrink(hs.crash20_raw, n, hs.base_crash20)
+        res_h.append(hs)
+        if h == 60:
+            sel60 = pick
+    if sel60 is None:
+        sel60 = knn_episodes(f, horizons[len(horizons) // 2])
+    days = sel60["days"]
+    ranges = {}
+    for col in SPREAD_ORDER:
+        name, kind = FEATURE_LABELS[col]
+        vals = f[col].to_numpy()[days]
+        ranges[col] = {"label": name, "lo": float(vals.min()), "hi": float(vals.max()), "kind": kind}
+    n60 = len(sel60["reps"])
+    spread = (f"Matched {n60} episodes ({len(days)} days): "
+              + ", ".join(f"{r['label']} {_fmt_feature(r['kind'], r['lo'])} to {_fmt_feature(r['kind'], r['hi'])}"
+                          for r in ranges.values()))
+    res = AnalogResult(key="full", title="Historical analogs since 1990", days=len(days), episodes=n60,
+                       low_confidence=n60 < KNN["warn_episodes"], first_date=str(f.index[days[0]].date()),
+                       last_date=str(f.index[days[-1]].date()), spread=spread, ranges=ranges, horizons=res_h)
     fwd60, _ = forward_outcomes(close, 60)
     _, mdd120 = forward_outcomes(close, 120)
-    for s0, e0 in eps:
+    for (a, b, nd), rep in zip(sel60["spans"], sel60["reps"]):
         res.episode_table.append({
-            "start": str(f.index[s0].date()), "end": str(f.index[e0].date()), "days": int(e0 - s0 + 1),
-            "ret_60d": None if pd.isna(fwd60.iloc[s0]) else float(fwd60.iloc[s0]),
-            "worst_dd_120d": None if pd.isna(mdd120.iloc[s0]) else float(mdd120.iloc[s0])})
+            "start": str(f.index[a].date()), "end": str(f.index[b].date()), "days": nd,
+            "match": str(f.index[rep].date()),
+            "ret_60d": None if pd.isna(fwd60.iloc[rep]) else float(fwd60.iloc[rep]),
+            "worst_dd_120d": None if pd.isna(mdd120.iloc[rep]) else float(mdd120.iloc[rep])})
     return res
 
 
-def find_analogs(f: pd.DataFrame, key: str) -> AnalogResult | None:
-    """One analog set: tight caps first; widen by step only while fewer than min_episodes separate
-    episodes are found.  None if today lacks a dimension this era needs (e.g. no VIX3M)."""
-    title, features, start = ERAS[key]
-    chosen, level, last_scale = None, "", 1.0
-    for scale in KNN["scale_steps"]:
-        mask = knn_select(f, features, start, scale)
-        if mask is None:
-            return None
-        chosen, last_scale = mask, scale
-        if len(_episodes(np.flatnonzero(mask))) >= KNN["min_episodes"]:
-            break
-    level = "Tight match" if last_scale == KNN["scale_steps"][0] else f"Widened match (x{last_scale:g})"
-    eps = len(_episodes(np.flatnonzero(chosen)))
-    return analog_stats(f, chosen, key, title, level, eps < KNN["low_episodes"], features)
+def find_analogs(f: pd.DataFrame) -> AnalogResult | None:
+    """The analog set for today (the last row of `f`); None if a matching dimension is missing."""
+    return analog_stats(f)
 
 
 # =========================================================================== report =============
@@ -520,8 +501,7 @@ class Report:
     flags: list[Flag]
     flags_on: int
     flags_known: int
-    analogs: AnalogResult              # Full History (1990+)
-    modern: AnalogResult | None        # Modern Era (2006+), None when VIX3M/QQEW are not available
+    analogs: AnalogResult              # one unified set, 1990+
     notes: list[str]
 
 
@@ -532,7 +512,7 @@ def _f(v) -> float | None:
 def analyze(series: Mapping[str, pd.Series], notes: list[str] | None = None) -> Report:
     f = compute_features(build_frame(series))
     f = f[f.index >= pd.Timestamp("1986-01-01")]
-    if len(f) < 300 or pd.isna(f.iloc[-1]["trend"]) or pd.isna(f.iloc[-1]["vix"]):
+    if len(f) < 300 or pd.isna(f.iloc[-1]["dist_sma"]) or pd.isna(f.iloc[-1]["slope"]) or pd.isna(f.iloc[-1]["vix"]):
         raise RuntimeError("not enough data to describe the current state (need NDX history and VIX)")
     cur = f.iloc[-1]
     notes = list(notes or [])
@@ -556,20 +536,33 @@ def analyze(series: Mapping[str, pd.Series], notes: list[str] | None = None) -> 
         high_date=str(window.idxmax().date()), dist_sma=_f(cur["dist_sma"]), dist_ema=_f(cur["dist_ema"]),
         slope=_f(cur["slope"]), fall20=_f(cur["fall20"]), ret=_f(cur["ret"]), z=z, shock_pct=shock_pct, shock_one_in=shock_one_in,
         raw_one_in=raw_one_in, vix=_f(cur["vix"]), term=_f(cur["term"]),
-        inverted=None if pd.isna(cur["inv"]) else bool(cur["inv"]),
+        inverted=None if pd.isna(cur["term"]) else bool(cur["term"] >= RULES["inversion"]),
         br_change=_f(cur["br_change"]), narrow=None if pd.isna(cur["narrow"]) else bool(cur["narrow"]))
-    full = find_analogs(f, "full")
-    if full is None:
+    analogs = find_analogs(f)
+    if analogs is None:
         raise RuntimeError("not enough history to find similar days")
-    modern = find_analogs(f, "modern")
-    if modern is None:
-        notes.append("Modern-era comparison unavailable: VIX3M or QQEW data is missing for this date.")
-    for res in (full, modern):
-        if res is not None and res.low_confidence:
-            notes.append(f"LOW CONFIDENCE ({res.title}): only {res.episodes} separate episodes even after widening.")
+    notes += state_notes(snap)
+    for hs in analogs.horizons:
+        if hs.low_sample:
+            notes.append(f"LOW SAMPLE ({hs.horizon}-day outlook): only {hs.n} separate episodes matched "
+                         f"(fewer than {KNN['warn_episodes']}); treat the numbers as rough.")
     return Report(
         label=label, snapshot=snap, flags=flags, flags_on=sum(1 for x in flags if x.on),
-        flags_known=sum(1 for x in flags if x.on is not None), analogs=full, modern=modern, notes=notes)
+        flags_known=sum(1 for x in flags if x.on is not None), analogs=analogs, notes=notes)
+
+
+def state_notes(s: "Snapshot") -> list[str]:
+    """Context the label cannot carry: a stretched market (calm labels hide it) and a recovery that the
+    52-week drawdown (still measured from an old high) makes look worse than it is."""
+    out = []
+    if s.dist_sma is not None and s.dist_sma >= RULES["stretched"]:
+        out.append(f"Stretched: price is {s.dist_sma * 100:.0f}% above its 200-day average. Calm labels do not capture "
+                   f"how far the market has run.")
+    if (s.dist_sma is not None and s.slope is not None and s.dd <= RULES["bear_dd"]
+            and s.dist_sma >= RULES["recovery_cushion"] and s.slope > 0):
+        out.append(f"Recovery pattern: the {s.dd * 100:.0f}% drawdown is measured from the {s.high_date} high, but price is "
+                   f"{s.dist_sma * 100:.0f}% above a rising 200-day average, so the damage may be mostly repaired.")
+    return out
 
 
 # =========================================================================== rendering ===========
@@ -615,32 +608,33 @@ def render_text(rep: Report, episodes: bool = False) -> str:
         mark = "[ ? ]" if fl.on is None else ("[ X ]" if fl.on else "[   ]")
         L.append(f"  {mark} {fl.text}" + ("   (no data)" if fl.on is None else ""))
     L.append("")
-    L.append("HISTORICAL ANALOGS  (the days since 1990 closest to today)")
-    for a in [x for x in (rep.analogs, rep.modern) if x is not None]:
-        L.append("")
-        L.append(f"  {a.title}   -   {a.level}")
-        L.append(f"  {a.spread}")
-        L.append("  Forward return                 p10      median     p90      higher (90% range)")
-        for h in a.horizons:
-            rng = f"  ({_p(h.win_lo, False, 0)} to {_p(h.win_hi, False, 0)})" if h.win_lo is not None else ""
-            L.append(f"    {h.horizon:>3} trading days      {_p(h.ret_p10):>9} {_p(h.ret_p50):>9} {_p(h.ret_p90):>9}"
-                     f"      {_p(None if h.p_negative is None else 1 - h.p_negative, False, 0)}{rng}   (n={h.n})")
-        L.append("  Maximum further drawdown from today's close   p10(worst)  median     p90")
-        for h in a.horizons:
-            L.append(f"    {h.horizon:>3} trading days                 {_p(h.dd_p10):>9} {_p(h.dd_p50):>9} {_p(h.dd_p90):>9}")
-        L.append("  Chance of ...                 further -10%   further -20%   (all days: -20%)   ended lower")
-        for h in a.horizons:
-            L.append(f"    within {h.horizon:>3} days          {_p(h.p_down10, False, 0):>10} {_p(h.p_crash20, False, 0):>14}"
-                     f" {_p(h.base_p_crash20, False, 1):>16} {_p(h.p_negative, False, 0):>12}")
-        if episodes and a.episode_table:
-            L.append("  EPISODES  (outcome counted from each episode's first day)")
-            L.append("    start       end         days   60d later   worst drop within 120d")
-            for e in a.episode_table:
-                L.append(f"    {e['start']}  {e['end']}  {e['days']:>5}   {_p(e['ret_60d']):>9}   {_p(e['worst_dd_120d']):>10}")
+    L.append("HISTORICAL ANALOGS  (the days since 1990 closest to today; each episode counts once)")
+    a = rep.analogs
+    L.append("")
+    L.append(f"  {a.title}   -   {a.episodes} episodes at 60 days" + ("   (LOW SAMPLE)" if a.low_confidence else ""))
+    L.append(f"  {a.spread}")
+    L.append("  Probabilities are shrunk toward the all-days base rate (in brackets).")
+    L.append("  Forward return                 p10      median     p90      higher (all days)")
+    for h in a.horizons:
+        L.append(f"    {h.horizon:>3} trading days      {_p(h.ret_p10):>9} {_p(h.ret_p50):>9} {_p(h.ret_p90):>9}"
+                 f"      {_p(h.win, False, 0)} ({_p(h.base_win, False, 0)})   (episodes={h.n})")
+    L.append("  Maximum further drawdown from today's close   p10(worst)  median     p90   (all days p10)")
+    for h in a.horizons:
+        L.append(f"    {h.horizon:>3} trading days                 {_p(h.dd_p10):>9} {_p(h.dd_p50):>9} {_p(h.dd_p90):>9}"
+                 f"   ({_p(h.base_dd_p10)})")
+    L.append("  Chance of ...                 further -10%   further -20%")
+    for h in a.horizons:
+        L.append(f"    within {h.horizon:>3} days          {_p(h.down10, False, 0):>6} ({_p(h.base_down10, False, 0)})"
+                 f"   {_p(h.crash20, False, 0):>6} ({_p(h.base_crash20, False, 0)})")
+    if episodes and a.episode_table:
+        L.append("  EPISODES  (outcome counted from each episode's closest matching day)")
+        L.append("    start       end         days   match day    60d later   worst drop within 120d")
+        for e in a.episode_table:
+            L.append(f"    {e['start']}  {e['end']}  {e['days']:>5}   {e['match']}  {_p(e['ret_60d']):>9}   {_p(e['worst_dd_120d']):>10}")
     L.append("")
     for n in rep.notes:
         L.append(f"  * {n}")
-    L.append("  * Statistics describe the past. Overlapping days are not independent: trust the episode count.")
+    L.append("  * Statistics describe the past, not a forecast. Trust the episode count, not the day count.")
     return "\n".join(L)
 
 
@@ -648,7 +642,7 @@ SUMMARIES = {
     LABEL_CALM: "The market is near its highs and nothing is flashing. Business as usual.",
     LABEL_PULLBACK: "A normal dip inside a healthy uptrend. These happen several times a year and usually pass.",
     LABEL_ELEVATED: "Stress is higher than usual: bigger swings and a deeper drop. The long-term trend may still be intact.",
-    LABEL_BEAR: "Several statistical red flags of a deeper bear market are flashing at the same time.",
+    LABEL_BEAR: "Several stress signals are present today (a broken trend, a deep drawdown, high fear). This describes current conditions, not a forecast: markets can stay here or recover.",
 }
 TONES = {LABEL_CALM: "good", LABEL_PULLBACK: "good", LABEL_ELEVATED: "warn", LABEL_BEAR: "bad"}
 TELEGRAM_ICON = {"good": "🟢", "warn": "🟠", "bad": "🔴"}
@@ -657,19 +651,18 @@ HORIZON_NAMES = {20: "1 Month (20d)", 60: "3 Months (60d)", 120: "6 Months (120d
 
 
 def vix_band(vix: float) -> tuple[str, str]:
-    if vix < 18:
+    """The one VIX ladder (RULES): <18 Calm | 18-25 Caution | 25-30 High Stress | 30+ Panic."""
+    if vix < RULES["vix_calm"]:
         return "Calm", "good"
-    if vix < 22:
-        return "Mild Caution", "good"
-    if vix < 25:
+    if vix < RULES["vix_correction"]:
         return "Caution", "warn"
-    if vix < 30:
+    if vix < RULES["vix_high"]:
         return "High Stress", "warn"
     return "Panic", "bad"
 
 
 # --- the seven health checks, graded: ok / caution / watch / red (or na when there is no data) ------------
-WATCH = {"trend": 0.03, "slope": 0.005, "dd": -0.15, "fall": -0.075, "vix_caution": 20.0, "vix_watch": 25.0,
+WATCH = {"trend": 0.03, "slope": 0.005, "dd": -0.15, "fall": -0.075, "vix_caution": RULES["vix_calm"], "vix_watch": RULES["vix_correction"],
          "term": 0.95, "breadth": -0.02}
 BADGES = {"ok": "OK", "caution": "CAUTION", "watch": "WATCH", "red": "RED FLAG", "na": "NO DATA"}
 LEVEL_RANK = {"red": 0, "watch": 1, "caution": 2, "na": 3, "ok": 4}
@@ -798,56 +791,34 @@ def _kpis(rep: Report, checks: list[dict]) -> list[dict]:
 
 
 def _set_model(res: AnalogResult) -> dict:
+    """Rows carry the shrunk probabilities plus the all-days base rate beside each number, so a reader can
+    always tell whether today's setup is better or worse than an average day."""
     rows = []
     for h in res.horizons:
         if not h.n:
             continue
         rows.append({"horizon": h.horizon, "timeframe": HORIZON_NAMES.get(h.horizon, f"{h.horizon} days"),
-                     "win_rate": None if h.p_negative is None else 1 - h.p_negative,
-                     "win_lo": h.win_lo, "win_hi": h.win_hi,
-                     "typical": h.ret_p50, "worst_dip": h.dd_p10, "crash_risk": h.p_crash20,
-                     "crash_risk_all_days": h.base_p_crash20, "n": h.n})
-    return {"key": res.key, "title": res.title, "level": res.level, "days": res.days, "episodes": res.episodes,
+                     "win_rate": h.win, "typical": h.ret_p50, "worst_dip": h.dd_p10, "crash_risk": h.crash20,
+                     "base_win_rate": h.base_win, "base_typical": h.base_ret_p50, "base_worst_dip": h.base_dd_p10,
+                     "base_crash_risk": h.base_crash20, "n": h.n, "low_sample": h.low_sample})
+    return {"key": res.key, "title": res.title, "days": res.days, "episodes": res.episodes,
             "low_confidence": res.low_confidence, "spread": res.spread, "rows": rows,
-            "first_date": res.first_date, "last_date": res.last_date,
+            "shrink_m": KNN["shrink_m"], "first_date": res.first_date, "last_date": res.last_date,
             "raw": {"horizons": [asdict(h) for h in res.horizons], "episodes": res.episode_table}}
-
-
-def _compare(full: dict, modern: dict | None) -> dict | None:
-    """One plain sentence on whether the old years change the odds (3-month view)."""
-    if modern is None:
-        return None
-    f60 = next((r for r in full["rows"] if r["horizon"] == 60), None)
-    m60 = next((r for r in modern["rows"] if r["horizon"] == 60), None)
-    if not f60 or not m60:
-        return None
-    differs = (abs(f60["win_rate"] - m60["win_rate"]) >= 0.05 or abs(f60["typical"] - m60["typical"]) >= 0.02
-               or abs(f60["crash_risk"] - m60["crash_risk"]) >= 0.03)
-    text = (f"3 months later: Full History {_p(f60['win_rate'], False, 0)} higher, typical {_p(f60['typical'])}, "
-            f"severe crash risk {_p(f60['crash_risk'], False, 0)} | Modern Era {_p(m60['win_rate'], False, 0)} higher, "
-            f"typical {_p(m60['typical'])}, severe crash risk {_p(m60['crash_risk'], False, 0)}.")
-    old_falls = sorted({e["start"][:4] for e in full["raw"]["episodes"]
-                        if e["worst_dd_120d"] is not None and e["worst_dd_120d"] <= -0.20 and e["start"] < "2006"})
-    if differs and f60["crash_risk"] > m60["crash_risk"]:
-        text += (" The two eras disagree: severe falls show up more in the older years"
-                 + (f" (for example {', '.join(old_falls)})." if old_falls else "."))
-    else:
-        text += " The two eras disagree." if differs else " The two eras agree."
-    return {"text": text, "differs": differs, "full": f60, "modern": m60}
 
 
 def view_model(rep: Report) -> dict:
     """Everything a screen needs, in plain language.  The web page and the Telegram text both read this."""
     s = rep.snapshot
     checks = _checks(rep)
-    sets = [_set_model(rep.analogs)] + ([_set_model(rep.modern)] if rep.modern is not None else [])
+    sets = [_set_model(rep.analogs)]
     return {
         "title": "Nasdaq-100 (NDX / QQQ) Market Regime", "as_of": s.date, "label": rep.label,
         "tone": TONES[rep.label], "summary": SUMMARIES[rep.label], "flags_on": rep.flags_on,
         "flags_known": rep.flags_known,
         "watch_count": sum(1 for c in checks if c["level"] in ("watch", "caution")),
         "kpis": _kpis(rep, checks), "checks": checks,
-        "analogs": {"sets": sets, "compare": _compare(sets[0], sets[1] if len(sets) > 1 else None)},
+        "analogs": {"sets": sets},
         "notes": rep.notes,
     }
 
@@ -929,18 +900,13 @@ def render_telegram(rep: Report, delayed: bool = False, html_markup: bool = True
     full = vm["analogs"]["sets"][0]
     row = next((r for r in full["rows"] if r["horizon"] == 60), None)
     if row:
-        n_eps = full["episodes"]
+        n_eps = row["n"]
         lines.append(f"🕰 {b(f'3-Month Historical Outlook ({n_eps} episodes):')}"
-                     + (" ⚠️ low confidence" if full["low_confidence"] else ""))
-        lines.append(f"📈 Higher {c(_p(row['win_rate'], False, 0), row['win_rate'], good_if=0.70)} of the time "
-                     f"(Typical: {c(_p(row['typical']), row['typical'])})")
-        lines.append(f"🛡️ Worst-case dip: {c(_p(row['worst_dip']), row['worst_dip'])} | Severe crash risk (-20%): "
-                     f"{b(_p(row['crash_risk'], False, 0))}")
-        cmp_ = vm["analogs"]["compare"]
-        if cmp_ and cmp_["differs"]:
-            m60 = cmp_["modern"]
-            lines.append(f"🧭 Modern era only (2006+): higher {c(_p(m60['win_rate'], False, 0), m60['win_rate'], good_if=0.70)}, "
-                         f"typical {c(_p(m60['typical']), m60['typical'])}, crash risk {b(_p(m60['crash_risk'], False, 0))}")
+                     + (" ⚠️ low sample" if row["low_sample"] else ""))
+        lines.append(f"📈 Typical: {c(_p(row['typical']), row['typical'])} (all days {_p(row['base_typical'])}) | "
+                     f"Higher {c(_p(row['win_rate'], False, 0), row['win_rate'], good_if=0.70)} (all days {_p(row['base_win_rate'], False, 0)})")
+        lines.append(f"🛡️ Worst-case dip: {c(_p(row['worst_dip']), row['worst_dip'])} (all days {_p(row['base_worst_dip'])}) | "
+                     f"Severe crash risk (-20%): {b(_p(row['crash_risk'], False, 0))} (all days {_p(row['base_crash_risk'], False, 0)})")
     else:
         lines.append("🕰 Not enough similar history for an outlook")
     text = "\n".join(lines)
