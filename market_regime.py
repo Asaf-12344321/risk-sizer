@@ -634,6 +634,9 @@ def render_text(rep: Report, episodes: bool = False) -> str:
     L.append("")
     for n in rep.notes:
         L.append(f"  * {n}")
+    take = view_model(rep)["analogs"]["takeaway"]
+    if take:
+        L.append("  " + take["text"])
     L.append("  * Statistics describe the past, not a forecast. Trust the episode count, not the day count.")
     return "\n".join(L)
 
@@ -807,6 +810,38 @@ def _set_model(res: AnalogResult) -> dict:
             "raw": {"horizons": [asdict(h) for h in res.horizons], "episodes": res.episode_table}}
 
 
+TAKEAWAYS = {
+    "better": "💡 Bottom line: Historically, this setup beats a random market day on every metric - higher typical return with lower crash risk.",
+    "volatile": "💡 Bottom line: Higher historical upside than an average day, but comes with elevated short-term drawdown risk - expect volatility.",
+    "weaker": "💡 Bottom line: Historically weaker odds than an average market day with elevated crash risk - patience and defense are favored.",
+    "inline": "💡 Bottom line: Historical odds are roughly in line with an average market day - no unusual edge or tail risk.",
+}
+TAKE_RETURN, TAKE_CRASH, TAKE_DIP = 0.01, 0.015, 0.02     # gaps smaller than this count as "roughly in line"
+
+
+def takeaway(row: dict | None) -> dict | None:
+    """One plain sentence from the 3-month row: today's matched numbers against the all-days baseline.
+    Fewer than KNN['warn_episodes'] episodes never claims an edge."""
+    if not row:
+        return None
+    if row["low_sample"]:
+        return {"key": "low_sample", "text": f"💡 Bottom line: Only {row['n']} separate episodes matched, too few to say whether "
+                                             f"the odds differ from an average market day."}
+    ret_gap = row["typical"] - row["base_typical"]
+    risk_higher = (row["crash_risk"] - row["base_crash_risk"] > TAKE_CRASH
+                   or row["worst_dip"] < row["base_worst_dip"] - TAKE_DIP)
+    risk_no_worse = row["crash_risk"] <= row["base_crash_risk"] and row["worst_dip"] >= row["base_worst_dip"]
+    if ret_gap > TAKE_RETURN and risk_no_worse:
+        key = "better"
+    elif ret_gap > TAKE_RETURN and risk_higher:
+        key = "volatile"
+    elif ret_gap < -TAKE_RETURN and risk_higher:
+        key = "weaker"
+    else:
+        key = "inline"
+    return {"key": key, "text": TAKEAWAYS[key]}
+
+
 def view_model(rep: Report) -> dict:
     """Everything a screen needs, in plain language.  The web page and the Telegram text both read this."""
     s = rep.snapshot
@@ -818,7 +853,7 @@ def view_model(rep: Report) -> dict:
         "flags_known": rep.flags_known,
         "watch_count": sum(1 for c in checks if c["level"] in ("watch", "caution")),
         "kpis": _kpis(rep, checks), "checks": checks,
-        "analogs": {"sets": sets},
+        "analogs": {"sets": sets, "takeaway": takeaway(next((r for r in sets[0]["rows"] if r["horizon"] == 60), None))},
         "notes": rep.notes,
     }
 
@@ -907,6 +942,9 @@ def render_telegram(rep: Report, delayed: bool = False, html_markup: bool = True
                      f"Higher {c(_p(row['win_rate'], False, 0), row['win_rate'], good_if=0.70)} (all days {_p(row['base_win_rate'], False, 0)})")
         lines.append(f"🛡️ Worst-case dip: {c(_p(row['worst_dip']), row['worst_dip'])} (all days {_p(row['base_worst_dip'])}) | "
                      f"Severe crash risk (-20%): {b(_p(row['crash_risk'], False, 0))} (all days {_p(row['base_crash_risk'], False, 0)})")
+        take = vm["analogs"]["takeaway"]
+        if take:
+            lines += ["", take["text"]]
     else:
         lines.append("🕰 Not enough similar history for an outlook")
     text = "\n".join(lines)

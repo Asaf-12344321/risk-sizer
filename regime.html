@@ -79,6 +79,7 @@
   .wrap.fit { display: inline-block; max-width: 100%; }
   .wrap.fit table { width: auto; } .wrap.fit th, .wrap.fit td { padding: 9px 18px; }
   td.win { font-weight: 700; } td.win.hi { background: var(--good-bg); color: var(--good); border-radius: 6px; }
+  .takeaway { margin: 10px 0 0; padding: 10px 14px; border-radius: var(--radius); background: var(--card); border: 1px solid var(--line); font-size: 14px; font-weight: 600; }
   td small.base { display: block; font-weight: 400; color: var(--dim); font-size: 11px; }
   tr.era th { text-align: left; background: var(--bg); color: var(--fg); font-size: 13px; padding-top: 12px; }
   tr.era small { color: var(--dim); font-weight: 400; }
@@ -306,6 +307,7 @@
     app.appendChild(el("p", "sub", "The days since 1990 closest to today, matched on price (drawdown, distance from the 200d line) and fear (VIX). Each separate episode counts once, and probabilities are shrunk toward the historical base rate; the grey figure under each number is what an average day since 1990 did."));
     app.appendChild(spreadLines(vm));
     app.appendChild(analogTable(vm));
+    if (vm.analogs.takeaway) app.appendChild(el("p", "takeaway " + vm.analogs.takeaway.key, vm.analogs.takeaway.text));
     app.appendChild(readTable(vm));
     app.appendChild(rawSection(vm));
     var notes = vm.notes.slice();

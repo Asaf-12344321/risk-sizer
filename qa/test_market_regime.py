@@ -649,6 +649,47 @@ class ViewModelTests(unittest.TestCase):
         self.assertIn("Matched 32 episodes", sets[0]["spread"])
         json.dumps(vm)                                                # the web API serialises it as is
 
+    BASE = dict(horizon=60, n=32, low_sample=False, typical=0.034, base_typical=0.034, crash_risk=0.06, base_crash_risk=0.06,
+                worst_dip=-0.158, base_worst_dip=-0.158)
+
+    def take(self, **kw):
+        return m.takeaway({**self.BASE, **kw})
+
+    def test_the_bottom_line_picks_one_of_four_sentences_from_the_3_month_row(self):
+        self.assertEqual(self.take(typical=0.074, crash_risk=0.01, worst_dip=-0.088)["key"], "better")
+        self.assertEqual(self.take(typical=0.074, crash_risk=0.06, worst_dip=-0.158)["key"], "better")          # equal risk is not worse
+        self.assertEqual(self.take(typical=0.074, crash_risk=0.12)["key"], "volatile")                          # more upside, more crash risk
+        self.assertEqual(self.take(typical=0.074, worst_dip=-0.25)["key"], "volatile")                          # ... or a deeper dip
+        self.assertEqual(self.take(typical=-0.01, crash_risk=0.15)["key"], "weaker")
+        self.assertEqual(self.take(typical=-0.02, worst_dip=-0.30)["key"], "weaker")
+        self.assertEqual(self.take()["key"], "inline")
+        self.assertEqual(self.take(typical=0.040, crash_risk=0.065)["key"], "inline")                           # inside the tolerance
+        self.assertEqual(self.take(typical=-0.01, crash_risk=0.02, worst_dip=-0.10)["key"], "inline")           # weaker return, lower risk: no claim
+        self.assertEqual(self.take(typical=0.074, crash_risk=0.075, worst_dip=-0.158)["key"], "inline")         # slightly more crash risk, inside tolerance
+        for key, text in m.TAKEAWAYS.items():
+            self.assertTrue(text.startswith("💡 Bottom line: "))
+            self.assertNotIn("\u2014", text)
+
+    def test_a_low_sample_never_claims_an_edge(self):
+        t = self.take(typical=0.20, crash_risk=0.0, worst_dip=-0.01, n=5, low_sample=True)
+        self.assertEqual(t["key"], "low_sample")
+        self.assertIn("Only 5 separate episodes matched, too few", t["text"])
+        self.assertNotIn("beats", t["text"])
+        self.assertIsNone(m.takeaway(None))
+
+    def test_the_bottom_line_reaches_the_view_model_telegram_and_cli(self):
+        rep = self.rep(self.snap())
+        vm = m.view_model(rep)
+        self.assertEqual(vm["analogs"]["takeaway"]["key"], "better")
+        self.assertTrue(m.render_telegram(rep).endswith(m.TAKEAWAYS["better"]))
+        self.assertIn(m.TAKEAWAYS["better"], m.render_text(rep))
+        rep.analogs.horizons[1].ret_p50 = -0.02                                   # weaker return ...
+        rep.analogs.horizons[1].crash20 = 0.15                                    # ... and higher crash risk
+        self.assertTrue(m.render_telegram(rep).endswith(m.TAKEAWAYS["weaker"]))
+        rep.analogs.horizons[1].n = 4
+        rep.analogs.horizons[1].low_sample = True
+        self.assertIn("Only 4 separate episodes matched", m.render_telegram(rep).splitlines()[-1])
+
     def test_bear_summary_describes_today_and_does_not_forecast(self):
         text = m.SUMMARIES[m.LABEL_BEAR]
         self.assertIn("current conditions, not a forecast", text)
@@ -677,7 +718,9 @@ class ViewModelTests(unittest.TestCase):
         "",
         "🕰 <b>3-Month Historical Outlook (32 episodes):</b>",
         "📈 Typical: <code>+7.4%</code> (all days +3.4%) | Higher <code>80%</code> (all days 69%)",
-        "🛡️ Worst-case dip: 🔻 <b>-8.8%</b> (all days -15.8%) | Severe crash risk (-20%): <b>1%</b> (all days 6%)"])
+        "🛡️ Worst-case dip: 🔻 <b>-8.8%</b> (all days -15.8%) | Severe crash risk (-20%): <b>1%</b> (all days 6%)",
+        "",
+        "💡 Bottom line: Historically, this setup beats a random market day on every metric - higher typical return with lower crash risk."])
 
     def test_telegram_layout_is_exactly_the_agreed_one(self):
         self.assertEqual(m.render_telegram(self.rep(self.snap())), self.EXPECTED_HTML)

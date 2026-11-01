@@ -29,7 +29,8 @@ const vm = (over = {}) => Object.assign({
         { horizon: 60, timeframe: '3 Months (60d)', win_rate: 0.8, typical: -0.012, worst_dip: -0.088, crash_risk: 0.09, base_win_rate: 0.69, base_typical: 0.034, base_worst_dip: -0.158, base_crash_risk: 0.06, n: 32, low_sample: false },
         { horizon: 120, timeframe: '6 Months (120d)', win_rate: 0.66, typical: 0.1, worst_dip: -0.101, crash_risk: 0.03, base_win_rate: 0.75, base_typical: 0.075, base_worst_dip: -0.22, base_crash_risk: 0.11, n: 6, low_sample: true }],
       raw: { horizons: [{ horizon: 20, n: 32, ret_p10: -0.032, ret_p50: 0.034, ret_p90: 0.088, dd_p10: -0.076, dd_p50: -0.021, dd_p90: 0, down10: 0.03, crash20: 0, win: 0.74, base_crash20: 0.014 }],
-        episodes: [{ start: '2008-06-05', end: '2008-06-05', days: 1, match: '2008-06-05', ret_60d: -0.089, worst_dd_120d: -0.496 }] } }] },
+        episodes: [{ start: '2008-06-05', end: '2008-06-05', days: 1, match: '2008-06-05', ret_60d: -0.089, worst_dd_120d: -0.496 }] } }],
+    takeaway: { key: 'volatile', text: '\uD83D\uDCA1 Bottom line: Higher historical upside than an average day, but comes with elevated short-term drawdown risk - expect volatility.' } },
   notes: ['65% of the matched days are from before 2006.'] }, over);
 
 function boot(responses, opts = {}) {
@@ -125,6 +126,9 @@ function boot(responses, opts = {}) {
      !/20d speed|VIX\/VIX3M|breadth/.test(spreads[0]));
   ck('the spread line comes before the table', d.querySelector('.spread').compareDocumentPosition(table) & 4);
   ck('no era comparison line', d.querySelector('.compare') === null);
+  const tk = d.querySelector('p.takeaway');
+  ck('the bottom-line sentence sits right under the analogs table', !!tk && /^\uD83D\uDCA1 Bottom line: Higher historical upside than an average day/.test(tk.textContent) &&
+     /expect volatility/.test(tk.textContent) && (table.compareDocumentPosition(tk) & 4) && tk.className === 'takeaway volatile');
   ck('the explainer names the episode count, the shrinkage and how the matching works', /Out of 32 separate similar episodes since 1990 \(each counts once, through its closest day\), the Median \(Typical\) Return sorts all outcomes from worst to best/.test(text) &&
      /half of historical times did better than this number, and half did worse/.test(text) && /shrunk toward the historical base rate/.test(text) &&
      /episodes \/ \(episodes \+ 12\)/.test(text) && /two equal-weight groups/.test(text) && !/same side of the 200d line/.test(text));
