@@ -126,74 +126,215 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(self.label(dist_sma=-0.02, slope=0.01, dd=-0.13, vix=22.0), m.LABEL_ELEVATED)
 
 
+def knn_frame(n=3200, seed=5, today=None):
+    """A feature frame for matching tests: random history, with `today` as the last row.
+    Pre-2006 rows have no VIX3M / breadth, like the real data."""
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range("1995-01-02", periods=n)
+    f = pd.DataFrame(index=idx)
+    f["close"] = 100 * np.cumprod(1 + rng.normal(0.0003, 0.011, n))
+    f["dist_sma"] = rng.uniform(-0.2, 0.2, n)
+    f["slope"] = rng.uniform(-0.02, 0.03, n)
+    f["dd"] = -rng.uniform(0.0, 0.35, n)
+    f["fall20"] = -rng.uniform(0.0, 0.2, n)
+    f["vix"] = rng.uniform(10, 50, n)
+    f["proxy"] = rng.uniform(0.7, 1.8, n)
+    f["term"] = rng.uniform(0.7, 1.3, n)
+    f["br_change"] = rng.uniform(-0.08, 0.08, n)
+    early = idx < "2006-09-01"
+    f.loc[early, ["term", "br_change"]] = np.nan
+    cur = dict(dist_sma=0.016, slope=0.0163, dd=-0.091, fall20=-0.091, vix=19.4, proxy=1.21, term=0.93, br_change=-0.017)
+    cur.update(today or {})
+    for k, v in cur.items():
+        f.iloc[-1, f.columns.get_loc(k)] = v
+    return f
+
+
+def plant_twins(f, dates, **offsets):
+    """Overwrite given rows so they sit very close to today's values."""
+    base = f.iloc[-1]
+    for d in dates:
+        i = f.index.get_loc(pd.Timestamp(d))
+        for col in ("dist_sma", "slope", "dd", "fall20", "vix", "proxy", "term", "br_change"):
+            if not np.isnan(base[col]):
+                f.iloc[i, f.columns.get_loc(col)] = base[col] + offsets.get(col, 0.0)
+    return f
+
+
 class AnalogTests(unittest.TestCase):
+    def test_the_closest_days_are_picked_and_no_more_than_k(self):
+        f = knn_frame()
+        mask = m.knn_select(f, m.FULL_FEATURES, m.SAMPLE_START, 1.0)
+        self.assertLessEqual(mask.sum(), m.KNN["k"])
+        self.assertFalse(mask[-1])                                   # today never matches itself
+        far = f[~mask & (f.index >= m.SAMPLE_START)]
+        near = f[mask]
+        self.assertLess(abs(near["dd"] - f["dd"].iloc[-1]).mean(), abs(far["dd"] - f["dd"].iloc[-1]).mean())
+
+    def test_above_the_200d_line_never_matches_days_below_it(self):
+        f = knn_frame()
+        for side_value in (0.016, -0.03):
+            f = knn_frame(today=dict(dist_sma=side_value))
+            mask = m.knn_select(f, m.FULL_FEATURES, m.SAMPLE_START, 1.7)
+            self.assertTrue(mask.any())
+            self.assertEqual(set((f["dist_sma"][mask] >= 0)), {side_value >= 0})
+
+    def test_a_close_day_on_the_wrong_side_of_the_200d_line_is_refused(self):
+        f = knn_frame()
+        f = plant_twins(f, ["2001-03-05"], dist_sma=-0.02)           # identical except 0.4% below the line
+        mask = m.knn_select(f, m.FULL_FEATURES, m.SAMPLE_START, 1.0)
+        self.assertFalse(mask[f.index.get_loc(pd.Timestamp("2001-03-05"))])
+
+    def test_caps_keep_the_matched_spread_tight(self):
+        f = knn_frame(n=9000, seed=2)                                # lots of history: caps, not scarcity, decide
+        mask = m.knn_select(f, m.FULL_FEATURES, m.SAMPLE_START, 1.0)
+        sel = f[mask]
+        cur = f.iloc[-1]
+        self.assertLessEqual((sel["dd"] - cur["dd"]).abs().max(), 0.04 + 1e-9)
+        self.assertLessEqual((sel["fall20"] - cur["fall20"]).abs().max(), 0.035 + 1e-9)
+        self.assertLessEqual((sel["vix"] - cur["vix"]).abs().max(), 5.0 + 1e-9)
+        self.assertLessEqual((sel["dist_sma"] - cur["dist_sma"]).abs().max(), 0.04 + 1e-9)
+
+    def test_cushion_drop_speed_and_drawdown_count_more_than_vix(self):
+        f = knn_frame()
+        f = plant_twins(f, ["2000-02-07", "2000-02-08"])
+        i_cushion, i_vix = f.index.get_loc(pd.Timestamp("2000-02-07")), f.index.get_loc(pd.Timestamp("2000-02-08"))
+        f.iloc[i_cushion, f.columns.get_loc("dist_sma")] += 0.03     # off by 3 points of cushion
+        f.iloc[i_vix, f.columns.get_loc("vix")] += 3.0               # off by 3 VIX points (a similar standardised gap)
+        cols = list(m.FULL_FEATURES)
+        spread = ((f[cols].quantile(0.75) - f[cols].quantile(0.25)) / 1.349)
+        gap_cushion = 3.0 * 0.01 / spread["dist_sma"] * 1.5
+        gap_vix = 3.0 / spread["vix"] * 1.0
+        self.assertGreater(m.FULL_FEATURES["dist_sma"], m.FULL_FEATURES["vix"])
+        self.assertGreater(m.FULL_FEATURES["fall20"], m.FULL_FEATURES["vix"])
+        self.assertGreater(m.FULL_FEATURES["dd"], m.FULL_FEATURES["vix"])
+        self.assertGreater(m.FULL_FEATURES["dd"], m.FULL_FEATURES["proxy"])
+        self.assertTrue(gap_cushion > 0 and gap_vix > 0)
+
     @staticmethod
-    def frame(inv_before=np.nan, inv_after=0.0, cur_inv=0.0, n_start="1995-01-02", n_end="2010-12-31"):
-        idx = pd.bdate_range(n_start, n_end)
-        f = pd.DataFrame(index=idx)
-        f["close"] = np.linspace(100, 300, len(idx))
-        f["trend"], f["vix_bin"] = 0.0, 1.0
-        block = (np.arange(len(idx)) // 60) % 3 == 0              # matching state comes in separate 60-day episodes
-        f["dd_bin"] = np.where(block, 4.0, 1.0)
-        f.iloc[-1, f.columns.get_loc("dd_bin")] = 4.0
-        f["inv"] = np.where(idx < "2006-07-17", inv_before, inv_after)
-        f["narrow"] = np.where(idx < "2006-07-17", np.nan, 0.0)
-        f.iloc[-1, f.columns.get_loc("inv")] = cur_inv
+    def planted(f, n_episodes, start=200, step=130, **offsets):
+        """Make n separate 3-day episodes that sit close to today (optionally offset)."""
+        rows = []
+        for k in range(n_episodes):
+            rows += [start + k * step, start + k * step + 1, start + k * step + 2]
+        return plant_twins(f, [f.index[i] for i in rows], **offsets)
+
+    def far_history(self, n=3200, seed=4):
+        f = knn_frame(n=n, seed=seed)
+        f["dd"] = -0.33                                              # nothing in the random history resembles today ...
+        f.iloc[-1, f.columns.get_loc("dd")] = -0.091
         return f
 
-    def test_days_before_2006_without_term_structure_still_match(self):
-        f = self.frame()
-        mask, level, low = m.select_analogs(f)
-        self.assertTrue(level.startswith("exact"))
-        self.assertFalse(low)
-        early = mask & (f.index < "2006-01-01")
-        self.assertGreater(early.sum(), 500)                       # the 1995-2005 history is not thrown away
-        self.assertFalse(mask[-1])                                  # today never matches itself
+    def test_tight_when_there_are_enough_episodes(self):
+        f = self.planted(self.far_history(), 20)
+        res = m.find_analogs(f, "full")
+        self.assertEqual(res.level, "Tight match")
+        self.assertGreaterEqual(res.episodes, m.KNN["min_episodes"])
 
-    def test_term_structure_refines_only_days_that_have_it(self):
-        f = self.frame(cur_inv=1.0)                                 # today inverted; every post-2006 day is not
-        mask, level, _ = m.select_analogs(f)
-        self.assertTrue(level.startswith("exact"))
-        self.assertFalse(mask[f.index >= "2006-07-17"].any())
-        self.assertTrue(mask[f.index < "2006-07-17"].any())
+    def test_widened_when_there_are_too_few_and_the_factor_is_reported(self):
+        f = self.planted(self.far_history(), 20, dd=0.05)             # ... except episodes 5 points deeper (outside x1.0)
+        res = m.find_analogs(f, "full")
+        self.assertEqual(res.level, "Widened match (x1.3)")
+        f2 = self.planted(self.far_history(seed=8), 20, dd=0.065)     # 6.5 points off: needs x1.7
+        self.assertEqual(m.find_analogs(f2, "full").level, "Widened match (x1.7)")
 
-    def test_too_few_exact_days_relaxes_step_by_step_and_says_so(self):
-        f = self.frame()
-        f["vix_bin"] = 3.0
-        f.iloc[-300:, f.columns.get_loc("vix_bin")] = 1.0           # only the last 300 days share today's VIX bucket
-        mask, level, low = m.select_analogs(f, min_days=500)
-        self.assertTrue(level.startswith("relaxed") or level.startswith("broad") or level.startswith("core"))
-        self.assertGreaterEqual(mask.sum(), 0)
-        mask2, level2, low2 = m.select_analogs(f, min_days=10 ** 6)
-        self.assertTrue(low2)                                       # nothing is big enough: flagged, not hidden
+    def test_too_few_episodes_even_after_widening_is_flagged_low_confidence(self):
+        f = self.planted(self.far_history(), 5)
+        res = m.find_analogs(f, "full")
+        self.assertTrue(res.low_confidence)
+        self.assertLess(res.episodes, m.KNN["low_episodes"])
+
+    def test_modern_era_uses_only_days_with_the_full_data_set(self):
+        f = self.planted(self.far_history(), 24)                      # twins before and after 2006
+        mask = m.knn_select(f, m.MODERN_FEATURES, m.MODERN_START, 1.0)
+        self.assertTrue(mask.any())
+        self.assertTrue((f.index[mask] >= m.MODERN_START).all())
+        full = m.knn_select(f, m.FULL_FEATURES, m.SAMPLE_START, 1.0)
+        self.assertTrue((f.index[full] < m.MODERN_START).any())       # the 1990s stay in the full-history set
+
+    def test_without_todays_term_structure_there_is_no_modern_set(self):
+        f = knn_frame(today=dict(term=np.nan, br_change=np.nan))
+        self.assertIsNone(m.find_analogs(f, "modern"))
+        self.assertIsNotNone(m.find_analogs(f, "full"))
+
+    def test_spread_text_shows_the_real_range_of_the_matched_days(self):
+        f = self.planted(self.far_history(), 24)
+        full, modern = m.find_analogs(f, "full"), m.find_analogs(f, "modern")
+        self.assertRegex(full.spread, r"^Matched \d+ episodes \(\d+ days\): drawdown [-+][\d.]+% to [-+][\d.]+%, "
+                                      r"200d cushion [-+][\d.]+% to [-+][\d.]+%, 20d speed [-+][\d.]+% to [-+][\d.]+%, "
+                                      r"VIX [\d.]+ to [\d.]+, VIX vs 60d average [\d.]+ to [\d.]+$")
+        self.assertIn("VIX/VIX3M", modern.spread)
+        self.assertIn("breadth", modern.spread)
+        self.assertNotIn("VIX/VIX3M", full.spread)                    # the full-history set never uses the real curve
+        sel = f[m.knn_select(f, m.FULL_FEATURES, m.SAMPLE_START, 1.0)]
+        self.assertIn(f"drawdown {sel['dd'].min() * 100:+.1f}% to {sel['dd'].max() * 100:+.1f}%", full.spread)
+        self.assertIn(f"Matched {full.episodes} episodes ({full.days} days)", full.spread)
 
     def test_episode_grouping(self):
         pos = np.array([1, 2, 3, 40, 41, 100])
         self.assertEqual(m._episodes(pos, gap=20), [(1, 3), (40, 41), (100, 100)])
         self.assertEqual(m._episodes(np.array([]), gap=20), [])
 
+    def test_win_rate_range_resamples_episodes_and_is_reproducible(self):
+        idx = pd.bdate_range("2015-01-02", periods=1500)
+        close = pd.Series(100.0 + np.arange(1500) * 0.01, index=idx)
+        f = pd.DataFrame({"close": close}, index=idx)
+        mask = np.zeros(1500, bool)
+        for start in range(50, 900, 60):                             # 14 separate episodes of 3 days
+            mask[start:start + 3] = True
+        lo, hi = m.win_range(f, mask, 20)
+        self.assertEqual((lo, hi), (1.0, 1.0))                       # a steadily rising market: every outcome is a win
+        close2 = close.copy()
+        close2.iloc[115:140] -= 5                                    # one episode (day 110) falls into a dip
+        f2 = pd.DataFrame({"close": close2}, index=idx)
+        lo2, hi2 = m.win_range(f2, mask, 20)
+        self.assertEqual((lo2, hi2), m.win_range(f2, mask, 20))      # same seed, same range
+        self.assertLess(lo2, hi2)
+        self.assertLess(lo2, 13 / 14)                                # one losing episode in 14: the range reaches below
+        self.assertEqual(hi2, 1.0)                                   # ... and a resample can avoid it entirely
+        few = np.zeros(1500, bool)
+        few[10:13] = few[300:303] = few[600:603] = True
+        self.assertIsNone(m.win_range(f2, few, 20))                  # three episodes cannot support a range
+
     def test_stats_exclude_days_whose_horizon_is_incomplete(self):
-        f = self.frame(n_start="2015-01-02", n_end="2015-12-31")
+        idx = pd.bdate_range("2015-01-02", "2015-12-31")
+        f = pd.DataFrame({"close": np.linspace(100, 300, len(idx))}, index=idx)
         mask = np.zeros(len(f), dtype=bool)
         mask[[10, 11, 12, len(f) - 5]] = True
-        res = m.analog_stats(f, mask, "test", False)
+        res = m.analog_stats(f, mask, "full", "t", "Tight match", False, m.FULL_FEATURES)
         by = {h.horizon: h for h in res.horizons}
-        self.assertEqual(by[20].n, 3)                               # the day 5 bars from the end has no 20d outcome yet
+        self.assertEqual(by[20].n, 3)                                # the day 5 bars from the end has no 20d outcome yet
         self.assertEqual(by[120].n, 3)
 
     def test_probabilities_and_percentiles(self):
         idx = pd.bdate_range("2015-01-02", periods=400)
         c = pd.Series(100.0, index=idx)
-        c.iloc[160:260] = 70.0                                      # a crash, then back to 100
-        f = pd.DataFrame({"close": c, "inv": np.nan, "narrow": np.nan}, index=idx)
+        c.iloc[160:260] = 70.0                                       # a crash, then back to 100
+        f = pd.DataFrame({"close": c}, index=idx)
         mask = np.zeros(400, dtype=bool)
-        mask[[100, 120, 140, 300]] = True                           # three days before the crash, one calm day after it
-        res = m.analog_stats(f, mask, "t", False)
+        mask[[100, 120, 140, 300]] = True                            # three days before the crash, one calm day after it
+        res = m.analog_stats(f, mask, "full", "t", "Tight match", False, m.FULL_FEATURES)
         h60 = next(h for h in res.horizons if h.horizon == 60)
         self.assertEqual(h60.n, 4)
-        self.assertAlmostEqual(h60.p_crash20, 0.75)                 # days 100, 120 and 140 see -30% within 60 days
+        self.assertAlmostEqual(h60.p_crash20, 0.75)
         self.assertAlmostEqual(h60.dd_p10, np.percentile([-0.3, -0.3, -0.3, 0.0], 10))
         self.assertAlmostEqual(h60.p_negative, 0.75)
+
+    def test_the_fear_proxy_exists_in_every_year_after_the_first_60_days(self):
+        s = synthetic(seed=9)
+        feats = m.compute_features(m.build_frame(s))
+        self.assertTrue(feats.loc["1992-01-01":, "proxy"].notna().all())
+        self.assertTrue(feats.loc[:"2006-01-01", "term"].isna().all())   # the real curve starts in 2006
+        self.assertTrue(feats.loc["2007-01-01":, "term"].notna().all())
+
+    def test_end_to_end_both_sets_exist_and_the_full_set_keeps_the_1990s(self):
+        rep = m.analyze(synthetic(seed=12))
+        self.assertEqual(rep.analogs.key, "full")
+        self.assertEqual(rep.modern.key, "modern")
+        self.assertGreater(rep.analogs.days, 20)
+        self.assertGreater(rep.modern.days, 20)
+        self.assertTrue(rep.analogs.first_date < "2006-09-01")
+        self.assertTrue(rep.modern.first_date >= "2006-09-01")
 
 
 class LeakAndDataTests(unittest.TestCase):
@@ -323,14 +464,18 @@ class ViewModelTests(unittest.TestCase):
         on = self.flags_for(snap) if on is None else on
         keys = ["below_sma", "falling_sma", "deep_dd", "fast_fall", "high_vix", "inverted", "narrow"]
         flags = [m.Flag(k, k, on.get(k)) for k in keys]
-        analogs = m.AnalogResult("exact match", 146, 32, False, 0.65, "1990-03-16", "2026-10-23", horizons=[
-            m.HorizonStats(20, 145, -0.032, 0.034, 0.088, -0.076, -0.021, 0.0, 0.03, 0.0, 0.26, 0.014, 0.034),
-            m.HorizonStats(60, 145, -0.052, 0.074, 0.175, -0.088, -0.037, 0.0, 0.06, 0.01, 0.20, 0.066, 0.07),
-            m.HorizonStats(120, 139, -0.036, 0.100, 0.326, -0.101, -0.041, 0.0, 0.11, 0.03, 0.19, 0.113, 0.10)])
+        def result(key, title, win, typical, dip, crash, eps):
+            hs = [m.HorizonStats(20, 145, -0.032, 0.034, 0.088, -0.076, -0.021, 0.0, 0.03, 0.0, 0.26, 0.014, 0.034, 0.55, 0.87),
+                  m.HorizonStats(60, 145, -0.052, typical, 0.175, dip, -0.037, 0.0, 0.06, crash, 1 - win, 0.066, 0.07, 0.62, 0.93),
+                  m.HorizonStats(120, 139, -0.036, 0.100, 0.326, -0.101, -0.041, 0.0, 0.11, 0.03, 0.19, 0.113, 0.10, 0.6, 0.9)]
+            return m.AnalogResult(key, title, "Tight match", 90, eps, False, "1990-03-16", "2026-10-23",
+                                  spread=f"Matched {eps} episodes (90 days): drawdown -12.7% to -6.2%", horizons=hs,
+                                  episode_table=[{"start": "2008-06-05", "end": "2008-06-05", "days": 1, "ret_60d": -0.089,
+                                                  "worst_dd_120d": -0.496}])
+        full = result("full", "Full History (1990+)", 0.80, 0.074, -0.088, 0.01, 32)
+        modern = result("modern", "Modern Era (2006+, real VIX/VIX3M & QQEW breadth)", 0.80, 0.074, -0.088, 0.01, 16)
         return m.Report(label=m.LABEL_PULLBACK, snapshot=snap, flags=flags, flags_on=sum(1 for v in on.values() if v),
-                        flags_known=sum(1 for v in on.values() if v is not None),
-                        trend_state="above a rising 200d average", dd_bucket="-12% to -7%", vix_bucket="VIX 15-20",
-                        analogs=analogs, notes=[])
+                        flags_known=sum(1 for v in on.values() if v is not None), analogs=full, modern=modern, notes=[])
 
     def level(self, key, **kw):
         s = self.snap(**kw)
@@ -452,15 +597,39 @@ class ViewModelTests(unittest.TestCase):
                          ["Calm", "Calm", "Mild Caution", "Mild Caution", "Caution", "Caution", "High Stress",
                           "High Stress", "Panic", "Panic"])
 
-    def test_analog_rows_are_simple_and_win_rate_is_the_complement_of_ended_lower(self):
+    def test_analog_sets_rows_and_win_rate_ranges(self):
         vm = m.view_model(self.rep(self.snap()))
-        rows = vm["analogs"]["rows"]
+        sets = vm["analogs"]["sets"]
+        self.assertEqual([x["key"] for x in sets], ["full", "modern"])
+        rows = sets[0]["rows"]
         self.assertEqual([r["timeframe"] for r in rows], ["1 Month (20d)", "3 Months (60d)", "6 Months (120d)"])
         self.assertAlmostEqual(rows[1]["win_rate"], 0.80)
+        self.assertEqual((rows[1]["win_lo"], rows[1]["win_hi"]), (0.62, 0.93))
         self.assertEqual((rows[1]["typical"], rows[1]["worst_dip"], rows[1]["crash_risk"]), (0.074, -0.088, 0.01))
         self.assertEqual(vm["title"], "Nasdaq-100 (NDX / QQQ) Market Regime")
-        self.assertEqual(len(vm["raw"]["horizons"]), 3)
-        json.dumps(vm)                                                          # the web API serialises it as is
+        self.assertEqual(len(sets[0]["raw"]["horizons"]), 3)
+        self.assertIn("Matched 32 episodes", sets[0]["spread"])
+        json.dumps(vm)                                                # the web API serialises it as is
+
+    def test_the_comparison_says_when_the_eras_agree_and_when_they_do_not(self):
+        rep = self.rep(self.snap())
+        self.assertFalse(m.view_model(rep)["analogs"]["compare"]["differs"])
+        self.assertIn("The two eras agree", m.view_model(rep)["analogs"]["compare"]["text"])
+        rep.modern.horizons[1].p_negative = 0.12                       # modern: 88% higher vs 80%
+        rep.modern.horizons[1].p_crash20 = 0.0
+        rep.analogs.horizons[1].p_crash20 = 0.09
+        rep.analogs.episode_table = [{"start": "1990-07-23", "end": "1990-08-01", "days": 8, "ret_60d": -0.1, "worst_dd_120d": -0.273}]
+        cmp_ = m.view_model(rep)["analogs"]["compare"]
+        self.assertTrue(cmp_["differs"])
+        self.assertIn("severe falls show up more in the older years (for example 1990)", cmp_["text"])
+
+    def test_no_modern_set_means_no_comparison(self):
+        rep = self.rep(self.snap())
+        rep.modern = None
+        vm = m.view_model(rep)
+        self.assertEqual(len(vm["analogs"]["sets"]), 1)
+        self.assertIsNone(vm["analogs"]["compare"])
+        self.assertNotIn("Modern era", m.render_telegram(rep))
 
     # --- Telegram: the agreed layout, exactly
     EXPECTED_HTML = "\n".join([
@@ -506,6 +675,16 @@ class ViewModelTests(unittest.TestCase):
         for text in (m.render_telegram(self.rep(self.snap())), m.render_text(m.analyze(synthetic(seed=7)))):
             self.assertNotIn("\u2014", text)
             self.assertNotIn("\u2212", text)
+
+    def test_telegram_adds_a_modern_era_note_only_when_the_eras_differ(self):
+        rep = self.rep(self.snap())
+        self.assertNotIn("Modern era", m.render_telegram(rep))
+        rep.modern.horizons[1].p_negative = 0.10                       # 90% higher in the modern era
+        rep.modern.horizons[1].ret_p50 = 0.081
+        rep.modern.horizons[1].p_crash20 = 0.0
+        text = m.render_telegram(rep)
+        self.assertIn("🧭 Modern era only (2006+): higher <code>90%</code>, typical <code>+8.1%</code>, crash risk <b>0%</b>", text)
+        self.assertNotIn("🧭", m.render_telegram(rep, html_markup=False).split("Outlook")[0])
 
     def test_telegram_plain_version_for_the_terminal_has_no_tags(self):
         plain = m.render_telegram(self.rep(self.snap()), html_markup=False)
