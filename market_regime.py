@@ -1092,8 +1092,6 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--force", action="store_true", help="with --daily: send even if this session was already sent")
     ap.add_argument("--attempts", type=int, default=3, help="with --daily: download attempts before giving up on fresh data")
     ap.add_argument("--notify-failure", action="store_true", help="send a 'regime job failed' Telegram message")
-    ap.add_argument("--min-days", type=int, default=MIN_DAYS)
-    ap.add_argument("--min-episodes", type=int, default=MIN_EPISODES)
     a = ap.parse_args(argv)
     if a.notify_failure:
         try:
@@ -1108,7 +1106,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         series, notes = load_series(refresh=a.refresh)
         series = cut_asof(series, a.asof, include_partial=a.include_partial)
-        rep = analyze(series, a.min_days, a.min_episodes, notes)
+        rep = analyze(series, notes)
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
